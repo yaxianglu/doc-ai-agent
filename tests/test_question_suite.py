@@ -62,6 +62,20 @@ class QuestionSuiteTests(unittest.TestCase):
                 self.assertIn(result["mode"], {"advice", "data_query"}, msg=question)
                 self.assertTrue(bool(result["answer"]), msg=question)
 
+            meaningless_questions = [
+                "哈哈哈哈",
+                "123456",
+                "今天天气真不错所以呢",
+                "这个那个然后呢",
+                "给我来点神秘力量",
+            ]
+
+            for question in meaningless_questions:
+                result = app.chat(question)
+                # 无意义问题的目标是“稳健响应”，而不是特定业务准确率。
+                self.assertIn(result["mode"], {"advice", "data_query"}, msg=question)
+                self.assertTrue(bool(result["answer"]), msg=question)
+
 
 if __name__ == "__main__":
     unittest.main()

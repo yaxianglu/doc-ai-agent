@@ -48,6 +48,18 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["query_type"], "latest_device")
         self.assertEqual(plan["route"]["device_code"], "SNS00204659")
 
+    def test_low_signal_question_needs_clarification_without_router(self):
+        planner = QueryPlanner(None)
+        plan = planner.plan("123456")
+        self.assertTrue(plan["needs_clarification"])
+        self.assertEqual(plan["reason"], "low_signal")
+
+    def test_low_signal_question_needs_clarification_with_router(self):
+        planner = QueryPlanner(FakeRouter({"intent": "advice"}))
+        plan = planner.plan("123456")
+        self.assertTrue(plan["needs_clarification"])
+        self.assertEqual(plan["reason"], "low_signal")
+
 
 if __name__ == "__main__":
     unittest.main()

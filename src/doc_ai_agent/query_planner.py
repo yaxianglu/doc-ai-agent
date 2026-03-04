@@ -145,7 +145,36 @@ class QueryPlanner:
             "device_code": self._extract_device_code(question),
         }
 
+    def _is_low_signal(self, question: str) -> bool:
+        q = (question or "").strip()
+        if not q:
+            return True
+
+        # Pure digits/symbols are not actionable business questions.
+        if re.fullmatch(r"[\d\W_]+", q):
+            return True
+
+        # Repetitive filler laughter/interjection.
+        if re.fullmatch(r"(哈|呵|啊|嗯|哦|呀){3,}", q):
+            return True
+
+        # Very short and no domain/question words.
+        if len(q) <= 4 and not re.search(r"(预警|设备|处置|建议|统计|多少|怎么|如何)", q):
+            return True
+
+        return False
+
     def plan(self, question: str) -> dict:
+        if self._is_low_signal(question):
+            return {
+                "intent": "advice",
+                "confidence": 0.0,
+                "route": self._build_route(question, "count"),
+                "needs_clarification": True,
+                "clarification": "你这条输入信息不足。请告诉我：要做数据统计，还是要处置建议？",
+                "reason": "low_signal",
+            }
+
         if self.intent_router is not None:
             route = self.intent_router.route(question)
             intent = route.get("intent", "advice")
