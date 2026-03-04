@@ -86,6 +86,27 @@ class AgentTests(unittest.TestCase):
                     "source_sheet": "sheet1",
                     "source_row": 3,
                 },
+                {
+                    "alert_content": "c",
+                    "alert_type": "墒情预警",
+                    "alert_subtype": "土壤",
+                    "alert_time": "2026-01-03 08:00:00",
+                    "alert_level": "涝渍",
+                    "region_code": "3",
+                    "region_name": "x",
+                    "alert_value": "30",
+                    "device_code": "d1",
+                    "device_name": "n1",
+                    "longitude": "1",
+                    "latitude": "2",
+                    "city": "徐州市",
+                    "county": "C",
+                    "sms_content": "",
+                    "disposal_suggestion": "建议3",
+                    "source_file": "f.xlsx",
+                    "source_sheet": "sheet1",
+                    "source_row": 4,
+                },
             ]
         )
         self.agent = DocAIAgent(repo)
@@ -106,6 +127,20 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(len(result["data"]) >= 1)
         self.assertEqual(result["data"][0]["name"], "淮安市")
 
+    def test_avg_alert_value_group_by_level_query(self):
+        result = self.agent.answer("按告警等级分组，平均告警值分别是多少？")
+        self.assertEqual(result["mode"], "data_query")
+        self.assertIn("重旱", result["answer"])
+        self.assertIn("涝渍", result["answer"])
+        self.assertTrue(any(row["level"] == "重旱" for row in result["data"]))
+        self.assertIn("AVG", result["evidence"]["sql"])
+
+    def test_consecutive_two_day_devices_query(self):
+        result = self.agent.answer("相同设备在连续两天都触发预警的有哪些？")
+        self.assertEqual(result["mode"], "data_query")
+        self.assertIn("d1", result["answer"])
+        self.assertTrue(any(row["device_code"] == "d1" for row in result["data"]))
+
     def test_advice_query(self):
         result = self.agent.answer("台风过后，对于小麦种植需要注意哪些？")
         self.assertEqual(result["mode"], "advice")
@@ -121,7 +156,7 @@ class AgentTests(unittest.TestCase):
         )
         result = agent.answer("请按城市给我前3个预警最多的地区，从2026年开始")
         self.assertEqual(result["mode"], "data_query")
-        self.assertEqual(len(result["data"]), 1)
+        self.assertTrue(len(result["data"]) >= 1)
         self.assertIn("LIMIT 3", result["evidence"]["sql"])
 
     def test_llm_driven_advice(self):

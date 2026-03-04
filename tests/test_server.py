@@ -10,8 +10,9 @@ class ServerTests(unittest.TestCase):
     def test_refresh_and_chat(self):
         with tempfile.TemporaryDirectory() as td:
             db_path = os.path.join(td, "alerts.db")
+            repo_root = os.path.dirname(os.path.dirname(__file__))
             cfg = AppConfig(
-                data_dir="/Users/mac/Desktop/code/service/doc-ai-agent",
+                data_dir=repo_root,
                 db_path=db_path,
                 refresh_interval_minutes=5,
                 port=0,

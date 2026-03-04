@@ -6,7 +6,8 @@ from doc_ai_agent.xlsx_loader import load_alerts_from_xlsx
 
 class XlsxLoaderTests(unittest.TestCase):
     def test_load_alerts(self):
-        path = "/Users/mac/Desktop/code/service/doc-ai-agent/处置建议发布任务.xlsx"
+        repo_root = os.path.dirname(os.path.dirname(__file__))
+        path = os.path.join(repo_root, "处置建议发布任务.xlsx")
         rows = load_alerts_from_xlsx(path)
         self.assertGreater(len(rows), 0)
 

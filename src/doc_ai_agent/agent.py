@@ -40,7 +40,48 @@ class DocAIAgent:
                 "evidence": result.evidence,
             }
 
-        if any(k in question for k in ["多少", "top", "TOP", "统计", "哪几个"]):
+        if route and route.get("intent") == "advice":
+            result = self.advice_engine.answer(question)
+            evidence = {
+                "sources": result.sources,
+                "generation_mode": result.generation_mode,
+            }
+            if result.model:
+                evidence["model"] = result.model
+            return {
+                "mode": "advice",
+                "answer": result.answer,
+                "data": [],
+                "evidence": evidence,
+            }
+
+        force_data_query = any(
+            k in question
+            for k in [
+                "多少",
+                "top",
+                "TOP",
+                "Top",
+                "统计",
+                "哪几个",
+                "平均",
+                "分组",
+                "连续两天",
+                "设备",
+                "最多",
+                "最高",
+                "超过",
+                "最近一次",
+                "sms_content",
+                "占比",
+                "变化",
+            ]
+        ) or ("处置建议" in question and ("镇" in question or "街道" in question))
+
+        if "短信版本" in question or ("改写" in question and "处置建议" in question):
+            force_data_query = False
+
+        if force_data_query:
             result = self.query_engine.answer(question)
             return {
                 "mode": "data_query",
