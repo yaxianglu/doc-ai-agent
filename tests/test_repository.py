@@ -86,6 +86,90 @@ class RepositoryTests(unittest.TestCase):
             self.assertEqual(len(samples), 2)
             self.assertIn("alert_content", samples[0])
 
+    def test_avg_by_level_and_consecutive_devices(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = os.path.join(td, "alerts.db")
+            repo = AlertRepository(db)
+            repo.init_schema()
+            repo.insert_alerts(
+                [
+                    {
+                        "alert_content": "a",
+                        "alert_type": "墒情预警",
+                        "alert_subtype": "土壤",
+                        "alert_time": "2026-01-02 00:00:00",
+                        "alert_level": "重旱",
+                        "region_code": "1",
+                        "region_name": "x",
+                        "alert_value": "10",
+                        "device_code": "d1",
+                        "device_name": "n1",
+                        "longitude": "1",
+                        "latitude": "2",
+                        "city": "淮安市",
+                        "county": "A",
+                        "sms_content": "",
+                        "disposal_suggestion": "",
+                        "source_file": "f.xlsx",
+                        "source_sheet": "sheet1",
+                        "source_row": 2,
+                    },
+                    {
+                        "alert_content": "b",
+                        "alert_type": "墒情预警",
+                        "alert_subtype": "土壤",
+                        "alert_time": "2026-01-03 00:00:00",
+                        "alert_level": "重旱",
+                        "region_code": "2",
+                        "region_name": "x",
+                        "alert_value": "20",
+                        "device_code": "d2",
+                        "device_name": "n2",
+                        "longitude": "1",
+                        "latitude": "2",
+                        "city": "淮安市",
+                        "county": "B",
+                        "sms_content": "",
+                        "disposal_suggestion": "",
+                        "source_file": "f.xlsx",
+                        "source_sheet": "sheet1",
+                        "source_row": 3,
+                    },
+                    {
+                        "alert_content": "c",
+                        "alert_type": "墒情预警",
+                        "alert_subtype": "土壤",
+                        "alert_time": "2026-01-03 08:00:00",
+                        "alert_level": "涝渍",
+                        "region_code": "3",
+                        "region_name": "x",
+                        "alert_value": "30",
+                        "device_code": "d1",
+                        "device_name": "n1",
+                        "longitude": "1",
+                        "latitude": "2",
+                        "city": "徐州市",
+                        "county": "C",
+                        "sms_content": "",
+                        "disposal_suggestion": "",
+                        "source_file": "f.xlsx",
+                        "source_sheet": "sheet1",
+                        "source_row": 4,
+                    },
+                ]
+            )
+
+            avg_rows = repo.avg_alert_value_by_level("2026-01-01 00:00:00")
+            self.assertEqual(avg_rows[0]["level"], "涝渍")
+            self.assertEqual(avg_rows[0]["avg_alert_value"], 30.0)
+            self.assertEqual(avg_rows[1]["level"], "重旱")
+            self.assertEqual(avg_rows[1]["avg_alert_value"], 15.0)
+
+            devices = repo.devices_triggered_on_multiple_days("2026-01-01 00:00:00", min_days=2)
+            self.assertEqual(len(devices), 1)
+            self.assertEqual(devices[0]["device_code"], "d1")
+            self.assertEqual(devices[0]["active_days"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
