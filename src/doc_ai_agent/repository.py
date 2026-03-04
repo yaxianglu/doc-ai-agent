@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+import os
+import sqlite3
+from typing import Iterable, List
+
+
+class AlertRepository:
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        parent = os.path.dirname(db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    alert_content TEXT,
+                    alert_type TEXT,
+                    alert_subtype TEXT,
+                    alert_time TEXT,
+                    alert_level TEXT,
+                    region_code TEXT,
+                    region_name TEXT,
+                    alert_value TEXT,
+                    device_code TEXT,
+                    device_name TEXT,
+                    longitude TEXT,
+                    latitude TEXT,
+                    city TEXT,
+                    county TEXT,
+                    sms_content TEXT,
+                    disposal_suggestion TEXT,
+                    source_file TEXT,
+                    source_sheet TEXT,
+                    source_row INTEGER,
+                    UNIQUE(source_file, source_sheet, source_row)
+                )
+                """
+            )
+
+    def insert_alerts(self, rows: Iterable[dict]) -> int:
+        sql = """
+            INSERT OR REPLACE INTO alerts (
+                alert_content, alert_type, alert_subtype, alert_time, alert_level,
+                region_code, region_name, alert_value, device_code, device_name,
+                longitude, latitude, city, county, sms_content, disposal_suggestion,
+                source_file, source_sheet, source_row
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        payload = [
+            (
+                row.get("alert_content", ""),
+                row.get("alert_type", ""),
+                row.get("alert_subtype", ""),
+                row.get("alert_time", ""),
+                row.get("alert_level", ""),
+                row.get("region_code", ""),
+                row.get("region_name", ""),
+                row.get("alert_value", ""),
+                row.get("device_code", ""),
+                row.get("device_name", ""),
+                row.get("longitude", ""),
+                row.get("latitude", ""),
+                row.get("city", ""),
+                row.get("county", ""),
+                row.get("sms_content", ""),
+                row.get("disposal_suggestion", ""),
+                row.get("source_file", ""),
+                row.get("source_sheet", ""),
+                int(row.get("source_row", 0)),
+            )
+            for row in rows
+        ]
+        with self._connect() as conn:
+            conn.executemany(sql, payload)
+            return len(payload)
+
+    def count_since(self, since: str) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "SELECT COUNT(*) AS c FROM alerts WHERE alert_time >= ?", (since,)
+            )
+            return int(cur.fetchone()["c"])
+
+    def top_n(self, field: str, n: int, since: str) -> List[dict]:
+        allowed = {"city", "county", "alert_type", "alert_level"}
+        if field not in allowed:
+            raise ValueError("unsupported field")
+        sql = f"""
+            SELECT {field} AS name, COUNT(*) AS cnt
+            FROM alerts
+            WHERE alert_time >= ?
+            GROUP BY {field}
+            ORDER BY cnt DESC, name ASC
+            LIMIT ?
+        """
+        with self._connect() as conn:
+            cur = conn.execute(sql, (since, n))
+            return [{"name": r["name"], "count": int(r["cnt"])} for r in cur.fetchall()]
+
+    def sample_alerts(self, since: str, limit: int = 3) -> List[dict]:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT alert_time, city, county, alert_type, alert_level, alert_content, source_file, source_sheet, source_row
+                FROM alerts
+                WHERE alert_time >= ?
+                ORDER BY alert_time DESC
+                LIMIT ?
+                """,
+                (since, limit),
+            )
+            rows = []
+            for r in cur.fetchall():
+                rows.append(
+                    {
+                        "alert_time": r["alert_time"],
+                        "city": r["city"],
+                        "county": r["county"],
+                        "alert_type": r["alert_type"],
+                        "alert_level": r["alert_level"],
+                        "alert_content": r["alert_content"],
+                        "source_file": r["source_file"],
+                        "source_sheet": r["source_sheet"],
+                        "source_row": int(r["source_row"] or 0),
+                    }
+                )
+            return rows

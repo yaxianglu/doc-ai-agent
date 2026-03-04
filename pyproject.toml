@@ -1,0 +1,9 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "doc-ai-agent"
+version = "0.1.0"
+description = "MVP AI agent for dispatch platform report Q&A"
+requires-python = ">=3.9"
