@@ -171,6 +171,8 @@ class ServerTests(unittest.TestCase):
             self.assertIn("execution_plan", chat_data["evidence"])
             self.assertIn("analysis_context", chat_data["evidence"])
             self.assertIn("request_understanding", chat_data["evidence"])
+            self.assertEqual(chat_data["evidence"]["forecast"]["forecast_backend"], "statsforecast")
+            self.assertEqual(chat_data["evidence"]["forecast"]["model_name"], "AutoETS")
 
     def test_latest_device_query_returns_disposal_suggestion_when_requested(self):
         with tempfile.TemporaryDirectory() as td:
