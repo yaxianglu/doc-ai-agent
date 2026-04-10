@@ -86,6 +86,64 @@ class RepositoryTests(unittest.TestCase):
             self.assertEqual(len(samples), 2)
             self.assertIn("alert_content", samples[0])
 
+    def test_available_alert_time_range(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = os.path.join(td, "alerts.db")
+            repo = AlertRepository(db)
+            repo.init_schema()
+            repo.insert_alerts(
+                [
+                    {
+                        "alert_content": "a",
+                        "alert_type": "墒情预警",
+                        "alert_subtype": "土壤",
+                        "alert_time": "2026-01-02 00:00:00",
+                        "alert_level": "重旱",
+                        "region_code": "1",
+                        "region_name": "x",
+                        "alert_value": "10",
+                        "device_code": "d1",
+                        "device_name": "n1",
+                        "longitude": "1",
+                        "latitude": "2",
+                        "city": "淮安市",
+                        "county": "A",
+                        "sms_content": "",
+                        "disposal_suggestion": "",
+                        "source_file": "f.xlsx",
+                        "source_sheet": "sheet1",
+                        "source_row": 2,
+                    },
+                    {
+                        "alert_content": "b",
+                        "alert_type": "虫情预警",
+                        "alert_subtype": "虫情",
+                        "alert_time": "2026-02-03 00:00:00",
+                        "alert_level": "中",
+                        "region_code": "2",
+                        "region_name": "x",
+                        "alert_value": "12",
+                        "device_code": "d2",
+                        "device_name": "n2",
+                        "longitude": "1",
+                        "latitude": "2",
+                        "city": "徐州市",
+                        "county": "B",
+                        "sms_content": "",
+                        "disposal_suggestion": "",
+                        "source_file": "f.xlsx",
+                        "source_sheet": "sheet1",
+                        "source_row": 3,
+                    },
+                ]
+            )
+
+            time_range = repo.available_alert_time_range()
+            self.assertEqual(
+                time_range,
+                {"min_time": "2026-01-02 00:00:00", "max_time": "2026-02-03 00:00:00"},
+            )
+
     def test_avg_by_level_and_consecutive_devices(self):
         with tempfile.TemporaryDirectory() as td:
             db = os.path.join(td, "alerts.db")

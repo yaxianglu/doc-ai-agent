@@ -136,6 +136,23 @@ class AlertRepository:
                 )
             return rows
 
+    def available_alert_time_range(self) -> Optional[dict]:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT MIN(alert_time) AS min_time, MAX(alert_time) AS max_time
+                FROM alerts
+                WHERE alert_time IS NOT NULL AND TRIM(alert_time) != ''
+                """
+            )
+            row = cur.fetchone()
+            if row is None or not row["min_time"] or not row["max_time"]:
+                return None
+            return {
+                "min_time": row["min_time"],
+                "max_time": row["max_time"],
+            }
+
     def avg_alert_value_by_level(self, since: str) -> List[dict]:
         with self._connect() as conn:
             cur = conn.execute(
