@@ -19,4 +19,5 @@ dependencies = [
     "pydantic==2.12.5",
     "qdrant-client==1.17.1",
     "redis==7.0.1",
+    "statsforecast==2.0.3",
 ]

@@ -50,6 +50,10 @@ class ForecastServiceTests(unittest.TestCase):
 
         self.assertEqual(result["forecast"]["domain"], "pest")
         self.assertEqual(result["forecast"]["horizon_days"], 14)
+        self.assertEqual(result["forecast"]["forecast_backend"], "statsforecast")
+        self.assertEqual(result["forecast"]["model_name"], "AutoETS")
+        self.assertEqual(result["forecast"]["history_points"], 4)
+        self.assertFalse(result["forecast"]["fallback"])
         self.assertEqual(result["analysis_context"]["region_name"], "徐州市")
         self.assertIn("徐州市", result["answer"])
 
@@ -64,6 +68,8 @@ class ForecastServiceTests(unittest.TestCase):
         self.assertEqual(result["forecast"]["domain"], "soil")
         self.assertEqual(result["forecast"]["mode"], "ranking")
         self.assertEqual(result["forecast"]["horizon_days"], 30)
+        self.assertEqual(result["forecast"]["forecast_backend"], "statsforecast")
+        self.assertEqual(result["forecast"]["model_name"], "AutoETS")
         self.assertEqual(result["data"][0]["region_name"], "宿迁市")
         self.assertIn("宿迁市", result["answer"])
 
