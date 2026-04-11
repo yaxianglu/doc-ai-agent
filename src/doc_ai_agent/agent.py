@@ -15,6 +15,7 @@ from .query_planner import QueryPlanner
 from .query_engine import QueryEngine
 from .request_understanding import RequestUnderstanding
 from .repository import AlertRepository
+from .task_decomposition import build_task_graph
 
 
 class AgentState(TypedDict, total=False):
@@ -293,6 +294,8 @@ class DocAIAgent:
                 context=state.get("memory_context"),
                 understanding=understanding,
             )
+        plan = dict(plan)
+        plan["task_graph"] = build_task_graph(plan.get("query_plan") or {})
         route = dict(plan.get("route") or {})
         if route.get("query_type") in {"pest_forecast", "soil_forecast"} and not understanding.get("needs_forecast"):
             updated_understanding = dict(understanding)
@@ -342,12 +345,17 @@ class DocAIAgent:
             return {"query_result": {}}
         question_for_query = understanding.get("historical_query_text") or state.get("question", "")
         result = self.query_engine.answer(question_for_query, plan=route)
+        evidence = dict(result.evidence or {})
+        evidence.setdefault("query_type", route.get("query_type") or "")
+        evidence.setdefault("city", route.get("city"))
+        evidence.setdefault("county", route.get("county"))
+        evidence.setdefault("window", route.get("window") or {})
         return {
             "query_result": {
                 "mode": "data_query",
                 "answer": result.answer,
                 "data": result.data,
-                "evidence": dict(result.evidence or {}),
+                "evidence": evidence,
             }
         }
 
@@ -451,6 +459,15 @@ class DocAIAgent:
         previous_context = dict(previous_context or {})
         understanding = dict(understanding or {})
         route = dict(plan.get("route") or {})
+        if self.query_planner._is_greeting_question(question):
+            return {
+                "domain": "",
+                "region_name": "",
+                "query_type": "",
+                "window": {},
+                "route": {},
+                "forecast": {},
+            }
         inherited_region = previous_context.get("region_name") if understanding.get("reuse_region_from_context", True) else ""
         return {
             "domain": self._derive_domain(question, plan, previous_context),
@@ -608,27 +625,143 @@ class DocAIAgent:
                 )
         return ""
 
+    @staticmethod
+    def _memory_time_range_value(window: dict | None) -> dict:
+        normalized_window = dict(window or {})
+        window_type = str(normalized_window.get("window_type") or "")
+        window_value = normalized_window.get("window_value")
+        if window_type in {"months", "weeks", "days"} and window_value not in {None, ""}:
+            return {"mode": "relative", "value": f"{window_value}_{window_type}"}
+        return {"mode": "none", "value": None}
+
+    @staticmethod
+    def _memory_slot_priority(source: str) -> int:
+        if source == "explicit":
+            return 100
+        if source == "carried":
+            return 90
+        if source == "system":
+            return 80
+        if source == "inferred":
+            return 60
+        if source == "legacy":
+            return 50
+        return 0
+
+    @staticmethod
+    def _memory_slot_ttl(source: str) -> int:
+        if source in {"explicit", "carried"}:
+            return 4
+        if source == "system":
+            return 2
+        if source in {"inferred", "legacy"}:
+            return 2
+        return 0
+
+    def _build_memory_slot(
+        self,
+        *,
+        value,
+        source: str,
+        turn_count: int,
+        previous_slot: dict | None = None,
+        preserve_previous: bool = False,
+    ) -> dict:
+        if preserve_previous and previous_slot:
+            return dict(previous_slot)
+
+        if previous_slot and previous_slot.get("value") == value and previous_slot.get("source") == source:
+            updated_at_turn = int(previous_slot.get("updated_at_turn") or turn_count)
+        else:
+            updated_at_turn = turn_count
+        return {
+            "value": value,
+            "source": source,
+            "priority": self._memory_slot_priority(source),
+            "ttl": self._memory_slot_ttl(source),
+            "updated_at_turn": updated_at_turn,
+        }
+
     def _build_memory_snapshot(self, state: AgentState) -> dict:
         question = state.get("question", "")
         plan = state.get("plan") or {}
         response = state.get("response") or {}
         previous_context = dict(state.get("memory_context") or {})
+        preserve_thread_scope = str(plan.get("reason") or "") in {"greeting_intro", "identity_self_intro"}
         route = dict(plan.get("route") or previous_context.get("route") or {})
         evidence = dict(response.get("evidence") or {})
         analysis_context = dict(evidence.get("analysis_context") or {})
         forecast = dict(evidence.get("forecast") or previous_context.get("forecast") or {})
         understanding = dict(state.get("understanding") or {})
+        previous_slots = dict(previous_context.get("slots") or {})
+        turn_count = int(previous_context.get("turn_count") or 0) + 1
 
-        domain = analysis_context.get("domain") or self._derive_domain(question, plan, previous_context)
+        if preserve_thread_scope and previous_context:
+            route = dict(previous_context.get("route") or route)
+            forecast = dict(previous_context.get("forecast") or forecast)
+
+        domain = (
+            analysis_context.get("domain")
+            or (previous_context.get("domain") if preserve_thread_scope else "")
+            or self._derive_domain(question, plan, previous_context)
+        )
         inherited_region = previous_context.get("region_name") if understanding.get("reuse_region_from_context", True) else ""
         region_name = (
             analysis_context.get("region_name")
+            or (previous_context.get("region_name") if preserve_thread_scope else "")
             or route.get("county")
             or route.get("city")
             or self._first_region_name(response)
             or inherited_region
             or ""
         )
+        window = route.get("window") or previous_context.get("window") or {}
+        query_plan = dict(plan.get("query_plan") or {})
+        query_plan_intent = str(query_plan.get("intent") or plan.get("intent") or "")
+
+        domain_source = "explicit" if understanding.get("domain") else ("carried" if preserve_thread_scope and previous_slots.get("domain") else ("inferred" if domain else "empty"))
+        region_source = (
+            "explicit"
+            if understanding.get("region_name") or route.get("county") or route.get("city")
+            else ("carried" if preserve_thread_scope and previous_slots.get("region") else ("inferred" if region_name else "empty"))
+        )
+        explicit_window = dict(understanding.get("window") or {})
+        window_source = (
+            "explicit"
+            if str(explicit_window.get("window_type") or "") in {"months", "weeks", "days"} and explicit_window.get("window_value") not in {None, ""}
+            else ("carried" if preserve_thread_scope and previous_slots.get("time_range") else ("inferred" if window else "empty"))
+        )
+        intent_source = "system" if query_plan_intent else "empty"
+
+        slots = {
+            "domain": self._build_memory_slot(
+                value=domain,
+                source=domain_source,
+                turn_count=turn_count,
+                previous_slot=previous_slots.get("domain"),
+                preserve_previous=preserve_thread_scope,
+            ),
+            "region": self._build_memory_slot(
+                value=region_name,
+                source=region_source,
+                turn_count=turn_count,
+                previous_slot=previous_slots.get("region"),
+                preserve_previous=preserve_thread_scope,
+            ),
+            "time_range": self._build_memory_slot(
+                value=self._memory_time_range_value(window),
+                source=window_source,
+                turn_count=turn_count,
+                previous_slot=previous_slots.get("time_range"),
+                preserve_previous=preserve_thread_scope,
+            ),
+            "intent": self._build_memory_slot(
+                value=query_plan_intent,
+                source=intent_source,
+                turn_count=turn_count,
+                previous_slot=previous_slots.get("intent"),
+            ),
+        }
 
         pending_user_question = None
         pending_clarification = None
@@ -641,10 +774,11 @@ class DocAIAgent:
 
         return {
             "memory_version": 2,
+            "turn_count": turn_count,
             "domain": domain,
             "region_name": region_name,
             "query_type": route.get("query_type") or previous_context.get("query_type") or "",
-            "window": route.get("window") or previous_context.get("window") or {},
+            "window": window,
             "route": route,
             "forecast": forecast,
             "last_question": question,
@@ -658,6 +792,7 @@ class DocAIAgent:
                 "last_answer_mode": str(response.get("mode") or ""),
                 "last_clarification_reason": str(plan.get("reason") or "") if plan.get("needs_clarification") else "",
             },
+            "slots": slots,
         }
 
     def _persist_node(self, state: AgentState) -> dict:
@@ -665,6 +800,7 @@ class DocAIAgent:
         response = dict(state.get("response") or {})
         plan = state.get("plan") or {}
         understanding = dict(state.get("understanding") or {})
+        query_result = dict(state.get("query_result") or {})
         snapshot = self._build_memory_snapshot(state)
         if not thread_id.startswith("__stateless__:"):
             self.memory_store.remember(thread_id, snapshot)
@@ -679,6 +815,10 @@ class DocAIAgent:
                 "query_type": snapshot.get("query_type"),
             },
         )
+        if query_result.get("evidence"):
+            evidence.setdefault("historical_query", dict(query_result.get("evidence") or {}))
+        if plan.get("task_graph"):
+            evidence.setdefault("task_graph", dict(plan.get("task_graph") or {}))
         evidence.setdefault("memory_state", snapshot)
         if understanding:
             evidence.setdefault("request_understanding", understanding)
