@@ -569,8 +569,59 @@ class QueryEngine:
         return max(float(item.get(key) or 0) for item in series)
 
     @staticmethod
-    def _format_series_detail(series: list[dict], value_key: str, value_label: str) -> str:
-        return "；".join(f"{item.get('date', '')} {value_label}{float(item.get(value_key) or 0):g}" for item in series)
+    def _series_date_value(item: dict) -> str:
+        return str(item.get("date") or item.get("bucket") or "")
+
+    @staticmethod
+    def _detail_preview(series: list[dict], value_key: str, value_label: str, limit: int = 7) -> str:
+        preview = list(series[-limit:]) if len(series) > limit else list(series)
+        return "；".join(f"{QueryEngine._series_date_value(item)} {value_label}{QueryEngine._format_metric_value(float(item.get(value_key) or 0))}" for item in preview)
+
+    @staticmethod
+    def _average_metric(series: list[dict], key: str) -> float:
+        if not series:
+            return 0.0
+        return sum(float(item.get(key) or 0) for item in series) / len(series)
+
+    @staticmethod
+    def _peak_point(series: list[dict], key: str) -> dict:
+        if not series:
+            return {}
+        return max(series, key=lambda item: float(item.get(key) or 0))
+
+    @staticmethod
+    def _format_metric_value(value: float) -> str:
+        if float(value).is_integer():
+            return f"{value:.0f}"
+        return f"{value:.1f}"
+
+    def _build_detail_answer(
+        self,
+        *,
+        region_name: str,
+        since_scope: str,
+        series: list[dict],
+        value_key: str,
+        value_label: str,
+        topic_label: str,
+    ) -> str:
+        preview_limit = min(len(series), 7)
+        latest_point = series[-1] if series else {}
+        peak_point = self._peak_point(series, value_key)
+        active_days = sum(1 for item in series if float(item.get(value_key) or 0) > 0)
+        average_value = self._average_metric(series, value_key)
+        preview_text = self._detail_preview(series, value_key, value_label, limit=preview_limit)
+
+        lines = [
+            f"{region_name}{since_scope}{topic_label}具体数据摘要：",
+            f"- 共{len(series)}个观测日，其中{active_days}天{value_label}大于0",
+            f"- 峰值{self._format_metric_value(float(peak_point.get(value_key) or 0))}（{self._series_date_value(peak_point)}）",
+            f"- 最近值{self._format_metric_value(float(latest_point.get(value_key) or 0))}（{self._series_date_value(latest_point)}）",
+            f"- 均值{self._format_metric_value(average_value)}",
+            f"- 最近{preview_limit}个观测日：{preview_text}",
+            "- 如果你要，我可以继续给你完整逐日明细或导出表格。",
+        ]
+        return "\n".join(lines)
 
     def _answer_pest_detail(self, question: str, plan: dict) -> QueryResult:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
@@ -615,8 +666,14 @@ class QueryEngine:
                     ),
                 },
             )
-        detail_text = self._format_series_detail(data, "severity_score", "严重度")
-        answer = f"{region_name}{since_scope}虫情具体数据（按日汇总）为：{detail_text}。"
+        answer = self._build_detail_answer(
+            region_name=region_name,
+            since_scope=since_scope,
+            series=data,
+            value_key="severity_score",
+            value_label="严重度",
+            topic_label="虫情",
+        )
         return QueryResult(
             answer=answer,
             data=data,
@@ -869,8 +926,14 @@ class QueryEngine:
                     ),
                 },
             )
-        detail_text = self._format_series_detail(data, "avg_anomaly_score", "异常值")
-        answer = f"{region_name}{since_scope}墒情具体数据（按日汇总）为：{detail_text}。"
+        answer = self._build_detail_answer(
+            region_name=region_name,
+            since_scope=since_scope,
+            series=data,
+            value_key="avg_anomaly_score",
+            value_label="异常值",
+            topic_label="墒情",
+        )
         return QueryResult(
             answer=answer,
             data=data,
