@@ -6,3 +6,4 @@ data/*.db
 memory.db
 vector_store.db
 data/agent-memory.json
+.backend.pid
