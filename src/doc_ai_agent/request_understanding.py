@@ -53,6 +53,20 @@ class RequestUnderstanding:
     OVERVIEW_HINTS = ["情况", "概况", "整体", "总体", "态势", "表现", "怎么样", "如何", "什么情况"]
     RANKING_HINTS = ["最严重", "最厉害", "最多", "top", "Top", "TOP", "排行", "排名", "前5", "前十"]
     TREND_HINTS = ["走势", "趋势", "走向", "波动", "变化"]
+    DETAIL_HINTS = ["具体数据", "详细数据", "数据明细", "明细数据", "原始数据", "具体数值", "详细数值", "逐日数据", "每天数据"]
+    GREETING_PATTERNS = {
+        "你好",
+        "您好",
+        "嗨",
+        "哈喽",
+        "hello",
+        "hi",
+        "早上好",
+        "上午好",
+        "中午好",
+        "下午好",
+        "晚上好",
+    }
 
     def __init__(self, backend=None, extractor: EntityExtractionService | None = None):
         self.backend = backend
@@ -68,7 +82,11 @@ class RequestUnderstanding:
         structured = self._extract_with_backend(cleaned, context if used_context else None)
 
         domain = structured.get("domain") or extracted.get("domain") or self._infer_domain(cleaned, context if used_context else None)
-        historical_window = structured.get("historical_window") or extracted.get("historical_window") or self._extract_past_window(cleaned)
+        historical_window = self._coalesce_window(
+            structured.get("historical_window"),
+            extracted.get("historical_window"),
+            self._extract_past_window(cleaned),
+        )
         future_window = structured.get("future_window") or extracted.get("future_window") or self._extract_future_window(cleaned)
         region_name = self._coalesce_region_name(
             structured.get("region_name") if isinstance(structured.get("region_name"), str) else "",
@@ -164,7 +182,7 @@ class RequestUnderstanding:
         if domain in {"pest", "soil", "mixed"}:
             normalized["domain"] = domain
         task_type = str(payload.get("task_type") or "")
-        if task_type in {"ranking", "trend", "region_overview", "joint_risk"}:
+        if task_type in {"ranking", "trend", "region_overview", "joint_risk", "data_detail"}:
             normalized["task_type"] = task_type
         region_name = self._coalesce_region_name(str(payload.get("region_name") or ""), "")
         if region_name:
@@ -196,10 +214,26 @@ class RequestUnderstanding:
             normalized["horizon_days"] = int(payload["horizon_days"])
         return normalized
 
+    @staticmethod
+    def _coalesce_window(*windows: object) -> dict:
+        fallback = {"window_type": "all", "window_value": None}
+        all_window: dict | None = None
+        for candidate in windows:
+            if not isinstance(candidate, dict):
+                continue
+            window_type = str(candidate.get("window_type") or "")
+            if window_type in {"months", "weeks", "days"}:
+                return candidate
+            if window_type == "all" and all_window is None:
+                all_window = candidate
+        return all_window or fallback
+
     def _resolve_with_context(self, text: str, context: dict | None) -> tuple[str, list[str]]:
         context = dict(context or {})
-        cleaned = self._normalize_city_mentions(self._normalize_spaces(text))
+        cleaned = self._normalize_city_mentions(self._normalize_relative_window_typos(self._normalize_spaces(text)))
         if not cleaned:
+            return cleaned, []
+        if self._is_greeting(cleaned):
             return cleaned, []
 
         pending_question = self._normalize_spaces(str(context.get("pending_user_question") or ""))
@@ -213,6 +247,8 @@ class RequestUnderstanding:
         domain = str(context.get("domain") or "")
         region_name = self._normalize_spaces(str(context.get("region_name") or ""))
         if (domain or region_name) and self._is_contextual_follow_up(cleaned):
+            if self._is_domain_switch_follow_up(cleaned) or self._is_window_only_follow_up(cleaned):
+                return cleaned, []
             current_region = self._extract_region(cleaned)
             reuse_region = not current_region and self._should_reuse_context_region(cleaned)
             prefix_region = region_name if reuse_region else ""
@@ -238,6 +274,21 @@ class RequestUnderstanding:
     @staticmethod
     def _normalize_spaces(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip())
+
+    @staticmethod
+    def _normalize_relative_window_typos(text: str) -> str:
+        normalized = str(text or "")
+        normalized = re.sub(
+            r"(?<=[\u4e00-\u9fa5])进(?=(\d+|[一二两三四五六七八九十])个?(?:月|星期|周))",
+            "近",
+            normalized,
+        )
+        normalized = re.sub(
+            r"(?<=[\u4e00-\u9fa5])进(?=(\d+|[一二两三四五六七八九十])天)",
+            "近",
+            normalized,
+        )
+        return normalized
 
     @staticmethod
     def _normalize_city_mentions(text: str) -> str:
@@ -293,6 +344,8 @@ class RequestUnderstanding:
     @staticmethod
     def _is_contextual_follow_up(text: str) -> bool:
         stripped = text.strip()
+        if RequestUnderstanding._is_greeting(stripped):
+            return False
         if re.search(r"(SNS\d+|设备|预警时间|等级|最近一次|这条预警|哪个|多少|Top|TOP|20\d{2}年)", stripped):
             return False
         if len(stripped) <= 8:
@@ -302,16 +355,45 @@ class RequestUnderstanding:
     @staticmethod
     def _should_reuse_context_region(text: str) -> bool:
         stripped = text.strip()
+        if RequestUnderstanding._is_greeting(stripped):
+            return False
         if stripped in {"未来两周呢", "未来两周", "给建议", "建议", "处置建议", "原因呢", "为什么呢", "怎么办", "怎么做", "怎么处理"}:
             return True
         if len(stripped) <= 4:
             return True
         return any(token in stripped for token in ["那里", "那边", "这边", "这里", "这个地方", "这地方", "该地区", "该地", "那呢", "这呢"])
 
+    @classmethod
+    def _is_greeting(cls, text: str) -> bool:
+        stripped = cls._normalize_follow_up_question(text).lower()
+        if not stripped:
+            return False
+        if stripped in cls.GREETING_PATTERNS:
+            return True
+        return bool(re.fullmatch(r"(你好吗|最近好吗|在吗)", stripped))
+
     @staticmethod
     def _normalize_follow_up_question(text: str) -> str:
         normalized = re.sub(r"[，。！？；、]+", "", text)
         return re.sub(r"\s+", " ", normalized).strip()
+
+    @classmethod
+    def _is_domain_switch_follow_up(cls, text: str) -> bool:
+        stripped = cls._normalize_follow_up_question(text)
+        if not stripped or stripped in {"虫情", "虫害", "墒情", "低墒", "高墒"}:
+            return False
+        if not (cls._contains_pest(stripped) or cls._contains_soil(stripped)):
+            return False
+        return bool(re.search(r"(换成|改成|改看|切到|切换到|切换成|改为|换看)", stripped))
+
+    @classmethod
+    def _is_window_only_follow_up(cls, text: str) -> bool:
+        stripped = cls._normalize_follow_up_question(text)
+        if not stripped:
+            return False
+        if cls._contains_pest(stripped) or cls._contains_soil(stripped) or cls._extract_region(stripped):
+            return False
+        return cls._extract_past_window(stripped).get("window_type") != "all"
 
     @staticmethod
     def _asks_stored_disposal_field(text: str) -> bool:
@@ -381,13 +463,17 @@ class RequestUnderstanding:
 
     @staticmethod
     def _extract_past_window(text: str) -> dict:
-        if m := re.search(r"(?:过去|最近|近)(\d+|[一二两三四五六七八九十])个?月", text):
+        if re.search(r"(?:过去|最近|近|这)半年", text):
+            return {"window_type": "months", "window_value": 6}
+        if "半年内" in text:
+            return {"window_type": "months", "window_value": 6}
+        if m := re.search(r"(?:过去|最近|近|进)(\d+|[一二两三四五六七八九十])个?月", text):
             months = max(1, RequestUnderstanding._parse_number_token(m.group(1)) or 1)
             return {"window_type": "months", "window_value": months}
-        if m := re.search(r"(?:过去|最近|近)(\d+|[一二两三四五六七八九十])个?(?:星期|周)", text):
+        if m := re.search(r"(?:过去|最近|近|进)(\d+|[一二两三四五六七八九十])个?(?:星期|周)", text):
             weeks = max(1, RequestUnderstanding._parse_number_token(m.group(1)) or 1)
             return {"window_type": "weeks", "window_value": weeks}
-        if m := re.search(r"(?:过去|最近|近)(\d+|[一二两三四五六七八九十])天", text):
+        if m := re.search(r"(?:过去|最近|近|进)(\d+|[一二两三四五六七八九十])天", text):
             days = max(1, RequestUnderstanding._parse_number_token(m.group(1)) or 1)
             return {"window_type": "days", "window_value": days}
         return {"window_type": "all", "window_value": None}
@@ -410,7 +496,7 @@ class RequestUnderstanding:
     @classmethod
     def _infer_task_type(cls, text: str, domain: str, region_name: str, needs_explanation: bool, needs_advice: bool) -> str:
         if needs_explanation or needs_advice:
-            if any(token in text for token in cls.TREND_HINTS):
+            if any(token in text for token in cls.TREND_HINTS) and not cls._has_negated_trend(text):
                 return "trend"
             if any(token in text for token in cls.RANKING_HINTS):
                 return "ranking"
@@ -423,24 +509,38 @@ class RequestUnderstanding:
             and any(token in text for token in ["同时", "而且", "共同", "叠加"])
         ):
             return "joint_risk"
-        if any(token in text for token in cls.TREND_HINTS):
+        if cls._has_detail_hint(text) and domain in {"pest", "soil"} and region_name:
+            return "data_detail"
+        if any(token in text for token in cls.TREND_HINTS) and not cls._has_negated_trend(text):
             return "trend"
         if any(token in text for token in cls.RANKING_HINTS):
             return "ranking"
         if region_name and domain in {"pest", "soil"} and any(token in text for token in cls.OVERVIEW_HINTS):
             return "region_overview"
+        if region_name and domain in {"pest", "soil"} and "数据" in text:
+            return "data_detail"
         if region_name and domain in {"pest", "soil"} and not any(token in text for token in cls.TREND_HINTS + cls.RANKING_HINTS):
             return "region_overview"
         if domain and re.search(r"(哪些地区|哪些地方|哪个地区|哪个地方|哪里|哪儿)", text):
             return "ranking"
         return "unknown"
 
+    @classmethod
+    def _has_detail_hint(cls, text: str) -> bool:
+        if any(token in text for token in cls.DETAIL_HINTS):
+            return True
+        return "数据" in text and not any(token in text for token in cls.OVERVIEW_HINTS)
+
+    @staticmethod
+    def _has_negated_trend(text: str) -> bool:
+        return any(token in text for token in ["不是趋势", "别看趋势", "不要趋势", "不看趋势"])
+
     @staticmethod
     def _needs_historical(text: str, historical_window: dict, future_window: dict | None, domain: str, task_type: str, region_name: str) -> bool:
         if future_window and historical_window.get("window_type") == "all":
             if not any(token in text for token in ["过去", "最近", "近", "历史", "此前", "之前"]):
                 return False
-        if task_type in {"ranking", "trend", "region_overview", "joint_risk"} and domain:
+        if task_type in {"ranking", "trend", "region_overview", "joint_risk", "data_detail"} and domain:
             return True
         if historical_window.get("window_type") != "all":
             return True

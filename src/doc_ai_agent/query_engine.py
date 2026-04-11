@@ -116,8 +116,12 @@ class QueryEngine:
             return f"{time_phrase}缺水最厉害的地方是哪里？"
         if query_type == "pest_trend":
             return f"{region_name}{time_phrase}虫害走势怎么样？" if region_name else f"{time_phrase}虫情最严重的地方是哪里？"
+        if query_type == "pest_detail":
+            return f"{region_name}{time_phrase}虫害具体数据是什么？" if region_name else f"{time_phrase}虫情具体数据是什么？"
         if query_type == "soil_trend":
             return f"{region_name}{time_phrase}墒情走势怎么样？" if region_name else f"{time_phrase}缺水最厉害的地方是哪里？"
+        if query_type == "soil_detail":
+            return f"{region_name}{time_phrase}墒情具体数据是什么？" if region_name else f"{time_phrase}墒情具体数据是什么？"
         if query_type == "joint_risk":
             return f"{time_phrase}哪些地方虫情高而且缺水更明显？"
         if query_type == "top":
@@ -564,6 +568,71 @@ class QueryEngine:
             return 0.0
         return max(float(item.get(key) or 0) for item in series)
 
+    @staticmethod
+    def _format_series_detail(series: list[dict], value_key: str, value_label: str) -> str:
+        return "；".join(f"{item.get('date', '')} {value_label}{float(item.get(value_key) or 0):g}" for item in series)
+
+    def _answer_pest_detail(self, question: str, plan: dict) -> QueryResult:
+        since = str(plan.get("since") or "1970-01-01 00:00:00")
+        until = plan.get("until") or None
+        region_name, region_level = self._extract_region(question, plan)
+        if not region_name:
+            return QueryResult(answer="请补充要看的地区，比如某个市或区县。", data=[], evidence={})
+        data = self.repo.pest_trend(since, until, region_name, region_level=region_level)
+        since_scope = self._format_since_scope(since)
+        if not data:
+            answer = f"{region_name}{since_scope}暂无可用虫情具体数据。"
+            suffix = self._available_pest_range_suffix()
+            if suffix:
+                answer = f"{answer}{suffix}"
+            no_data_reason = self._build_no_data_reason(
+                source="pest",
+                label="虫情监测数据",
+                since=since,
+                until=until,
+                time_range=self._available_pest_time_range(),
+                region_name=region_name,
+            )
+            return QueryResult(
+                answer=answer,
+                data=data,
+                evidence={
+                    "rule": "按日汇总 normalized_pest_count 输出地区虫情具体值",
+                    "sql": "pest_trend",
+                    "query_type": "pest_detail",
+                    "region_name": region_name,
+                    "region_level": region_level,
+                    "since": since,
+                    "until": until,
+                    "available_data_ranges": self._available_pest_ranges(),
+                    "no_data_reasons": [no_data_reason],
+                    "recovery_suggestions": self._build_recovery_suggestions(
+                        question=question,
+                        query_type="pest_detail",
+                        no_data_reason=no_data_reason,
+                        time_ranges=self._available_pest_ranges(),
+                        region_name=region_name,
+                    ),
+                },
+            )
+        detail_text = self._format_series_detail(data, "severity_score", "严重度")
+        answer = f"{region_name}{since_scope}虫情具体数据（按日汇总）为：{detail_text}。"
+        return QueryResult(
+            answer=answer,
+            data=data,
+            evidence={
+                "rule": "按日汇总 normalized_pest_count 输出地区虫情具体值",
+                "sql": "pest_trend",
+                "query_type": "pest_detail",
+                "region_name": region_name,
+                "region_level": region_level,
+                "since": since,
+                "until": until,
+                "available_data_ranges": [],
+                "no_data_reasons": [],
+            },
+        )
+
     def _answer_pest_overview(self, question: str, plan: dict) -> QueryResult:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
@@ -757,6 +826,67 @@ class QueryEngine:
             },
         )
 
+    def _answer_soil_detail(self, question: str, plan: dict) -> QueryResult:
+        since = str(plan.get("since") or "1970-01-01 00:00:00")
+        until = plan.get("until") or None
+        region_name, region_level = self._extract_region(question, plan)
+        if not region_name:
+            return QueryResult(answer="请补充要看的地区，比如某个市或区县。", data=[], evidence={})
+        data = self.repo.soil_trend(since, until, region_name, region_level=region_level)
+        since_scope = self._format_since_scope(since)
+        if not data:
+            answer = f"{region_name}{since_scope}暂无可用墒情具体数据。"
+            suffix = self._available_soil_range_suffix()
+            if suffix:
+                answer = f"{answer}{suffix}"
+            no_data_reason = self._build_no_data_reason(
+                source="soil",
+                label="墒情监测数据",
+                since=since,
+                until=until,
+                time_range=self._available_soil_time_range(),
+                region_name=region_name,
+            )
+            return QueryResult(
+                answer=answer,
+                data=data,
+                evidence={
+                    "rule": "按日汇总平均异常评分输出地区墒情具体值",
+                    "sql": "soil_trend",
+                    "query_type": "soil_detail",
+                    "region_name": region_name,
+                    "region_level": region_level,
+                    "since": since,
+                    "until": until,
+                    "available_data_ranges": self._available_soil_ranges(),
+                    "no_data_reasons": [no_data_reason],
+                    "recovery_suggestions": self._build_recovery_suggestions(
+                        question=question,
+                        query_type="soil_detail",
+                        no_data_reason=no_data_reason,
+                        time_ranges=self._available_soil_ranges(),
+                        region_name=region_name,
+                    ),
+                },
+            )
+        detail_text = self._format_series_detail(data, "avg_anomaly_score", "异常值")
+        answer = f"{region_name}{since_scope}墒情具体数据（按日汇总）为：{detail_text}。"
+        return QueryResult(
+            answer=answer,
+            data=data,
+            evidence={
+                "rule": "按日汇总平均异常评分输出地区墒情具体值",
+                "sql": "soil_trend",
+                "query_type": "soil_detail",
+                "region_name": region_name,
+                "region_level": region_level,
+                "since": since,
+                "until": until,
+                "available_data_ranges": [],
+                "no_data_reasons": [],
+            },
+        )
+
     def _answer_joint_risk(self, question: str, plan: dict) -> QueryResult:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
@@ -819,8 +949,12 @@ class QueryEngine:
                 return self._answer_pest_top(question, plan)
             if query_type == "soil_top":
                 return self._answer_soil_top(question, plan)
+            if query_type == "pest_detail":
+                return self._answer_pest_detail(question, plan)
             if query_type == "pest_overview":
                 return self._answer_pest_overview(question, plan)
+            if query_type == "soil_detail":
+                return self._answer_soil_detail(question, plan)
             if query_type == "soil_overview":
                 return self._answer_soil_overview(question, plan)
             if query_type == "pest_trend":

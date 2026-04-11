@@ -25,7 +25,7 @@ tests/
 ```bash
 cd /Users/mac/Desktop/code/service/doc-ai-agent
 set -a && source .env.local && set +a
-PYTHONPATH=src python3 scripts/run_server.py
+PYTHONPATH=src python3.11 scripts/run_server.py
 ```
 
 可选环境变量：
@@ -39,6 +39,7 @@ PYTHONPATH=src python3 scripts/run_server.py
 - `OPENAI_ROUTER_MODEL`：路由/参数抽取模型，默认 `gpt-4.1-mini`
 - `OPENAI_ADVICE_MODEL`：建议生成模型，默认 `gpt-4.1`
 - `OPENAI_TIMEOUT_SECONDS`：请求超时，默认 `30`
+- `DOC_AGENT_PYTHON_BIN`：开发脚本使用的 Python 解释器；推荐固定到 Python 3.11+
 - `DOC_AGENT_SOURCE_CATALOG`：建议知识源 JSON 文件路径，默认 `./data/knowledge_sources.json`
 - `DOC_AGENT_SOURCE_PROVIDER`：知识检索后端，默认 `static`，可选 `llamaindex`
 - `DOC_AGENT_SOURCE_EMBEDDING_MODEL`：LlamaIndex 嵌入模型，默认 `text-embedding-3-small`
