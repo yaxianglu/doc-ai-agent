@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 data/*.db
+.run-server.log
+memory.db
+vector_store.db
+data/agent-memory.json
