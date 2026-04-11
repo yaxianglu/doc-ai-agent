@@ -4,6 +4,17 @@ from doc_ai_agent.entity_extraction import EntityExtractionService
 from doc_ai_agent.request_understanding import RequestUnderstanding
 
 
+class FakeBackend:
+    def extract(self, _question: str, context: dict | None = None) -> dict:
+        return {
+            "engine": "instructor",
+            "domain": "pest",
+            "task_type": "data_detail",
+            "region_name": "苏州市",
+            "historical_window": {"window_type": "months", "window_value": 5},
+        }
+
+
 class RequestUnderstandingTests(unittest.TestCase):
     def setUp(self):
         self.understanding = RequestUnderstanding()
@@ -127,6 +138,34 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertTrue(result["needs_advice"])
         self.assertFalse(result["needs_forecast"])
 
+    def test_domain_switch_follow_up_does_not_get_polluted_by_previous_domain(self):
+        result = self.understanding.analyze(
+            "换成墒情",
+            context={
+                "domain": "pest",
+                "region_name": "徐州市",
+            },
+        )
+
+        self.assertFalse(result["used_context"])
+        self.assertEqual(result["resolved_question"], "换成墒情")
+        self.assertEqual(result["domain"], "soil")
+        self.assertEqual(result["region_name"], "")
+
+    def test_window_follow_up_does_not_get_polluted_by_previous_domain(self):
+        result = self.understanding.analyze(
+            "那过去半年呢",
+            context={
+                "domain": "pest",
+                "region_name": "徐州市",
+            },
+        )
+
+        self.assertFalse(result["used_context"])
+        self.assertEqual(result["resolved_question"], "那过去半年呢")
+        self.assertEqual(result["window"]["window_type"], "months")
+        self.assertEqual(result["window"]["window_value"], 6)
+
     def test_preserves_trend_semantics_for_zoushi_wording(self):
         result = self.understanding.analyze("南京近三周虫害走势怎么样？")
 
@@ -158,6 +197,17 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["normalized_question"], "给我过去五个月徐州市的虫害情况")
         self.assertNotIn("最严重的地方", result["normalized_question"])
 
+    def test_normalizes_common_jin_typo_for_relative_window(self):
+        result = self.understanding.analyze("苏州进5个月的虫害数据")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "苏州市")
+        self.assertEqual(result["task_type"], "data_detail")
+        self.assertEqual(result["window"]["window_type"], "months")
+        self.assertEqual(result["window"]["window_value"], 5)
+        self.assertEqual(result["resolved_question"], "苏州市近5个月的虫害数据")
+        self.assertEqual(result["normalized_question"], "苏州市近5个月的虫害数据")
+
     def test_entity_extractor_fallback_keeps_region_and_domain_from_noisy_prompt(self):
         extractor = EntityExtractionService()
 
@@ -178,6 +228,34 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["domain"], "pest")
         self.assertEqual(result["task_type"], "region_overview")
         self.assertEqual(result["historical_query_text"], "麻烦你帮我看一下 过去五个月徐州市这边的虫害整体情况怎么样")
+
+    def test_understanding_accepts_backend_data_detail_task_type(self):
+        understanding = RequestUnderstanding(backend=FakeBackend())
+
+        result = understanding.analyze("苏州进5个月的虫害数据")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "苏州市")
+        self.assertEqual(result["task_type"], "data_detail")
+        self.assertEqual(result["historical_query_text"], "苏州市近5个月的虫害数据")
+
+    def test_greeting_does_not_reuse_agri_context(self):
+        result = self.understanding.analyze(
+            "你好",
+            context={
+                "domain": "pest",
+                "region_name": "常州市",
+                "pending_user_question": "过去5个月虫情最严重的地方是哪里",
+            },
+        )
+
+        self.assertFalse(result["used_context"])
+        self.assertEqual(result["resolved_question"], "你好")
+        self.assertEqual(result["normalized_question"], "你好")
+        self.assertEqual(result["domain"], "")
+        self.assertEqual(result["region_name"], "")
+        self.assertFalse(result["needs_historical"])
+        self.assertEqual(result["task_type"], "unknown")
 
 
 if __name__ == "__main__":

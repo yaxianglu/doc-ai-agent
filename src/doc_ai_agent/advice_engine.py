@@ -12,6 +12,20 @@ class AdviceResult:
 
 
 class AdviceEngine:
+    GREETING_PATTERNS = {
+        "你好",
+        "您好",
+        "嗨",
+        "哈喽",
+        "hello",
+        "hi",
+        "早上好",
+        "上午好",
+        "中午好",
+        "下午好",
+        "晚上好",
+    }
+
     def __init__(self, llm_client=None, model: str = "", source_provider=None):
         self.llm_client = llm_client
         self.model = model
@@ -21,8 +35,30 @@ class AdviceEngine:
         context = dict(context or {})
         normalized_question = str(question or "").strip()
         stripped_question = normalized_question.rstrip("？?")
+        is_greeting_question = self._is_greeting_question(stripped_question)
         is_identity_question = stripped_question in {"你是谁", "你是干什么的", "你能做什么", "你可以做什么"}
         is_explanation_question = any(token in normalized_question for token in ["为什么", "原因", "依据"])
+        sources = []
+        if is_greeting_question:
+            return AdviceResult(
+                answer=(
+                    "你好，我是 AI农情工作台 助手。"
+                    "你可以直接问我某个地区、时间范围内的虫情/墒情历史数据、趋势、预测或处置建议，"
+                    "比如：过去5个月徐州虫情具体数据。"
+                ),
+                sources=sources or [{"title": "内置问候说明", "url": "", "published_at": "", "snippet": ""}],
+                generation_mode="rule",
+                model="",
+            )
+
+        if is_identity_question:
+            return AdviceResult(
+                answer="我是 AI农情工作台 助手，可以基于虫情、墒情历史数据做问答、趋势分析、预测判断，并给出处置建议。",
+                sources=sources or [{"title": "内置身份说明", "url": "", "published_at": "", "snippet": ""}],
+                generation_mode="rule",
+                model="",
+            )
+
         sources = []
         if self.source_provider is not None:
             search_query = question
@@ -34,14 +70,6 @@ class AdviceEngine:
                 sources = self.source_provider.search(search_query, limit=3, context=context)
             except TypeError:
                 sources = self.source_provider.search(search_query, limit=3)
-
-        if is_identity_question:
-            return AdviceResult(
-                answer="我是 AI农情工作台 助手，可以基于虫情、墒情历史数据做问答、趋势分析、预测判断，并给出处置建议。",
-                sources=sources or [{"title": "内置身份说明", "url": "", "published_at": "", "snippet": ""}],
-                generation_mode="rule",
-                model="",
-            )
 
         if self.llm_client and self.model:
             source_text = ""
@@ -141,3 +169,12 @@ class AdviceEngine:
             generation_mode="rule",
             model="",
         )
+
+    @classmethod
+    def _is_greeting_question(cls, question: str) -> bool:
+        stripped = str(question or "").strip().rstrip("？?！!。").lower()
+        if not stripped:
+            return False
+        if stripped in cls.GREETING_PATTERNS:
+            return True
+        return stripped in {"你好吗", "最近好吗", "在吗"}
