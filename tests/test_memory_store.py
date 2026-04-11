@@ -83,6 +83,25 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(snapshot["user_preferences"], {})
         self.assertEqual(snapshot["last_verified_answer"], "")
 
+    def test_normalize_memory_snapshot_adds_slot_metadata(self):
+        snapshot = normalize_memory_snapshot(
+            {
+                "domain": "pest",
+                "region_name": "徐州市",
+                "window": {"window_type": "months", "window_value": 5},
+                "conversation_state": {"last_intent": "data_query"},
+            }
+        )
+
+        self.assertIn("slots", snapshot)
+        self.assertEqual(snapshot["slots"]["domain"]["value"], "pest")
+        self.assertEqual(snapshot["slots"]["region"]["value"], "徐州市")
+        self.assertEqual(snapshot["slots"]["time_range"]["value"], {"mode": "relative", "value": "5_months"})
+        self.assertEqual(snapshot["slots"]["intent"]["value"], "data_query")
+        for slot_name in ["domain", "region", "time_range", "intent"]:
+            for field in ["value", "source", "priority", "ttl", "updated_at_turn"]:
+                self.assertIn(field, snapshot["slots"][slot_name])
+
     def test_local_memory_store_load_normalizes_legacy_payload(self):
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "agent-memory.json")

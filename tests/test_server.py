@@ -147,6 +147,43 @@ class ServerTests(unittest.TestCase):
                 "近3个星期虫情最严重的地方是哪里",
             )
 
+    def test_chat_greeting_ignores_thread_context_and_returns_intro(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = os.path.join(td, "alerts.db")
+            repo_root = os.path.dirname(os.path.dirname(__file__))
+            cfg = AppConfig(
+                data_dir=repo_root,
+                db_path=db_path,
+                refresh_interval_minutes=5,
+                port=0,
+                openai_api_key="",
+                openai_base_url="https://api.openai.com/v1",
+                openai_router_model="gpt-4.1-mini",
+                openai_advice_model="gpt-4.1",
+                openai_timeout_seconds=30,
+                memory_store_path=os.path.join(td, "agent-memory.json"),
+            )
+            app = build_app(cfg)
+            app.refresh()
+
+            first_turn = app.chat("过去5个月常州虫情最严重的地方是哪里", thread_id="thread-greeting")
+            chat_data = app.chat("你好", thread_id="thread-greeting")
+
+            self.assertEqual(chat_data["mode"], "advice")
+            self.assertIn("AI农情工作台", chat_data["answer"])
+            self.assertNotIn("常州市", chat_data["answer"])
+            self.assertFalse(chat_data["evidence"]["request_understanding"]["used_context"])
+            self.assertEqual(chat_data["evidence"]["generation_mode"], "rule")
+            self.assertEqual(chat_data["processing"]["retrieval"], "未使用")
+            self.assertEqual(
+                chat_data["evidence"]["memory_state"]["query_type"],
+                first_turn["evidence"]["memory_state"]["query_type"],
+            )
+            self.assertEqual(
+                chat_data["evidence"]["memory_state"]["region_name"],
+                first_turn["evidence"]["memory_state"]["region_name"],
+            )
+
     def test_chat_returns_execution_plan_for_mixed_analysis_request(self):
         with tempfile.TemporaryDirectory() as td:
             db_path = os.path.join(td, "alerts.db")
@@ -169,10 +206,15 @@ class ServerTests(unittest.TestCase):
             chat_data = app.chat("过去5个月墒情最严重的地方是哪里，未来两周会怎样，为什么，给建议", thread_id="thread-mixed")
 
             self.assertIn("execution_plan", chat_data["evidence"])
+            self.assertIn("task_graph", chat_data["evidence"])
             self.assertIn("analysis_context", chat_data["evidence"])
             self.assertIn("request_understanding", chat_data["evidence"])
             self.assertEqual(chat_data["evidence"]["forecast"]["forecast_backend"], "statsforecast")
             self.assertEqual(chat_data["evidence"]["forecast"]["model_name"], "AutoETS")
+            self.assertEqual(
+                [task["type"] for task in chat_data["evidence"]["task_graph"]["tasks"]],
+                ["historical_rank", "cause_retrieval", "forecast", "advice_retrieval", "merge_answer"],
+            )
 
     def test_latest_device_query_returns_disposal_suggestion_when_requested(self):
         with tempfile.TemporaryDirectory() as td:

@@ -4,6 +4,8 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 
+from .query_plan import build_query_plan
+
 CITY_ALIASES = {
     "南京": "南京市",
     "无锡": "无锡市",
@@ -39,8 +41,10 @@ class QueryPlanner:
         "avg_by_level",
         "consecutive_devices",
         "latest_device",
+        "pest_detail",
         "region_disposal",
         "sms_empty",
+        "soil_detail",
         "subtype_ratio",
         "city_day_change",
         "highest_values",
@@ -48,6 +52,19 @@ class QueryPlanner:
     }
 
     PLAYBOOK_UPGRADEABLE_QUERY_TYPES = {"count", "top", "structured_agri"}
+    GREETING_PATTERNS = {
+        "你好",
+        "您好",
+        "嗨",
+        "哈喽",
+        "hello",
+        "hi",
+        "早上好",
+        "上午好",
+        "中午好",
+        "下午好",
+        "晚上好",
+    }
 
     def __init__(self, intent_router=None, playbook_router=None):
         self.intent_router = intent_router
@@ -56,8 +73,10 @@ class QueryPlanner:
     @staticmethod
     def _is_agri_query_type(query_type: str) -> bool:
         return query_type in {
+            "pest_detail",
             "pest_top",
             "pest_overview",
+            "soil_detail",
             "soil_top",
             "soil_overview",
             "pest_trend",
@@ -72,6 +91,7 @@ class QueryPlanner:
         q = question.lower()
         score = 0.0
         for token, weight in [
+            ("数据", 0.25),
             ("多少", 0.35),
             ("top", 0.3),
             ("统计", 0.3),
@@ -199,15 +219,18 @@ class QueryPlanner:
 
     def _extract_relative_window(self, question: str) -> tuple[Optional[str], Optional[str], dict]:
         now = datetime.now()
-        if m := re.search(r"(?:近|过去|最近)(\d+|[一二两三四五六七八九十])个?(?:星期|周)", question):
+        if re.search(r"(?:过去|最近|近|这)半年", question) or "半年内" in question:
+            since = now - timedelta(days=30 * 6)
+            return since.strftime("%Y-%m-%d 00:00:00"), None, {"window_type": "months", "window_value": 6}
+        if m := re.search(r"(?:近|进|过去|最近)(\d+|[一二两三四五六七八九十])个?(?:星期|周)", question):
             weeks = max(1, self._parse_number_token(m.group(1)))
             since = now - timedelta(days=7 * weeks)
             return since.strftime("%Y-%m-%d 00:00:00"), None, {"window_type": "weeks", "window_value": weeks}
-        if m := re.search(r"(?:过去|最近)(\d+|[一二两三四五六七八九十])个?月", question):
+        if m := re.search(r"(?:近|进|过去|最近)(\d+|[一二两三四五六七八九十])个?月", question):
             months = max(1, self._parse_number_token(m.group(1)))
             since = now - timedelta(days=30 * months)
             return since.strftime("%Y-%m-%d 00:00:00"), None, {"window_type": "months", "window_value": months}
-        if m := re.search(r"(?:近|过去|最近)(\d+|[一二两三四五六七八九十])天", question):
+        if m := re.search(r"(?:近|进|过去|最近)(\d+|[一二两三四五六七八九十])天", question):
             days = max(1, self._parse_number_token(m.group(1)))
             since = now - timedelta(days=days)
             return since.strftime("%Y-%m-%d 00:00:00"), None, {"window_type": "days", "window_value": days}
@@ -237,12 +260,16 @@ class QueryPlanner:
     def _infer_query_type(self, question: str) -> str:
         if ("同时" in question or "共同" in question) and (("高虫情" in question or "虫情" in question) and ("低墒情" in question or "墒情" in question)):
             return "joint_risk"
-        if any(token in question for token in ["走势", "走向", "波动", "趋势", "变化"]) and ("虫情" in question or "虫害" in question):
-            return "pest_trend"
-        if any(token in question for token in ["走势", "走向", "波动", "趋势", "变化"]) and "墒情" in question:
-            return "soil_trend"
         has_region = self._extract_city(question) is not None or self._extract_county(question) is not None
-        asks_overview = any(token in question for token in ["情况", "概况", "整体", "总体", "态势", "表现", "怎么样", "如何"])
+        if has_region and self._has_detail_hint(question) and ("虫情" in question or "虫害" in question):
+            return "pest_detail"
+        if has_region and self._has_detail_hint(question) and "墒情" in question:
+            return "soil_detail"
+        if any(token in question for token in ["走势", "走向", "波动", "趋势", "变化"]) and not self._has_negated_trend(question) and ("虫情" in question or "虫害" in question):
+            return "pest_trend"
+        if any(token in question for token in ["走势", "走向", "波动", "趋势", "变化"]) and not self._has_negated_trend(question) and "墒情" in question:
+            return "soil_trend"
+        asks_overview = any(token in question for token in ["情况", "概况", "整体", "总体", "态势", "表现", "怎么样", "如何", "数据"])
         if has_region and asks_overview and ("虫情" in question or "虫害" in question):
             return "pest_overview"
         if has_region and asks_overview and "墒情" in question:
@@ -339,6 +366,8 @@ class QueryPlanner:
         q = (question or "").strip()
         if not q:
             return True
+        if self._is_greeting_question(q):
+            return False
         if re.fullmatch(r"[\d\W_]+", q):
             return True
         if re.fullmatch(r"(哈|呵|啊|嗯|哦|呀){3,}", q):
@@ -351,7 +380,14 @@ class QueryPlanner:
         has_agri_domain = re.search(r"(虫情|虫害|墒情)", question) is not None
         asks_severity = re.search(r"(受灾|灾情|最严重|最重)", question) is not None
         asks_region = re.search(r"(地方|地区|哪里|哪儿)", question) is not None
-        return asks_severity and asks_region and not has_agri_domain
+        asks_generic_agri = re.search(r"(受灾|灾情|灾害)", question) is not None
+        asks_dataset_or_overview = re.search(r"(数据|情况|概况|整体|总体|态势|走势|趋势)", question) is not None
+        route = self._build_route(question, "structured_agri")
+        window = dict(route.get("window") or {})
+        has_scope = route.get("city") is not None or route.get("county") is not None or window.get("window_type") not in {"none", "all"}
+        return not has_agri_domain and (
+            (asks_severity and asks_region) or (asks_generic_agri and asks_dataset_or_overview and has_scope)
+        )
 
     def _normalize_history(self, history: object) -> list[dict[str, str]]:
         if not isinstance(history, list):
@@ -398,6 +434,8 @@ class QueryPlanner:
         if intent == "advice":
             return "advice"
         query_type = str(route.get("query_type") or "")
+        if query_type.endswith("_detail"):
+            return "detail"
         if query_type.endswith("_overview"):
             return "overview"
         if query_type.endswith("_trend"):
@@ -413,6 +451,14 @@ class QueryPlanner:
     def _typed_metadata(self, question: str, route: dict, intent: str, needs_clarification: bool, context: dict | None, understanding: dict | None) -> dict:
         understanding = dict(understanding or {})
         context = dict(context or {})
+        if self._is_greeting_question(question):
+            return {
+                "domain": "",
+                "region_name": "",
+                "historical_window": {"window_type": "all", "window_value": None},
+                "future_window": None,
+                "answer_mode": self._answer_mode_for_plan(intent, route, needs_clarification),
+            }
         domain = str(understanding.get("domain") or self._domain_from_query_type(str(route.get("query_type") or "")) or self._infer_domain_from_text(question, context=context) or "")
         region_name = (
             str(understanding.get("region_name") or "")
@@ -434,11 +480,39 @@ class QueryPlanner:
         route = dict(plan.get("route") or {})
         finalized = dict(plan)
         finalized.update(self._typed_metadata(question, route, str(plan.get("intent") or "advice"), bool(plan.get("needs_clarification")), context, understanding))
+        understanding_payload = dict(understanding or {})
+        inferred_needs_explanation = bool(understanding_payload.get("needs_explanation")) or any(token in question for token in ["为什么", "原因", "依据"])
+        inferred_needs_advice = bool(understanding_payload.get("needs_advice")) or any(
+            token in question for token in ["建议", "处置", "怎么办", "怎么做", "怎么处理", "怎么养", "防治"]
+        )
+        inferred_needs_forecast = (
+            bool(understanding_payload.get("needs_forecast"))
+            or isinstance(finalized.get("future_window"), dict)
+            or "未来" in question
+        )
+        finalized["query_plan"] = build_query_plan(
+            plan_intent=str(finalized.get("intent") or "advice"),
+            route=route,
+            domain=str(finalized.get("domain") or ""),
+            region_name=str(finalized.get("region_name") or ""),
+            historical_window=dict(finalized.get("historical_window") or {}),
+            future_window=finalized.get("future_window") if isinstance(finalized.get("future_window"), dict) else None,
+            answer_mode=str(finalized.get("answer_mode") or ""),
+            needs_clarification=bool(finalized.get("needs_clarification")),
+            is_greeting=self._is_greeting_question(question),
+            needs_explanation=inferred_needs_explanation,
+            needs_forecast=inferred_needs_forecast,
+            needs_advice=inferred_needs_advice,
+        )
         return finalized
 
     def _context_follow_up_plan(self, question: str, context: dict | None) -> dict | None:
         context = dict(context or {})
         if not context:
+            return None
+        if self._is_greeting_question(question):
+            return None
+        if not self._looks_like_contextual_follow_up(question):
             return None
 
         previous_route = dict(context.get("route") or {})
@@ -446,6 +520,75 @@ class QueryPlanner:
         domain = str(context.get("domain") or self._domain_from_query_type(previous_query_type) or "")
         trace = [f"reused thread context domain={domain or 'unknown'}"]
         future_window = self._extract_future_window(question)
+        explicit_domain = self._explicit_domain_from_text(question)
+        relative_since, relative_until, relative_window = self._extract_relative_window(question)
+        city = self._extract_city(question)
+        county = self._extract_county(question)
+
+        if self._is_detail_follow_up(question) and domain in {"pest", "soil"}:
+            route = dict(previous_route)
+            route["query_type"] = f"{explicit_domain or domain}_detail"
+            if relative_window.get("window_type") != "none":
+                route["since"] = relative_since
+                route["until"] = relative_until
+                route["window"] = relative_window
+            if not route.get("city") and not route.get("county") and context.get("region_name"):
+                route["city"] = context.get("region_name")
+                route["region_level"] = "city"
+            return {
+                "intent": "data_query",
+                "confidence": 0.91,
+                "route": route,
+                "needs_clarification": False,
+                "clarification": None,
+                "reason": "context_detail_follow_up",
+                "context_trace": trace + ["reused previous analysis context for concrete data"],
+            }
+
+        if self._is_advice_follow_up(question) and domain in {"pest", "soil"}:
+            return {
+                "intent": "advice",
+                "confidence": 0.9,
+                "route": dict(previous_route),
+                "needs_clarification": False,
+                "clarification": None,
+                "reason": "context_advice_follow_up",
+                "context_trace": trace + ["reused previous analysis context for advice"],
+            }
+
+        if self._is_explanation_follow_up(question) and domain in {"pest", "soil"}:
+            return {
+                "intent": "advice",
+                "confidence": 0.91,
+                "route": dict(previous_route),
+                "needs_clarification": False,
+                "clarification": None,
+                "reason": "context_explanation_follow_up",
+                "context_trace": trace + ["reused previous analysis context for explanation"],
+            }
+
+        if explicit_domain in {"pest", "soil"} and domain in {"pest", "soil"} and (
+            explicit_domain != domain or self._has_domain_switch_verb(question)
+        ):
+            next_query_type = self._query_type_for_domain_switch(previous_query_type, explicit_domain)
+            route = dict(previous_route)
+            route["query_type"] = next_query_type
+            if relative_window.get("window_type") != "none":
+                route["since"] = relative_since
+                route["until"] = relative_until
+                route["window"] = relative_window
+            if not route.get("city") and not route.get("county") and context.get("region_name"):
+                route["city"] = context.get("region_name")
+                route["region_level"] = "city"
+            return {
+                "intent": "data_query",
+                "confidence": 0.9,
+                "route": route,
+                "needs_clarification": False,
+                "clarification": None,
+                "reason": "context_domain_switch_follow_up",
+                "context_trace": trace + [f"switch domain={explicit_domain} and preserve scope"],
+            }
 
         if future_window and domain in {"pest", "soil"}:
             route = dict(previous_route)
@@ -464,30 +607,25 @@ class QueryPlanner:
                 "context_trace": trace + [f"forecast horizon={future_window['horizon_days']}d"],
             }
 
-        if question.strip() in {"给建议", "建议", "处置建议", "怎么处理", "怎么办"} and domain in {"pest", "soil"}:
+        if relative_window.get("window_type") != "none" and domain in {"pest", "soil"} and not (city or county):
+            route = dict(previous_route)
+            route["query_type"] = self._query_type_for_window_follow_up(previous_query_type, domain)
+            route["since"] = relative_since
+            route["until"] = relative_until
+            route["window"] = relative_window
+            if not route.get("city") and not route.get("county") and context.get("region_name"):
+                route["city"] = context.get("region_name")
+                route["region_level"] = "city"
             return {
-                "intent": "advice",
-                "confidence": 0.9,
-                "route": dict(previous_route),
+                "intent": "data_query",
+                "confidence": 0.89,
+                "route": route,
                 "needs_clarification": False,
                 "clarification": None,
-                "reason": "context_advice_follow_up",
-                "context_trace": trace + ["reused previous analysis context for advice"],
+                "reason": "context_window_follow_up",
+                "context_trace": trace + [f"switch window={relative_window['window_type']}:{relative_window['window_value']}"],
             }
 
-        if question.strip() in {"为什么", "为什么呢", "原因", "原因呢", "依据", "为什么会这样", "为什么会这样呢"} and domain in {"pest", "soil"}:
-            return {
-                "intent": "advice",
-                "confidence": 0.91,
-                "route": dict(previous_route),
-                "needs_clarification": False,
-                "clarification": None,
-                "reason": "context_explanation_follow_up",
-                "context_trace": trace + ["reused previous analysis context for explanation"],
-            }
-
-        city = self._extract_city(question)
-        county = self._extract_county(question)
         if (city or county) and domain in {"pest", "soil"} and len(question.strip()) <= 12:
             route = dict(previous_route)
             route["city"] = city
@@ -512,7 +650,7 @@ class QueryPlanner:
                     "reason": "context_region_forecast_follow_up",
                     "context_trace": trace + [f"switch region={(county or city)} and preserve forecast intent"],
                 }
-            route["query_type"] = f"{domain}_trend"
+            route["query_type"] = self._query_type_for_region_follow_up(previous_query_type, domain)
             return {
                 "intent": "data_query",
                 "confidence": 0.86,
@@ -524,6 +662,95 @@ class QueryPlanner:
             }
 
         return None
+
+    @staticmethod
+    def _looks_like_contextual_follow_up(question: str) -> bool:
+        stripped = (question or "").strip()
+        if not stripped:
+            return False
+        if QueryPlanner._is_greeting_question(stripped):
+            return False
+        if re.search(r"(SNS\d+|设备|最近一次|预警时间|告警值|按告警等级|20\d{2}年)", stripped):
+            return False
+        if len(stripped) <= 12:
+            return True
+        return bool(re.match(r"^(那|那么|那就|未来|换成|改成|建议|给建议|处置建议|为什么|原因|我说的是|不是趋势|具体数据)", stripped))
+
+    @staticmethod
+    def _has_detail_hint(question: str) -> bool:
+        q = question or ""
+        return any(token in q for token in ["具体数据", "详细数据", "数据明细", "明细数据", "原始数据", "具体数值", "详细数值", "逐日数据", "每天数据"]) or (
+            "数据" in q and not any(token in q for token in ["概况", "情况", "整体", "总体", "态势"])
+        )
+
+    @staticmethod
+    def _has_negated_trend(question: str) -> bool:
+        q = question or ""
+        return any(token in q for token in ["不是趋势", "别看趋势", "不要趋势", "不看趋势"])
+
+    @staticmethod
+    def _has_domain_switch_verb(question: str) -> bool:
+        return bool(re.search(r"(换成|改成|改看|切到|切换到|切换成|改为|换看)", question or ""))
+
+    @staticmethod
+    def _is_advice_follow_up(question: str) -> bool:
+        q = question or ""
+        return any(token in q for token in ["建议", "处置", "怎么办", "怎么做", "怎么处理", "怎么养", "防治"])
+
+    @staticmethod
+    def _is_explanation_follow_up(question: str) -> bool:
+        q = question or ""
+        return any(token in q for token in ["为什么", "原因", "依据"])
+
+    @classmethod
+    def _is_detail_follow_up(cls, question: str) -> bool:
+        return cls._has_detail_hint(question)
+
+    @staticmethod
+    def _explicit_domain_from_text(question: str) -> str:
+        has_pest = "虫情" in question or "虫害" in question
+        has_soil = "墒情" in question or "缺水" in question or "干旱" in question
+        if has_pest and not has_soil:
+            return "pest"
+        if has_soil and not has_pest:
+            return "soil"
+        return ""
+
+    @staticmethod
+    def _query_type_for_domain_switch(previous_query_type: str, next_domain: str) -> str:
+        if previous_query_type.endswith("_forecast"):
+            return f"{next_domain}_forecast"
+        if previous_query_type.endswith("_detail"):
+            return f"{next_domain}_detail"
+        if previous_query_type.endswith("_trend"):
+            return f"{next_domain}_trend"
+        if previous_query_type.endswith("_top"):
+            return f"{next_domain}_top"
+        return f"{next_domain}_overview"
+
+    @staticmethod
+    def _query_type_for_region_follow_up(previous_query_type: str, domain: str) -> str:
+        if previous_query_type.endswith("_forecast"):
+            return f"{domain}_forecast"
+        if previous_query_type.endswith("_detail"):
+            return f"{domain}_detail"
+        if previous_query_type.endswith("_trend"):
+            return f"{domain}_trend"
+        return f"{domain}_overview"
+
+    @staticmethod
+    def _query_type_for_window_follow_up(previous_query_type: str, domain: str) -> str:
+        if previous_query_type.endswith("_forecast"):
+            return f"{domain}_forecast"
+        if previous_query_type.endswith("_detail"):
+            return f"{domain}_detail"
+        if previous_query_type.endswith("_trend"):
+            return f"{domain}_trend"
+        if previous_query_type.endswith("_top"):
+            return f"{domain}_top"
+        if previous_query_type == "joint_risk":
+            return "joint_risk"
+        return f"{domain}_overview"
 
     def _playbook_route(self, question: str, context: dict | None = None) -> dict | None:
         if self.playbook_router is None:
@@ -624,9 +851,28 @@ class QueryPlanner:
         stripped = (question or "").strip().rstrip("？?")
         return stripped in {"你是谁", "你是干什么的", "你能做什么", "你可以做什么"}
 
+    @classmethod
+    def _is_greeting_question(cls, question: str) -> bool:
+        stripped = (question or "").strip().rstrip("？?！!。").lower()
+        if not stripped:
+            return False
+        if stripped in cls.GREETING_PATTERNS:
+            return True
+        return bool(re.fullmatch(r"(你好吗|最近好吗|在吗)", stripped))
+
     def plan(self, question: str, history: object = None, context: dict | None = None, understanding: dict | None = None) -> dict:
         original_question = question
         question = self._resolve_follow_up_question(question, history, context=context)
+        if self._is_greeting_question(question):
+            return self._finalize_plan({
+                "intent": "advice",
+                "confidence": 0.98,
+                "route": self._build_route(question, "count"),
+                "needs_clarification": False,
+                "clarification": None,
+                "reason": "greeting_intro",
+                "context_trace": [],
+            }, question, context=context, understanding=understanding)
         if context_follow_up := self._context_follow_up_plan(original_question, context):
             return self._finalize_plan(context_follow_up, question, context=context, understanding=understanding)
         if self._is_identity_question(question):

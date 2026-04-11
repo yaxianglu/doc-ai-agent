@@ -213,6 +213,21 @@ class AggressiveRouterLLM(FakeLLMClient):
 
 
 class AgentTests(unittest.TestCase):
+    def test_greeting_does_not_answer_with_stale_agri_context(self):
+        agent = DocAIAgent(
+            AlertRepository(self.db),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("过去5个月常州虫情最严重的地方是哪里", thread_id="thread-greeting")
+        follow_up = agent.answer("你好", thread_id="thread-greeting")
+
+        self.assertEqual(follow_up["mode"], "advice")
+        self.assertIn("AI农情工作台", follow_up["answer"])
+        self.assertNotIn("常州市", follow_up["answer"])
+        self.assertEqual(follow_up["evidence"]["generation_mode"], "rule")
+        self.assertFalse(follow_up["evidence"]["request_understanding"]["used_context"])
+
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self.db = os.path.join(self.td.name, "alerts.db")
@@ -483,6 +498,58 @@ class AgentGraphTests(unittest.TestCase):
         self.assertIn("历史数据", result["answer"])
         self.assertIn("预测", result["answer"])
         self.assertIn("建议", result["answer"])
+        self.assertEqual(
+            [task["type"] for task in result["evidence"]["task_graph"]["tasks"]],
+            ["historical_rank", "cause_retrieval", "forecast", "advice_retrieval", "merge_answer"],
+        )
+
+    def test_simple_ranking_request_emits_minimal_task_graph(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("过去5个月虫情最严重的地方是哪里？", thread_id="thread-task-graph-simple")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(
+            [task["type"] for task in result["evidence"]["task_graph"]["tasks"]],
+            ["historical_rank", "merge_answer"],
+        )
+
+    def test_memory_state_exposes_slot_metadata(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("给我过去5个月苏州市的虫害情况", thread_id="thread-slot-memory")
+
+        slots = result["evidence"]["memory_state"]["slots"]
+        self.assertEqual(slots["domain"]["value"], "pest")
+        self.assertEqual(slots["region"]["value"], "苏州市")
+        self.assertEqual(slots["time_range"]["value"], {"mode": "relative", "value": "5_months"})
+        self.assertEqual(slots["intent"]["value"], "analysis")
+        for slot_name in ["domain", "region", "time_range", "intent"]:
+            for field in ["value", "source", "priority", "ttl", "updated_at_turn"]:
+                self.assertIn(field, slots[slot_name])
+
+    def test_greeting_does_not_overwrite_business_slots(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("给我过去5个月苏州市的虫害情况", thread_id="thread-slot-greeting")
+        follow_up = agent.answer("你好", thread_id="thread-slot-greeting")
+
+        slots = follow_up["evidence"]["memory_state"]["slots"]
+        self.assertEqual(slots["domain"]["value"], "pest")
+        self.assertEqual(slots["region"]["value"], "苏州市")
+        self.assertEqual(slots["time_range"]["value"], {"mode": "relative", "value": "5_months"})
+        self.assertEqual(slots["domain"]["updated_at_turn"], 1)
+        self.assertEqual(slots["region"]["updated_at_turn"], 1)
+        self.assertEqual(slots["time_range"]["updated_at_turn"], 1)
 
     def test_explanation_follow_up_uses_context_and_returns_reasoning(self):
         agent = DocAIAgent(
@@ -544,6 +611,35 @@ class AgentGraphTests(unittest.TestCase):
         self.assertIn("南京市", result["answer"])
         self.assertIn("未来两周", result["answer"])
 
+    def test_domain_switch_follow_up_reuses_previous_scope(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("给我过去五个月徐州的虫害情况", thread_id="thread-domain-switch")
+        result = agent.answer("换成墒情", thread_id="thread-domain-switch")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(result["evidence"]["analysis_context"]["domain"], "soil")
+        self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "徐州市")
+        self.assertIn("徐州市", result["answer"])
+
+    def test_historical_window_follow_up_reuses_previous_scope(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("给我过去五个月徐州的虫害情况", thread_id="thread-window-switch")
+        result = agent.answer("那过去半年呢", thread_id="thread-window-switch")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(result["evidence"]["analysis_context"]["domain"], "pest")
+        self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "徐州市")
+        self.assertEqual(result["evidence"]["historical_query"]["query_type"], "pest_overview")
+        self.assertIn("徐州市", result["answer"])
+
     def test_generic_future_advice_follow_up_does_not_stick_to_top_ranked_city(self):
         agent = DocAIAgent(
             FakeStructuredRepo(),
@@ -558,6 +654,52 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["analysis_context"]["domain"], "pest")
         self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "")
         self.assertNotIn("徐州市", result["answer"])
+
+    def test_domain_clarification_for_dataset_question_returns_detail_data(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        first = agent.answer("苏州进5个月的灾害数据", thread_id="thread-domain-dataset")
+        result = agent.answer("虫情", thread_id="thread-domain-dataset")
+
+        self.assertEqual(first["mode"], "advice")
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(result["evidence"]["analysis_context"]["query_type"], "pest_detail")
+        self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "苏州市")
+        self.assertIn("苏州市", result["answer"])
+        self.assertIn("2026-03-28", result["answer"])
+
+    def test_detail_follow_up_reuses_previous_region_scope(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("给我过去五个月苏州的虫害情况", thread_id="thread-detail-follow-up")
+        result = agent.answer("我说的是虫情的具体数据", thread_id="thread-detail-follow-up")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(result["evidence"]["analysis_context"]["query_type"], "pest_detail")
+        self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "苏州市")
+        self.assertIn("2026-03-28", result["answer"])
+        self.assertNotIn("请补充要看的地区", result["answer"])
+
+    def test_negated_trend_follow_up_switches_to_detail_data(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("苏州近5个月虫害走势怎么样", thread_id="thread-negated-trend")
+        result = agent.answer("不是趋势，是具体数据啊", thread_id="thread-negated-trend")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(result["evidence"]["analysis_context"]["query_type"], "pest_detail")
+        self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "苏州市")
+        self.assertIn("2026-03-28", result["answer"])
+        self.assertNotIn("请补充要看的地区", result["answer"])
 
     def test_empty_structured_pest_top_mentions_available_range(self):
         agent = DocAIAgent(
