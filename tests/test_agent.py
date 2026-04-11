@@ -148,6 +148,37 @@ class FakeStructuredRepo:
         ][:top_n]
 
 
+class VerboseDetailRepo(FakeStructuredRepo):
+    def pest_trend(self, since, until, region_name, region_level="city"):
+        return [
+            {"date": "2026-03-01", "severity_score": 1},
+            {"date": "2026-03-02", "severity_score": 0},
+            {"date": "2026-03-03", "severity_score": 2},
+            {"date": "2026-03-04", "severity_score": 4},
+            {"date": "2026-03-05", "severity_score": 0},
+            {"date": "2026-03-06", "severity_score": 6},
+            {"date": "2026-03-07", "severity_score": 8},
+            {"date": "2026-03-08", "severity_score": 3},
+            {"date": "2026-03-09", "severity_score": 12},
+            {"date": "2026-03-10", "severity_score": 5},
+            {"date": "2026-03-11", "severity_score": 15},
+            {"date": "2026-03-12", "severity_score": 7},
+        ]
+
+
+class BucketDetailRepo(FakeStructuredRepo):
+    def pest_trend(self, since, until, region_name, region_level="city"):
+        return [
+            {"bucket": "2026-04-03", "severity_score": 0},
+            {"bucket": "2026-04-04", "severity_score": 2},
+            {"bucket": "2026-04-05", "severity_score": 5},
+            {"bucket": "2026-04-06", "severity_score": 0},
+            {"bucket": "2026-04-07", "severity_score": 7},
+            {"bucket": "2026-04-08", "severity_score": 4},
+            {"bucket": "2026-04-09", "severity_score": 1},
+        ]
+
+
 class EmptyStructuredRepo:
     def top_pest_regions(self, since, until, region_level="city", top_n=5):
         return []
@@ -550,6 +581,35 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(slots["domain"]["updated_at_turn"], 1)
         self.assertEqual(slots["region"]["updated_at_turn"], 1)
         self.assertEqual(slots["time_range"]["updated_at_turn"], 1)
+
+    def test_detail_answer_is_summarized_instead_of_dumping_full_series(self):
+        agent = DocAIAgent(
+            VerboseDetailRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("给我过去5个月徐州的虫害具体数据", thread_id="thread-detail-summary")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertIn("具体数据摘要", result["answer"])
+        self.assertIn("共12个观测日", result["answer"])
+        self.assertIn("峰值15", result["answer"])
+        self.assertIn("最近7个观测日", result["answer"])
+        self.assertIn("2026-03-12", result["answer"])
+        self.assertNotIn("2026-03-01 严重度1", result["answer"])
+
+    def test_detail_answer_uses_bucket_dates_when_date_field_is_missing(self):
+        agent = DocAIAgent(
+            BucketDetailRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("过去5个月徐州虫情具体数据。", thread_id="thread-detail-bucket")
+
+        self.assertIn("2026-04-09", result["answer"])
+        self.assertIn("2026-04-08", result["answer"])
+        self.assertNotIn("峰值7（）", result["answer"])
+        self.assertNotIn("最近值1（）", result["answer"])
 
     def test_explanation_follow_up_uses_context_and_returns_reasoning(self):
         agent = DocAIAgent(
