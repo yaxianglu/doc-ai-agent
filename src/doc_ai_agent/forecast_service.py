@@ -89,9 +89,9 @@ class ForecastService:
 
     @staticmethod
     def _risk_level(score: float) -> str:
-        if score >= 85:
+        if score >= 70:
             return "高"
-        if score >= 60:
+        if score >= 40:
             return "中"
         return "低"
 
@@ -100,6 +100,116 @@ class ForecastService:
         if horizon_days == 14:
             return "未来两周"
         return f"未来{horizon_days}天"
+
+    @staticmethod
+    def _safe_float(value: object) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @classmethod
+    def _series_stats(cls, series: list[dict], value_key: str) -> dict:
+        values = [cls._safe_float(item.get(value_key)) for item in series]
+        if not values:
+            return {
+                "latest": 0.0,
+                "average": 0.0,
+                "peak": 0.0,
+                "history_points": 0,
+            }
+        return {
+            "latest": values[-1],
+            "average": sum(values) / len(values),
+            "peak": max(values),
+            "history_points": len(values),
+        }
+
+    @classmethod
+    def _risk_index_from_series(cls, projected_score: float, *, latest: float, average: float, peak: float) -> float:
+        if projected_score <= 0:
+            return 0.0
+
+        components = 0.0
+        if peak > 0:
+            components += min(projected_score / peak, 1.6) * 35
+        if average > 0:
+            components += min(projected_score / average, 1.8) * 35
+        if latest > 0:
+            components += min(projected_score / latest, 1.6) * 30
+        elif projected_score > 0:
+            components += 10
+        return round(min(100.0, components), 1)
+
+    @staticmethod
+    def _confidence(history_points: int, *, fallback: bool, horizon_days: int) -> float:
+        base = 0.35 + min(max(history_points, 0), 30) / 30 * 0.35
+        if history_points >= 7:
+            base += 0.08
+        if horizon_days <= 14:
+            base += 0.05
+        elif horizon_days > 30:
+            base -= 0.05
+        if fallback:
+            base -= 0.12
+        return round(max(0.2, min(0.93, base)), 2)
+
+    @classmethod
+    def _region_top_factors(
+        cls,
+        *,
+        latest: float,
+        average: float,
+        peak: float,
+        history_points: int,
+        projected_score: float,
+        fallback: bool,
+    ) -> list[str]:
+        factors: list[str] = []
+        if latest >= average * 1.2 and latest > 0:
+            factors.append("最近值仍高于窗口均值")
+        elif latest <= average * 0.8 and average > 0:
+            factors.append("最近值已低于窗口均值")
+        else:
+            factors.append("最近值与窗口均值接近")
+
+        if peak > 0 and projected_score >= peak * 0.9:
+            factors.append("预测结果仍接近历史高位")
+        elif peak > 0 and projected_score <= peak * 0.5:
+            factors.append("预测结果低于历史高位一半")
+
+        factors.append(f"样本覆盖 {history_points} 个观测日")
+        if fallback:
+            factors.append("当前使用回退预测方案")
+        return factors[:3]
+
+    @classmethod
+    def _region_answer(cls, *, region_name: str, horizon_phrase: str, label: str, risk_level: str, confidence: float, top_factors: list[str]) -> str:
+        factor_text = "、".join(top_factors[:2]) if top_factors else "历史样本与最近波动"
+        return f"{region_name}{horizon_phrase}{label}风险预计为{risk_level}（置信度{confidence:.2f}）。依据：{factor_text}。"
+
+    @classmethod
+    def _ranking_confidence(cls, row: dict, *, horizon_days: int) -> float:
+        record_count = cls._safe_float(row.get("record_count") or row.get("abnormal_count"))
+        active_days = cls._safe_float(row.get("active_days"))
+        base = 0.42 + min(record_count, 30) / 30 * 0.22 + min(active_days, 14) / 14 * 0.14
+        if horizon_days <= 14:
+            base += 0.04
+        return round(max(0.25, min(0.9, base)), 2)
+
+    @classmethod
+    def _ranking_factors(cls, row: dict, *, domain: str) -> list[str]:
+        if domain == "pest":
+            return [
+                f"历史严重度 {cls._safe_float(row.get('severity_score')):.1f}",
+                f"记录数 {int(cls._safe_float(row.get('record_count')))} 条",
+                f"活跃天数 {int(cls._safe_float(row.get('active_days')))} 天",
+            ]
+        return [
+            f"历史异常强度 {cls._safe_float(row.get('anomaly_score')):.1f}",
+            f"异常记录 {int(cls._safe_float(row.get('abnormal_count')))} 条",
+            f"低墒 {int(cls._safe_float(row.get('low_count')))} / 高墒 {int(cls._safe_float(row.get('high_count')))}",
+        ]
 
     def forecast_region(self, route: dict, context: dict | None = None) -> dict:
         domain = str((context or {}).get("domain") or route.get("query_type", "")).replace("_forecast", "")
@@ -118,6 +228,7 @@ class ForecastService:
                 region_level=str(route.get("region_level") or "city"),
             )
             projection = self.backend.forecast_series(series, date_key="date", value_key="severity_score", horizon_days=horizon_days)
+            stats = self._series_stats(series, "severity_score")
         else:
             series = self.repo.soil_trend(
                 str(route.get("since") or (context or {}).get("since") or "1970-01-01 00:00:00"),
@@ -126,19 +237,45 @@ class ForecastService:
                 region_level=str(route.get("region_level") or "city"),
             )
             projection = self.backend.forecast_series(series, date_key="date", value_key="avg_anomaly_score", horizon_days=horizon_days)
+            stats = self._series_stats(series, "avg_anomaly_score")
 
-        risk_level = self._risk_level(projection.projected_score)
+        risk_index = self._risk_index_from_series(
+            projection.projected_score,
+            latest=float(stats["latest"]),
+            average=float(stats["average"]),
+            peak=float(stats["peak"]),
+        )
+        risk_level = self._risk_level(risk_index)
+        confidence = self._confidence(projection.history_points, fallback=projection.fallback, horizon_days=horizon_days)
         label = "虫情" if domain == "pest" else "墒情"
         horizon_phrase = self._horizon_phrase(horizon_days)
+        top_factors = self._region_top_factors(
+            latest=float(stats["latest"]),
+            average=float(stats["average"]),
+            peak=float(stats["peak"]),
+            history_points=projection.history_points,
+            projected_score=projection.projected_score,
+            fallback=projection.fallback,
+        )
         return {
-            "answer": f"{region_name}{horizon_phrase}{label}风险预计为{risk_level}，预测得分约 {projection.projected_score}。",
+            "answer": self._region_answer(
+                region_name=region_name,
+                horizon_phrase=horizon_phrase,
+                label=label,
+                risk_level=risk_level,
+                confidence=confidence,
+                top_factors=top_factors,
+            ),
             "data": series,
             "forecast": {
                 "domain": domain,
                 "mode": "region",
                 "horizon_days": horizon_days,
                 "projected_score": projection.projected_score,
+                "risk_index": risk_index,
                 "risk_level": risk_level,
+                "confidence": confidence,
+                "top_factors": top_factors,
                 "forecast_backend": projection.forecast_backend,
                 "model_name": projection.model_name,
                 "history_points": projection.history_points,
@@ -157,17 +294,30 @@ class ForecastService:
         else:
             count = self.repo.count_since(since)
         projected_score = round(max(1, count) * (1 + min(horizon_days, 30) / 30), 2)
-        risk_level = "高" if projected_score >= 4 else ("中" if projected_score >= 2 else "低")
+        risk_index = min(100.0, round(projected_score * 18, 1))
+        risk_level = self._risk_level(risk_index)
+        confidence = self._confidence(1 if count else 0, fallback=True, horizon_days=horizon_days)
         label = "虫情" if domain == "pest" else "墒情"
+        top_factors = [f"历史样本量 {count} 条", "当前使用回退预测方案"]
         return {
-            "answer": f"{region_name}未来{horizon_days}天{label}风险预计为{risk_level}，基于历史告警量近似推断得分 {projected_score}。",
+            "answer": self._region_answer(
+                region_name=region_name,
+                horizon_phrase=self._horizon_phrase(horizon_days),
+                label=label,
+                risk_level=risk_level,
+                confidence=confidence,
+                top_factors=top_factors,
+            ),
             "data": [{"region_name": region_name, "historical_count": count, "projected_score": projected_score}],
             "forecast": {
                 "domain": domain,
                 "mode": "region",
                 "horizon_days": horizon_days,
                 "projected_score": projected_score,
+                "risk_index": risk_index,
                 "risk_level": risk_level,
+                "confidence": confidence,
+                "top_factors": top_factors,
                 "forecast_backend": "statsforecast",
                 "model_name": "AutoETS",
                 "history_points": 1 if count else 0,
@@ -207,10 +357,22 @@ class ForecastService:
             ]
 
         ranked.sort(key=lambda row: float(row.get("projected_score") or 0), reverse=True)
+        max_score = max((self._safe_float(row.get("projected_score")) for row in ranked), default=0.0)
+        for row in ranked:
+            if max_score > 0:
+                risk_index = round(min(100.0, self._safe_float(row.get("projected_score")) / max_score * 100), 1)
+            else:
+                risk_index = 0.0
+            row["risk_index"] = risk_index
+            row["risk_level"] = self._risk_level(risk_index)
+            row["confidence"] = self._ranking_confidence(row, horizon_days=horizon_days)
+            row["top_factors"] = self._ranking_factors(row, domain=domain)
+
         label = "虫情" if domain == "pest" else "墒情"
         answer = f"未来{horizon_days}天{label}风险最高的地区为：" + "；".join(
-            f"{idx+1}.{row['region_name']}（预测得分{row['projected_score']}）" for idx, row in enumerate(ranked[:top_n])
+            f"{idx+1}.{row['region_name']}（{row['risk_level']}，置信度{row['confidence']:.2f}）" for idx, row in enumerate(ranked[:top_n])
         )
+        overall_confidence = round(sum(float(row.get("confidence") or 0) for row in ranked[:top_n]) / max(len(ranked[:top_n]), 1), 2) if ranked else 0.2
         return {
             "answer": answer,
             "data": ranked[:top_n],
@@ -219,6 +381,8 @@ class ForecastService:
                 "mode": "ranking",
                 "horizon_days": horizon_days,
                 "risk_level": "高" if ranked else "低",
+                "confidence": overall_confidence,
+                "top_factors": ["按历史风险强度排序", "结合记录覆盖与活跃天数估计置信度"],
                 "forecast_backend": "statsforecast",
                 "model_name": "AutoETS",
                 "history_points": len(ranked),

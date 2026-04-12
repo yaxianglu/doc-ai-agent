@@ -312,6 +312,17 @@ class DocAIAgent:
                 understanding=understanding,
             )
         plan = dict(plan)
+        explicit_top_n = self.query_planner._extract_top_n(state.get("question", ""))
+        if explicit_top_n:
+            route = dict(plan.get("route") or {})
+            route["top_n"] = explicit_top_n
+            plan["route"] = route
+            query_plan = dict(plan.get("query_plan") or {})
+            slots = dict(query_plan.get("slots") or {})
+            if slots.get("aggregation") == "top_k":
+                slots["k"] = explicit_top_n
+                query_plan["slots"] = slots
+                plan["query_plan"] = query_plan
         plan["task_graph"] = build_task_graph(plan.get("query_plan") or {})
         route = dict(plan.get("route") or {})
         if route.get("query_type") in {"pest_forecast", "soil_forecast"} and not understanding.get("needs_forecast"):
@@ -431,6 +442,7 @@ class DocAIAgent:
             "city": region_name if region_level != "county" else None,
             "county": region_name if region_level == "county" else None,
             "region_level": region_level,
+            "top_n": route.get("top_n") or 1,
             "window": route.get("window") or understanding.get("window") or memory_context.get("window") or {"window_type": "all", "window_value": None},
             "forecast_window": future_window,
             "forecast_mode": forecast_mode,
@@ -456,6 +468,7 @@ class DocAIAgent:
                 since=str(forecast_route.get("since") or "1970-01-01 00:00:00"),
                 horizon_days=int(forecast_route.get("forecast_window", {}).get("horizon_days") or 14),
                 region_level=str(forecast_route.get("region_level") or "city"),
+                top_n=max(1, int(forecast_route.get("top_n") or 1)),
             )
         else:
             result = self.forecast_service.forecast_region(forecast_route, context=runtime_context)
@@ -836,9 +849,11 @@ class DocAIAgent:
             horizon_days = int(forecast.get("horizon_days") or 14)
             horizon_phrase = "未来两周" if horizon_days == 14 else f"未来{horizon_days}天"
             risk_level = str(forecast.get("risk_level") or "中")
-            projected_score = self._reasoning_format_metric(float(forecast.get("projected_score") or 0))
+            confidence = float(forecast.get("confidence") or 0)
+            factor_list = [str(item) for item in list(forecast.get("top_factors") or []) if str(item)]
+            factor_text = "、".join(factor_list[:2]) if factor_list else "历史样本与最近波动"
             sentences.append(
-                f"按{horizon_phrase}预测，风险仍为{risk_level}，预测得分{projected_score}，所以后续应优先复核前期高值点位，而不是只看单日波动。"
+                f"按{horizon_phrase}预测，风险仍为{risk_level}，置信度{confidence:.2f}；依据主要是{factor_text}，所以后续应优先复核前期高值点位，而不是只看单日波动。"
             )
 
         if knowledge:
@@ -867,6 +882,7 @@ class DocAIAgent:
         peak_value = float(summary["peak_value"] or 0)
         forecast = dict(forecast_result.get("forecast") or {})
         risk_level = str(forecast.get("risk_level") or "")
+        confidence = float(forecast.get("confidence") or 0)
         rising_pressure = latest_value >= average * 1.2 if average > 0 else latest_value > 0
         clearly_receded = latest_value <= average * 0.7 if average > 0 else latest_value == 0
 
@@ -875,6 +891,11 @@ class DocAIAgent:
                 return (
                     f"{region_name}当前仍处在偏高压力区，先复核高值点位和诱捕监测，再对连续高值地块按阈值分区处置；"
                     "本轮不要全域铺开，优先盯住峰值附近区域，处置后 24-48 小时复查虫口变化。"
+                )
+            if confidence and confidence < 0.5:
+                return (
+                    f"{region_name}当前预测把握度一般，建议先保留高频监测和点位复核，"
+                    "不要仅凭一次预测结果直接扩大处置范围，先看 2-3 天连续数据再决定是否升级动作。"
                 )
             if clearly_receded:
                 return (
@@ -890,6 +911,11 @@ class DocAIAgent:
             return (
                 f"{region_name}当前异常压力偏高，建议先分区复核低墒/高墒地块，再优先处理持续异常区域；"
                 "低墒先补灌，高墒先排水，处置后继续看 3-5 天监测是否回落。"
+            )
+        if confidence and confidence < 0.5:
+            return (
+                f"{region_name}当前预测把握度一般，建议先维持分区抽样复核，不要一次性放大灌排动作；"
+                "先确认低墒或高墒是否持续，再决定是否升级到集中处置。"
             )
         if clearly_receded:
             return (

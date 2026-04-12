@@ -359,6 +359,31 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["since"], "2026-04-09 00:00:00")
         self.assertEqual(plan["route"]["until"], "2026-04-10 00:00:00")
 
+    def test_parses_top_n_from_front_number_for_agri_ranking(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("最近30天虫情最严重的前10个地区")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_top")
+        self.assertEqual(plan["route"]["top_n"], 10)
+
+    def test_time_window_prefix_is_not_treated_as_top_n(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("近3个星期虫情最严重的地方是哪里？")
+
+        self.assertEqual(plan["route"]["query_type"], "pest_top")
+        self.assertEqual(plan["route"]["top_n"], 1)
+
+    def test_plural_ranking_defaults_to_top_five(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("过去5个月虫情最严重的是哪些地区？")
+
+        self.assertEqual(plan["route"]["query_type"], "pest_top")
+        self.assertEqual(plan["route"]["top_n"], 5)
+
     def test_low_signal_question_needs_clarification_without_router(self):
         planner = QueryPlanner(None)
         plan = planner.plan("123456")

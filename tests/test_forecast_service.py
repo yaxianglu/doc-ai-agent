@@ -87,6 +87,39 @@ class ForecastServiceTests(unittest.TestCase):
         self.assertEqual(result["forecast"]["horizon_days"], 30)
         self.assertIn("未来30天", result["answer"])
 
+    def test_forecast_region_returns_confidence_and_key_factors(self):
+        result = self.service.forecast_region(
+            {
+                "query_type": "pest_forecast",
+                "since": "2026-03-01 00:00:00",
+                "city": "徐州市",
+                "region_level": "city",
+                "forecast_window": {"horizon_days": 14},
+            }
+        )
+
+        self.assertIn("confidence", result["forecast"])
+        self.assertIn("top_factors", result["forecast"])
+        self.assertGreater(result["forecast"]["confidence"], 0)
+        self.assertTrue(result["forecast"]["top_factors"])
+        self.assertIn("置信度", result["answer"])
+        self.assertIn("依据", result["answer"])
+        self.assertNotIn("预测得分约", result["answer"])
+
+    def test_forecast_top_regions_returns_region_confidence(self):
+        result = self.service.forecast_top_regions(
+            domain="pest",
+            since="2026-03-01 00:00:00",
+            horizon_days=14,
+            region_level="city",
+        )
+
+        self.assertIn("confidence", result["forecast"])
+        self.assertTrue(result["data"])
+        self.assertIn("confidence", result["data"][0])
+        self.assertIn("risk_level", result["data"][0])
+        self.assertIn("置信度", result["answer"])
+
 
 if __name__ == "__main__":
     unittest.main()
