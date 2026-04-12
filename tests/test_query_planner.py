@@ -51,8 +51,55 @@ class QueryPlannerTests(unittest.TestCase):
                     "must_use_structured_data": True,
                     "allow_clarification": True,
                 },
+                "execution": {
+                    "route": {
+                        "query_type": "pest_top",
+                        "since": plan["route"]["since"],
+                        "until": None,
+                        "city": None,
+                        "county": None,
+                        "device_code": None,
+                        "region_level": "city",
+                        "window": {"window_type": "weeks", "window_value": 3},
+                        "top_n": 1,
+                        "forecast_window": None,
+                        "forecast_mode": "",
+                    },
+                    "domain": "pest",
+                    "region_name": "",
+                    "historical_window": {"window_type": "weeks", "window_value": 3},
+                    "future_window": None,
+                    "answer_mode": "ranking",
+                },
+                "decomposition": {
+                    "version": "v2",
+                    "plan_goal": "agri_analysis",
+                    "execution_plan": ["understand_request", "historical_query", "answer_synthesis"],
+                    "merge_strategy": "sectioned_answer",
+                    "tasks": [
+                        {
+                            "id": "t1",
+                            "type": "historical_rank",
+                            "title": "查询历史排行",
+                            "stage": "historical_query",
+                            "output_key": "historical",
+                            "parallel_group": "",
+                            "depends_on": [],
+                        },
+                        {
+                            "id": "t2",
+                            "type": "merge_answer",
+                            "title": "汇总生成答案",
+                            "stage": "answer_synthesis",
+                            "output_key": "answer",
+                            "parallel_group": "",
+                            "depends_on": ["t1"],
+                        },
+                    ],
+                },
             },
         )
+        self.assertEqual(plan["route"], plan["query_plan"]["execution"]["route"])
 
     def test_query_plan_is_emitted_for_detail_request(self):
         planner = QueryPlanner(None)
@@ -79,6 +126,14 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertTrue(plan["query_plan"]["slots"]["need_explanation"])
         self.assertTrue(plan["query_plan"]["slots"]["need_forecast"])
         self.assertTrue(plan["query_plan"]["slots"]["need_advice"])
+        self.assertEqual(
+            [task["type"] for task in plan["query_plan"]["decomposition"]["tasks"]],
+            ["historical_rank", "cause_retrieval", "forecast", "advice_retrieval", "merge_answer"],
+        )
+        self.assertEqual(
+            plan["query_plan"]["decomposition"]["execution_plan"],
+            ["understand_request", "historical_query", "forecast", "knowledge_retrieval", "answer_synthesis"],
+        )
 
     def test_greeting_produces_non_execution_query_plan(self):
         planner = QueryPlanner(None)
@@ -106,8 +161,24 @@ class QueryPlannerTests(unittest.TestCase):
                     "must_use_structured_data": False,
                     "allow_clarification": False,
                 },
+                "execution": {
+                    "route": plan["route"],
+                    "domain": "",
+                    "region_name": "",
+                    "historical_window": {"window_type": "none", "window_value": None},
+                    "future_window": None,
+                    "answer_mode": "none",
+                },
+                "decomposition": {
+                    "version": "v2",
+                    "plan_goal": "conversation",
+                    "execution_plan": ["understand_request", "answer_synthesis"],
+                    "merge_strategy": "direct_answer",
+                    "tasks": [],
+                },
             },
         )
+        self.assertEqual(plan["route"], plan["query_plan"]["execution"]["route"])
 
     def test_use_router_when_available(self):
         planner = QueryPlanner(FakeRouter({"intent": "data_query", "query_type": "count", "since": "2026-01-01 00:00:00"}))
@@ -383,6 +454,15 @@ class QueryPlannerTests(unittest.TestCase):
 
         self.assertEqual(plan["route"]["query_type"], "pest_top")
         self.assertEqual(plan["route"]["top_n"], 5)
+
+    def test_query_plan_execution_route_is_single_source(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("给我过去五个月徐州市的虫害数据")
+
+        self.assertEqual(plan["route"], plan["query_plan"]["execution"]["route"])
+        self.assertEqual(plan["query_plan"]["execution"]["domain"], "pest")
+        self.assertEqual(plan["query_plan"]["execution"]["region_name"], "徐州市")
 
     def test_low_signal_question_needs_clarification_without_router(self):
         planner = QueryPlanner(None)

@@ -4,7 +4,8 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 
-from .query_plan import build_query_plan
+from .query_plan import build_query_plan, execution_route
+from .task_decomposition import build_task_graph
 
 CITY_ALIASES = {
     "南京": "南京市",
@@ -556,6 +557,8 @@ class QueryPlanner:
             needs_forecast=inferred_needs_forecast,
             needs_advice=inferred_needs_advice,
         )
+        finalized["query_plan"]["decomposition"] = build_task_graph(finalized["query_plan"])
+        finalized["route"] = execution_route(finalized["query_plan"])
         return finalized
 
     def _context_follow_up_plan(self, question: str, context: dict | None) -> dict | None:

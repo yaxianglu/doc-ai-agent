@@ -12,11 +12,11 @@ from .forecast_service import ForecastService
 from .intent_router import IntentRouter
 from .letta_memory import LocalMemoryStore, LettaMemoryStore, ResilientMemoryStore
 from .query_playbook_router import create_query_playbook_router
+from .query_plan import execution_route, replace_execution_route
 from .query_planner import QueryPlanner
 from .query_engine import QueryEngine
 from .request_understanding import CITY_ALIASES as REQUEST_CITY_ALIASES, RequestUnderstanding
 from .repository import AlertRepository
-from .task_decomposition import build_task_graph
 
 
 class AgentState(TypedDict, total=False):
@@ -219,6 +219,168 @@ class DocAIAgent:
         }
         return response
 
+    @staticmethod
+    def _normalized_confidence(value: object, default: float = 0.0) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            numeric = float(default)
+        return round(min(max(numeric, 0.0), 0.99), 2)
+
+    @staticmethod
+    def _dedupe_source_types(source_types: list[str]) -> list[str]:
+        seen: list[str] = []
+        for item in source_types:
+            if item and item not in seen:
+                seen.append(item)
+        return seen
+
+    @staticmethod
+    def _has_meaningful_value(value: object) -> bool:
+        return value not in (None, "", [])
+
+    def _response_source_types(self, response: dict, evidence: dict, plan: dict) -> list[str]:
+        source_types: list[str] = []
+        if evidence.get("generation_mode") == "clarification" or plan.get("needs_clarification"):
+            source_types.append("planner")
+
+        historical_query = dict(evidence.get("historical_query") or {})
+        if not historical_query and response.get("mode") == "data_query":
+            historical_query = dict(evidence)
+        if historical_query and any(
+            historical_query.get(key)
+            for key in ["sql", "query_type", "rule", "no_data_reasons", "available_data_ranges"]
+        ):
+            source_types.append("db")
+
+        forecast = dict(evidence.get("forecast") or {})
+        if forecast and any(
+            self._has_meaningful_value(forecast.get(key))
+            for key in ["domain", "mode", "horizon_days", "risk_level"]
+        ):
+            source_types.append("forecast")
+
+        knowledge = evidence.get("knowledge")
+        knowledge_sources = evidence.get("knowledge_sources")
+        sources = evidence.get("sources")
+        if isinstance(knowledge, list) and knowledge:
+            source_types.append("rag")
+        elif isinstance(knowledge_sources, list) and any(
+            isinstance(item, dict) and (item.get("retrieval_backend") or item.get("retrieval_engine") or item.get("url"))
+            for item in knowledge_sources
+        ):
+            source_types.append("rag")
+        elif isinstance(sources, list) and any(
+            isinstance(item, dict) and (item.get("retrieval_backend") or item.get("retrieval_engine") or item.get("url"))
+            for item in sources
+        ):
+            source_types.append("rag")
+
+        generation_mode = str(evidence.get("generation_mode") or "")
+        if generation_mode == "llm":
+            source_types.append("llm")
+        elif generation_mode == "rule" and response.get("mode") == "advice":
+            source_types.append("rules")
+
+        return self._dedupe_source_types(source_types)
+
+    def _historical_response_confidence(self, response: dict, evidence: dict, plan: dict) -> float:
+        historical_query = dict(evidence.get("historical_query") or {})
+        if not historical_query and response.get("mode") == "data_query":
+            historical_query = dict(evidence)
+        if isinstance(historical_query.get("no_data_reasons"), list) and historical_query.get("no_data_reasons"):
+            return 0.35
+
+        plan_confidence = self._normalized_confidence(plan.get("confidence"), 0.0)
+        data = response.get("data")
+        if isinstance(data, list) and data:
+            return max(plan_confidence, 0.78)
+        if isinstance(data, dict) and data:
+            return max(plan_confidence, 0.76)
+        return min(max(plan_confidence, 0.0), 0.45)
+
+    def _response_confidence(self, state: AgentState, response: dict, evidence: dict, source_types: list[str]) -> float:
+        plan = dict(state.get("plan") or {})
+        forecast = dict(evidence.get("forecast") or {})
+        generation_mode = str(evidence.get("generation_mode") or "")
+        mode = str(response.get("mode") or "")
+
+        if generation_mode == "clarification":
+            return self._normalized_confidence(plan.get("confidence"), 0.4)
+
+        if mode == "analysis":
+            components: list[tuple[float, float]] = []
+            if "db" in source_types:
+                components.append((self._historical_response_confidence(response, evidence, plan), 0.45))
+            if "forecast" in source_types:
+                components.append((self._normalized_confidence(forecast.get("confidence"), 0.0), 0.2))
+            if "rag" in source_types:
+                components.append((0.76, 0.35))
+            if not components:
+                return self._normalized_confidence(plan.get("confidence"), 0.5)
+
+            total_weight = sum(weight for _, weight in components) or 1.0
+            evidence_confidence = sum(value * weight for value, weight in components) / total_weight
+            if len(components) >= 2:
+                plan_confidence = self._normalized_confidence(plan.get("confidence"), evidence_confidence)
+                evidence_confidence = (evidence_confidence * 0.8) + (plan_confidence * 0.2)
+            return self._normalized_confidence(evidence_confidence, 0.5)
+
+        if mode == "data_query":
+            if "forecast" in source_types and forecast:
+                return self._normalized_confidence(forecast.get("confidence"), 0.0)
+            if "db" in source_types:
+                return self._historical_response_confidence(response, evidence, plan)
+            return self._normalized_confidence(plan.get("confidence"), 0.6)
+
+        if mode == "advice":
+            if generation_mode == "llm":
+                return 0.84 if "rag" in source_types else 0.76
+            if generation_mode == "rule":
+                answer = str(response.get("answer") or "")
+                if "AI农情工作台" in answer:
+                    return 0.98
+                analysis_context = dict(evidence.get("analysis_context") or {})
+                if analysis_context.get("domain"):
+                    return 0.72
+                return 0.58
+            return self._normalized_confidence(plan.get("confidence"), 0.55)
+
+        return self._normalized_confidence(plan.get("confidence"), 0.5)
+
+    @staticmethod
+    def _response_fallback_reason(response: dict, evidence: dict, plan: dict, source_types: list[str]) -> str:
+        if evidence.get("generation_mode") == "clarification" or plan.get("needs_clarification"):
+            return str(plan.get("reason") or "clarification")
+
+        historical_query = dict(evidence.get("historical_query") or {})
+        no_data_reasons = historical_query.get("no_data_reasons")
+        if isinstance(no_data_reasons, list) and no_data_reasons:
+            first = no_data_reasons[0]
+            if isinstance(first, dict) and first.get("code"):
+                return str(first["code"])
+
+        forecast = dict(evidence.get("forecast") or {})
+        fallback_reason = str(forecast.get("fallback_reason") or "")
+        if fallback_reason:
+            return fallback_reason
+
+        if response.get("mode") == "advice" and evidence.get("generation_mode") == "rule" and "rag" not in source_types:
+            analysis_context = dict(evidence.get("analysis_context") or {})
+            if not analysis_context.get("domain"):
+                return "rule_only_advice"
+
+        return ""
+
+    def _build_response_meta(self, state: AgentState, response: dict, evidence: dict) -> dict:
+        plan = dict(state.get("plan") or {})
+        source_types = self._response_source_types(response, evidence, plan)
+        return {
+            "confidence": self._response_confidence(state, response, evidence, source_types),
+            "source_types": source_types,
+            "fallback_reason": self._response_fallback_reason(response, evidence, plan, source_types),
+        }
+
     def _load_memory_node(self, state: AgentState) -> dict:
         thread_id = str(state.get("thread_id") or "default")
         persisted = {} if thread_id.startswith("__stateless__:") else self.memory_store.load(thread_id)
@@ -253,6 +415,31 @@ class DocAIAgent:
         if normalized.endswith("市"):
             return "city"
         return ""
+
+    @staticmethod
+    def _plan_route(plan: dict | None) -> dict:
+        normalized_plan = dict(plan or {})
+        canonical_route = execution_route(normalized_plan.get("query_plan") or {})
+        if canonical_route:
+            return canonical_route
+        return dict(normalized_plan.get("route") or {})
+
+    @staticmethod
+    def _plan_task_graph(plan: dict | None) -> dict:
+        normalized_plan = dict(plan or {})
+        query_plan = dict(normalized_plan.get("query_plan") or {})
+        decomposition = dict(query_plan.get("decomposition") or {})
+        if decomposition:
+            return decomposition
+        return dict(normalized_plan.get("task_graph") or {})
+
+    def _execution_plan(self, state: AgentState) -> list[str]:
+        task_graph = self._plan_task_graph(state.get("plan"))
+        execution_plan = list(task_graph.get("execution_plan") or [])
+        if execution_plan:
+            return execution_plan
+        understanding = dict(state.get("understanding") or {})
+        return list(understanding.get("execution_plan") or ["understand_request", "answer_synthesis"])
 
     def _build_forecast_plan_from_understanding(self, understanding: dict, memory_context: dict | None = None) -> dict:
         memory_context = dict(memory_context or {})
@@ -312,24 +499,29 @@ class DocAIAgent:
                 understanding=understanding,
             )
         plan = dict(plan)
+        if not plan.get("query_plan"):
+            plan = self.query_planner._finalize_plan(
+                plan,
+                question_for_planning,
+                context=state.get("memory_context"),
+                understanding=understanding,
+            )
+        query_plan = dict(plan.get("query_plan") or {})
+        route = self._plan_route(plan)
         explicit_top_n = self.query_planner._extract_top_n(state.get("question", ""))
         if explicit_top_n:
-            route = dict(plan.get("route") or {})
             route["top_n"] = explicit_top_n
-            plan["route"] = route
-            query_plan = dict(plan.get("query_plan") or {})
-            slots = dict(query_plan.get("slots") or {})
-            if slots.get("aggregation") == "top_k":
-                slots["k"] = explicit_top_n
-                query_plan["slots"] = slots
+            if query_plan:
+                query_plan = replace_execution_route(query_plan, route)
                 plan["query_plan"] = query_plan
-        plan["task_graph"] = build_task_graph(plan.get("query_plan") or {})
-        route = dict(plan.get("route") or {})
+        plan["route"] = self._plan_route(plan) or route
+        plan["task_graph"] = self._plan_task_graph(plan)
+        route = self._plan_route(plan)
         if route.get("query_type") in {"pest_forecast", "soil_forecast"} and not understanding.get("needs_forecast"):
             updated_understanding = dict(understanding)
             updated_understanding["needs_forecast"] = True
             updated_understanding["needs_historical"] = False
-            execution_plan = list(updated_understanding.get("execution_plan") or ["understand_request", "answer_synthesis"])
+            execution_plan = list(plan.get("task_graph", {}).get("execution_plan") or updated_understanding.get("execution_plan") or ["understand_request", "answer_synthesis"])
             if "forecast" not in execution_plan:
                 if "answer_synthesis" in execution_plan:
                     insert_at = execution_plan.index("answer_synthesis")
@@ -387,7 +579,7 @@ class DocAIAgent:
         question_for_query = understanding.get("historical_query_text") or state.get("question", "")
         route = self._normalize_historical_route(
             question_for_query,
-            dict(plan.get("route") or {}),
+            self._plan_route(plan),
             understanding,
             state.get("memory_context"),
         )
@@ -416,7 +608,7 @@ class DocAIAgent:
         plan = dict(state.get("plan") or {})
         route = self._normalize_historical_route(
             understanding.get("historical_query_text") or state.get("question", ""),
-            dict(plan.get("route") or {}),
+            self._plan_route(plan),
             understanding,
             state.get("memory_context"),
         )
@@ -505,7 +697,7 @@ class DocAIAgent:
 
     def _derive_domain(self, question: str, plan: dict, previous_context: dict | None = None) -> str:
         previous_context = dict(previous_context or {})
-        route = plan.get("route") or {}
+        route = self._plan_route(plan)
         query_type = str(route.get("query_type") or "")
         if query_type.startswith("pest"):
             return "pest"
@@ -524,7 +716,7 @@ class DocAIAgent:
         understanding = dict(understanding or {})
         route = self._normalize_historical_route(
             understanding.get("historical_query_text") or question,
-            dict(plan.get("route") or {}),
+            self._plan_route(plan),
             understanding,
             previous_context,
         )
@@ -940,7 +1132,7 @@ class DocAIAgent:
         previous_context = dict(previous_context or {})
         route_seed = self._normalize_historical_route(
             understanding.get("historical_query_text") or question,
-            dict(plan.get("route") or {}),
+            self._plan_route(plan),
             understanding,
             previous_context,
         )
@@ -1059,7 +1251,7 @@ class DocAIAgent:
             "sources": result.sources,
             "generation_mode": result.generation_mode,
             "analysis_context": runtime_context,
-            "execution_plan": list((state.get("understanding") or {}).get("execution_plan") or ["understand_request", "answer_synthesis"]),
+            "execution_plan": self._execution_plan(state),
         }
         if result.model:
             evidence["model"] = result.model
@@ -1096,7 +1288,7 @@ class DocAIAgent:
         if not (understanding.get("needs_forecast") or understanding.get("needs_explanation") or understanding.get("needs_advice")):
             if query_result:
                 merged_evidence = dict(query_result.get("evidence") or {})
-                merged_evidence["execution_plan"] = list(understanding.get("execution_plan") or [])
+                merged_evidence["execution_plan"] = self._execution_plan(state)
                 query_result["evidence"] = merged_evidence
                 return {"response": query_result}
         if (
@@ -1107,7 +1299,7 @@ class DocAIAgent:
         ):
             evidence = {
                 **dict(forecast_result),
-                "execution_plan": list(understanding.get("execution_plan") or []),
+                "execution_plan": self._execution_plan(state),
                 "generation_mode": "forecast",
             }
             return {
@@ -1179,7 +1371,7 @@ class DocAIAgent:
         answer = "\n".join(sections) if sections else (query_result.get("answer") or advice_text or "当前暂无可综合输出的结果。")
 
         evidence = {
-            "execution_plan": list(understanding.get("execution_plan") or []),
+            "execution_plan": self._execution_plan(state),
             "request_understanding": understanding,
             "analysis_context": plan_context,
             "historical_query": query_result.get("evidence") or {},
@@ -1282,7 +1474,7 @@ class DocAIAgent:
         response = state.get("response") or {}
         previous_context = dict(state.get("memory_context") or {})
         preserve_thread_scope = str(plan.get("reason") or "") in {"greeting_intro", "identity_self_intro"}
-        route = dict(plan.get("route") or previous_context.get("route") or {})
+        route = self._plan_route(plan) or dict(previous_context.get("route") or {})
         evidence = dict(response.get("evidence") or {})
         analysis_context = dict(evidence.get("analysis_context") or {})
         forecast = dict(evidence.get("forecast") or previous_context.get("forecast") or {})
@@ -1400,7 +1592,7 @@ class DocAIAgent:
             self.memory_store.remember(thread_id, snapshot)
 
         evidence = dict(response.get("evidence") or {})
-        evidence.setdefault("execution_plan", list(understanding.get("execution_plan") or []))
+        evidence.setdefault("execution_plan", self._execution_plan(state))
         evidence.setdefault(
             "analysis_context",
             {
@@ -1419,6 +1611,7 @@ class DocAIAgent:
             evidence.setdefault("request_understanding", understanding)
         if plan.get("context_trace"):
             evidence["context_trace"] = list(plan.get("context_trace") or [])
+        evidence["response_meta"] = self._build_response_meta(state, response, evidence)
         response["evidence"] = evidence
         return {"memory_context": snapshot, "response": response}
 
