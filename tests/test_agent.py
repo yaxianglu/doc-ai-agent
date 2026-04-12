@@ -170,6 +170,21 @@ class CountyRankingRepo(FakeStructuredRepo):
         ][:top_n]
 
 
+class LargeRankingRepo(FakeStructuredRepo):
+    def top_pest_regions(self, since, until, region_level="city", top_n=5):
+        rows = []
+        for idx in range(1, 13):
+            rows.append(
+                {
+                    "region_name": f"地区{idx}",
+                    "severity_score": 120 - idx,
+                    "record_count": 30 - idx,
+                    "active_days": 15 - min(idx, 10),
+                }
+            )
+        return rows[:top_n]
+
+
 class VerboseDetailRepo(FakeStructuredRepo):
     def pest_trend(self, since, until, region_name, region_level="city"):
         return [
@@ -552,6 +567,9 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(second["evidence"]["forecast"]["model_name"], "AutoETS")
         self.assertTrue(second["evidence"]["request_understanding"]["used_context"])
         self.assertIn("未来两周", second["answer"])
+        self.assertIn("置信度", second["answer"])
+        self.assertTrue(second["evidence"]["forecast"]["top_factors"])
+        self.assertGreater(second["evidence"]["forecast"]["confidence"], 0)
 
     def test_follow_up_advice_reuses_previous_analysis_context(self):
         agent = DocAIAgent(
@@ -680,6 +698,19 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["analysis_context"]["region_level"], "county")
         self.assertEqual(result["evidence"]["memory_state"]["route"]["region_level"], "county")
 
+    def test_ranking_request_respects_requested_top_n(self):
+        agent = DocAIAgent(
+            LargeRankingRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("最近30天虫情最严重的前10个地区", thread_id="thread-top-10")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(len(result["data"]), 10)
+        self.assertIn("Top10", result["answer"])
+        self.assertIn("10.", result["answer"])
+
     def test_memory_state_exposes_slot_metadata(self):
         agent = DocAIAgent(
             FakeStructuredRepo(),
@@ -801,6 +832,23 @@ class AgentGraphTests(unittest.TestCase):
         advice_section = result["answer"].split("建议：", 1)[1]
         self.assertIn("复核高值点位", advice_section)
         self.assertIn("分区处置", advice_section)
+
+    def test_high_risk_advice_uses_time_bound_follow_up_language(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer(
+            "过去5个月徐州虫情具体数据，判断未来两周会不会更糟，再给建议",
+            thread_id="thread-high-risk-advice",
+        )
+
+        self.assertEqual(result["mode"], "analysis")
+        advice_section = result["answer"].split("建议：", 1)[1]
+        self.assertIn("24-48 小时复查", advice_section)
+        self.assertIn("优先盯住峰值附近区域", advice_section)
 
     def test_mixed_reasoning_references_observed_metrics(self):
         agent = DocAIAgent(

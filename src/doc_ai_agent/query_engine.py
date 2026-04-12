@@ -375,7 +375,7 @@ class QueryEngine:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_level = str(plan.get("region_level") or "city")
-        top_n = 5
+        top_n = max(1, int(plan.get("top_n") or 1))
         data = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=top_n)
         scope_label = "区县" if region_level == "county" else "地区"
         if data:
@@ -433,8 +433,9 @@ class QueryEngine:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_level = str(plan.get("region_level") or "city")
+        top_n = max(1, int(plan.get("top_n") or 1))
         anomaly_direction = "low" if "低墒" in question else ("high" if "高墒" in question else None)
-        data = self.repo.top_soil_regions(since, until, region_level=region_level, top_n=5, anomaly_direction=anomaly_direction)
+        data = self.repo.top_soil_regions(since, until, region_level=region_level, top_n=top_n, anomaly_direction=anomaly_direction)
         direction_text = "低墒" if anomaly_direction == "low" else ("高墒" if anomaly_direction == "high" else "异常")
         if data:
             answer = f"从{since[:10]}起，墒情{direction_text}最多的地区为："
@@ -481,7 +482,7 @@ class QueryEngine:
                         time_range=self._available_soil_time_range(anomaly_direction=anomaly_direction),
                     ),
                     time_ranges=self._available_soil_ranges(anomaly_direction=anomaly_direction),
-                    top_n=5,
+                    top_n=top_n,
                     anomaly_direction=anomaly_direction,
                 )
                 if not data

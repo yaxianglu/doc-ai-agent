@@ -226,6 +226,35 @@ class QueryPlanner:
             return m.group(1)
         return None
 
+    def _extract_top_n(self, question: str) -> Optional[int]:
+        lowered = str(question or "").lower()
+        if match := re.search(r"top\s*(\d+)", lowered):
+            return max(1, int(match.group(1)))
+
+        match = re.search(r"前\s*(\d+|[一二两三四五六七八九十])", question)
+        if not match:
+            return None
+
+        suffix = question[match.end() :]
+        if re.match(r"\s*个?(?:天|周|星期|月|年)", suffix):
+            return None
+        return max(1, self._parse_number_token(match.group(1)))
+
+    @staticmethod
+    def _asks_for_multiple_ranked_results(question: str) -> bool:
+        q = question or ""
+        return any(token in q for token in ["哪些", "哪几个", "前列", "排行", "排名"]) or "top" in q.lower()
+
+    def _default_top_n(self, question: str, query_type: str) -> Optional[int]:
+        explicit_top_n = self._extract_top_n(question)
+        if explicit_top_n is not None:
+            return explicit_top_n
+        if query_type in {"pest_top", "soil_top", "joint_risk"}:
+            return 5 if self._asks_for_multiple_ranked_results(question) else 1
+        if query_type == "top":
+            return 5
+        return None
+
     def _extract_relative_window(self, question: str) -> tuple[Optional[str], Optional[str], dict]:
         now = datetime.now()
         if re.search(r"(?:过去|最近|近|这)半年", question) or "半年内" in question:
@@ -309,7 +338,7 @@ class QueryPlanner:
             return "consecutive_devices"
         if ("平均" in question and "告警值" in question) or ("按告警等级分组" in question and "平均" in question):
             return "avg_by_level"
-        if "top" in question.lower() or "Top" in question or "前5" in question or "最多" in question:
+        if "top" in question.lower() or "Top" in question or "前5" in question or "前十" in question or re.search(r"前\s*\d+", question) or "最多" in question:
             return "top"
         if "虫情" in question or "墒情" in question or "虫害" in question:
             return "structured_agri"
@@ -341,6 +370,7 @@ class QueryPlanner:
             "device_code": self._extract_device_code(question),
             "region_level": region_level,
             "window": window,
+            "top_n": self._default_top_n(question, query_type),
         }
 
     def _normalize_router_route(self, question: str, route: dict) -> dict:
