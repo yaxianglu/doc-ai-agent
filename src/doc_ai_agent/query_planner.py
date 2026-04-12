@@ -237,7 +237,11 @@ class QueryPlanner:
         return None, None, {"window_type": "none", "window_value": None}
 
     def _extract_future_window(self, question: str) -> dict | None:
+        if "下个月" in question or "下月" in question:
+            return {"window_type": "months", "window_value": 1, "horizon_days": 30}
         if "未来两周" in question:
+            return {"window_type": "weeks", "window_value": 2, "horizon_days": 14}
+        if any(token in question for token in ["未来会更糟", "会更糟吗", "会恶化吗", "会不会更糟", "会不会恶化"]):
             return {"window_type": "weeks", "window_value": 2, "horizon_days": 14}
         if m := re.search(r"未来(\d+|[一二两三四五六七八九十])个?(?:星期|周)", question):
             weeks = max(1, self._parse_number_token(m.group(1)))
@@ -434,6 +438,8 @@ class QueryPlanner:
         if intent == "advice":
             return "advice"
         query_type = str(route.get("query_type") or "")
+        if query_type.endswith("_compare") or query_type == "cross_domain_compare":
+            return "compare"
         if query_type.endswith("_detail"):
             return "detail"
         if query_type.endswith("_overview"):
@@ -480,10 +486,14 @@ class QueryPlanner:
         route = dict(plan.get("route") or {})
         finalized = dict(plan)
         finalized.update(self._typed_metadata(question, route, str(plan.get("intent") or "advice"), bool(plan.get("needs_clarification")), context, understanding))
+        task_type = str((understanding or {}).get("task_type") or "")
+        if task_type in {"compare", "cross_domain_compare"}:
+            finalized["answer_mode"] = "compare"
         understanding_payload = dict(understanding or {})
         inferred_needs_explanation = bool(understanding_payload.get("needs_explanation")) or any(token in question for token in ["为什么", "原因", "依据"])
-        inferred_needs_advice = bool(understanding_payload.get("needs_advice")) or any(
-            token in question for token in ["建议", "处置", "怎么办", "怎么做", "怎么处理", "怎么养", "防治"]
+        inferred_needs_advice = bool(understanding_payload.get("needs_advice")) or (
+            not self._has_negated_advice(question)
+            and any(token in question for token in ["建议", "处置", "怎么办", "怎么做", "怎么处理", "怎么养", "防治"])
         )
         inferred_needs_forecast = (
             bool(understanding_payload.get("needs_forecast"))
@@ -679,7 +689,7 @@ class QueryPlanner:
     @staticmethod
     def _has_detail_hint(question: str) -> bool:
         q = question or ""
-        return any(token in q for token in ["具体数据", "详细数据", "数据明细", "明细数据", "原始数据", "具体数值", "详细数值", "逐日数据", "每天数据"]) or (
+        return any(token in q for token in ["具体数据", "详细数据", "数据明细", "明细数据", "原始数据", "具体数值", "详细数值", "逐日数据", "每天数据", "明细", "按天", "逐天", "列出来"]) or (
             "数据" in q and not any(token in q for token in ["概况", "情况", "整体", "总体", "态势"])
         )
 
@@ -695,7 +705,16 @@ class QueryPlanner:
     @staticmethod
     def _is_advice_follow_up(question: str) -> bool:
         q = question or ""
-        return any(token in q for token in ["建议", "处置", "怎么办", "怎么做", "怎么处理", "怎么养", "防治"])
+        return not QueryPlanner._has_negated_advice(q) and any(
+            token in q for token in ["建议", "处置", "怎么办", "怎么做", "怎么处理", "怎么养", "防治"]
+        )
+
+    @staticmethod
+    def _has_negated_advice(question: str) -> bool:
+        q = question or ""
+        return bool(re.search(r"(不要|别|不用|不需要|先不要|先别)(?:再)?(?:给)?(?:我)?建议", q)) or bool(
+            re.search(r"(不要|别|不用|不需要|先不要|先别)(?:给)?(?:我)?(?:处置|防治)", q)
+        )
 
     @staticmethod
     def _is_explanation_follow_up(question: str) -> bool:
@@ -966,7 +985,9 @@ class QueryPlanner:
 
         if route.get("query_type") in {
             "pest_top",
+            "pest_detail",
             "soil_top",
+            "soil_detail",
             "pest_trend",
             "soil_trend",
             "pest_overview",

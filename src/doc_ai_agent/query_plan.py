@@ -34,6 +34,8 @@ def _region_scope_payload(route: dict, region_name: str, goal: str) -> dict:
 def _aggregation_for_query_type(query_type: str, answer_mode: str, goal: str) -> str:
     if goal == "conversation":
         return "none"
+    if query_type.endswith("_compare") or answer_mode == "compare":
+        return "compare"
     if query_type.endswith("_top") or answer_mode == "ranking":
         return "top_k"
     if query_type.endswith("_detail") or answer_mode == "detail":

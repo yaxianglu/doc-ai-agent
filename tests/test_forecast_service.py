@@ -73,6 +73,20 @@ class ForecastServiceTests(unittest.TestCase):
         self.assertEqual(result["data"][0]["region_name"], "宿迁市")
         self.assertIn("宿迁市", result["answer"])
 
+    def test_forecast_region_uses_requested_horizon_in_answer_text(self):
+        result = self.service.forecast_region(
+            {
+                "query_type": "soil_forecast",
+                "since": "2026-03-01 00:00:00",
+                "city": "苏州市",
+                "region_level": "city",
+                "forecast_window": {"window_type": "months", "window_value": 1, "horizon_days": 30},
+            }
+        )
+
+        self.assertEqual(result["forecast"]["horizon_days"], 30)
+        self.assertIn("未来30天", result["answer"])
+
 
 if __name__ == "__main__":
     unittest.main()

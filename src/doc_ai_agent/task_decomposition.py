@@ -7,6 +7,8 @@ def _primary_task_type(query_plan: dict) -> str | None:
 
     if aggregation == "top_k":
         return "historical_rank"
+    if aggregation == "compare":
+        return "comparison_analysis"
     if aggregation == "detail":
         return "historical_detail"
     if aggregation == "overview":

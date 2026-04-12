@@ -95,6 +95,12 @@ class ForecastService:
             return "中"
         return "低"
 
+    @staticmethod
+    def _horizon_phrase(horizon_days: int) -> str:
+        if horizon_days == 14:
+            return "未来两周"
+        return f"未来{horizon_days}天"
+
     def forecast_region(self, route: dict, context: dict | None = None) -> dict:
         domain = str((context or {}).get("domain") or route.get("query_type", "")).replace("_forecast", "")
         if domain == "pest" and not hasattr(self.repo, "pest_trend"):
@@ -123,8 +129,9 @@ class ForecastService:
 
         risk_level = self._risk_level(projection.projected_score)
         label = "虫情" if domain == "pest" else "墒情"
+        horizon_phrase = self._horizon_phrase(horizon_days)
         return {
-            "answer": f"{region_name}未来两周{label}风险预计为{risk_level}，预测得分约 {projection.projected_score}。",
+            "answer": f"{region_name}{horizon_phrase}{label}风险预计为{risk_level}，预测得分约 {projection.projected_score}。",
             "data": series,
             "forecast": {
                 "domain": domain,

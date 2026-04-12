@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from uuid import uuid4
 from typing import TypedDict
 
@@ -13,7 +14,7 @@ from .letta_memory import LocalMemoryStore, LettaMemoryStore, ResilientMemorySto
 from .query_playbook_router import create_query_playbook_router
 from .query_planner import QueryPlanner
 from .query_engine import QueryEngine
-from .request_understanding import RequestUnderstanding
+from .request_understanding import CITY_ALIASES as REQUEST_CITY_ALIASES, RequestUnderstanding
 from .repository import AlertRepository
 from .task_decomposition import build_task_graph
 
@@ -338,12 +339,33 @@ class DocAIAgent:
     def _query_node(self, state: AgentState) -> dict:
         understanding = state.get("understanding") or {}
         plan = state.get("plan") or {}
+        compare_request = self._detect_compare_request(
+            state.get("question", ""),
+            understanding,
+            plan,
+            state.get("memory_context"),
+        )
+        if compare_request:
+            return {
+                "query_result": self._answer_compare_request(
+                    state.get("question", ""),
+                    compare_request,
+                    understanding,
+                    plan,
+                    state.get("memory_context"),
+                )
+            }
         if not understanding.get("needs_historical") and plan.get("intent") != "data_query":
             return {"query_result": {}}
-        route = dict(plan.get("route") or {})
+        question_for_query = understanding.get("historical_query_text") or state.get("question", "")
+        route = self._normalize_historical_route(
+            question_for_query,
+            dict(plan.get("route") or {}),
+            understanding,
+            state.get("memory_context"),
+        )
         if route.get("query_type") in {"pest_forecast", "soil_forecast"}:
             return {"query_result": {}}
-        question_for_query = understanding.get("historical_query_text") or state.get("question", "")
         result = self.query_engine.answer(question_for_query, plan=route)
         evidence = dict(result.evidence or {})
         evidence.setdefault("query_type", route.get("query_type") or "")
@@ -365,7 +387,12 @@ class DocAIAgent:
             return None, {}
 
         plan = dict(state.get("plan") or {})
-        route = dict(plan.get("route") or {})
+        route = self._normalize_historical_route(
+            understanding.get("historical_query_text") or state.get("question", ""),
+            dict(plan.get("route") or {}),
+            understanding,
+            state.get("memory_context"),
+        )
         query_result = dict(state.get("query_result") or {})
         memory_context = dict(state.get("memory_context") or {})
         future_window = understanding.get("future_window") or {"horizon_days": 14}
@@ -458,7 +485,12 @@ class DocAIAgent:
     def _build_runtime_context(self, question: str, plan: dict, previous_context: dict | None = None, understanding: dict | None = None) -> dict:
         previous_context = dict(previous_context or {})
         understanding = dict(understanding or {})
-        route = dict(plan.get("route") or {})
+        route = self._normalize_historical_route(
+            understanding.get("historical_query_text") or question,
+            dict(plan.get("route") or {}),
+            understanding,
+            previous_context,
+        )
         if self.query_planner._is_greeting_question(question):
             return {
                 "domain": "",
@@ -476,6 +508,483 @@ class DocAIAgent:
             "window": route.get("window") or previous_context.get("window") or {},
             "route": route or previous_context.get("route") or {},
             "forecast": previous_context.get("forecast") or {},
+        }
+
+    def _normalize_historical_route(
+        self,
+        question: str,
+        route: dict,
+        understanding: dict | None = None,
+        previous_context: dict | None = None,
+    ) -> dict:
+        normalized = dict(route or {})
+        understanding = dict(understanding or {})
+        previous_context = dict(previous_context or {})
+        query_text = understanding.get("resolved_question") or question
+        base_route = dict(self.query_planner._build_route(query_text, str(normalized.get("query_type") or "structured_agri")))
+        domain = understanding.get("domain") or self._derive_domain(query_text, {"route": normalized}, previous_context)
+        region_name = str(understanding.get("region_name") or "")
+        task_type = str(understanding.get("task_type") or "")
+        explicit_window = understanding.get("window") if isinstance(understanding.get("window"), dict) else {}
+
+        if normalized.get("query_type") == "structured_agri" and domain in {"pest", "soil"}:
+            if task_type == "data_detail":
+                normalized["query_type"] = f"{domain}_detail"
+            elif task_type == "trend":
+                normalized["query_type"] = f"{domain}_trend"
+            elif task_type == "ranking":
+                normalized["query_type"] = f"{domain}_top"
+            elif region_name:
+                normalized["query_type"] = f"{domain}_overview"
+            else:
+                normalized["query_type"] = f"{domain}_top"
+
+        if not normalized.get("city") and not normalized.get("county"):
+            if region_name:
+                normalized["city"] = region_name
+                normalized["region_level"] = "city"
+            elif base_route.get("city"):
+                normalized["city"] = base_route.get("city")
+                normalized["region_level"] = base_route.get("region_level") or normalized.get("region_level") or "city"
+            elif base_route.get("county"):
+                normalized["county"] = base_route.get("county")
+                normalized["region_level"] = base_route.get("region_level") or normalized.get("region_level") or "county"
+
+        current_window = normalized.get("window") if isinstance(normalized.get("window"), dict) else {}
+        if (not current_window or current_window.get("window_type") in {"none", "all"}) and explicit_window:
+            normalized["window"] = explicit_window
+            current_window = explicit_window
+        elif not current_window and base_route.get("window"):
+            normalized["window"] = base_route.get("window")
+            current_window = normalized["window"]
+
+        if normalized.get("since") in {None, "", "1970-01-01 00:00:00"}:
+            if current_window and current_window.get("window_type") not in {"none", "all"}:
+                normalized["since"] = base_route.get("since") or normalized.get("since")
+            elif normalized.get("since") in {None, ""}:
+                normalized["since"] = base_route.get("since") or normalized.get("since")
+        if normalized.get("until") in {None, ""} and base_route.get("until"):
+            normalized["until"] = base_route.get("until")
+        if not normalized.get("region_level") and base_route.get("region_level"):
+            normalized["region_level"] = base_route.get("region_level")
+        return normalized
+
+    @staticmethod
+    def _extract_all_regions(text: str) -> list[str]:
+        normalized = RequestUnderstanding._normalize_city_mentions(text)
+        hits: list[tuple[int, str]] = []
+        for canonical in REQUEST_CITY_ALIASES.values():
+            for match in re.finditer(re.escape(canonical), normalized):
+                hits.append((match.start(), canonical))
+        hits.sort(key=lambda item: item[0])
+        regions: list[str] = []
+        for _, region in hits:
+            if region not in regions:
+                regions.append(region)
+        return regions
+
+    def _detect_compare_request(
+        self,
+        question: str,
+        understanding: dict | None,
+        plan: dict | None,
+        previous_context: dict | None,
+    ) -> dict | None:
+        text = str(question or "").strip()
+        if not text:
+            return None
+        understanding = dict(understanding or {})
+        plan = dict(plan or {})
+        previous_context = dict(previous_context or {})
+        compare_signal = any(token in text for token in ["对比", "比较", "相比", "哪个更突出", "哪个问题更突出"])
+        if not compare_signal:
+            return None
+
+        regions = self._extract_all_regions(text)
+        domain = understanding.get("domain") or self._derive_domain(text, plan, previous_context)
+        task_type = str(understanding.get("task_type") or "")
+        prefers_trend = task_type == "trend" or any(token in text for token in ["趋势", "走势", "走向", "变化", "波动"])
+        prefers_detail = task_type == "data_detail"
+
+        if len(regions) >= 2 and domain in {"pest", "soil"}:
+            if prefers_detail:
+                base_query_type = f"{domain}_detail"
+            elif prefers_trend:
+                base_query_type = f"{domain}_trend"
+            else:
+                base_query_type = f"{domain}_overview"
+            return {
+                "kind": "region_compare",
+                "query_type": f"{domain}_compare",
+                "base_query_type": base_query_type,
+                "domain": domain,
+                "regions": regions[:2],
+            }
+
+        cross_domain_signal = (
+            len(regions) >= 1
+            and any(token in text for token in ["虫情", "虫害"])
+            and any(token in text for token in ["墒情", "缺水", "干旱"])
+        )
+        if cross_domain_signal:
+            return {
+                "kind": "cross_domain_compare",
+                "query_type": "cross_domain_compare",
+                "base_query_type": "trend" if prefers_trend else ("detail" if prefers_detail else "overview"),
+                "region": regions[-1],
+            }
+        return None
+
+    @staticmethod
+    def _comparison_metric_key(domain: str) -> str:
+        return "severity_score" if domain == "pest" else "avg_anomaly_score"
+
+    @staticmethod
+    def _comparison_domain_label(domain: str) -> str:
+        return "虫情" if domain == "pest" else "墒情"
+
+    @staticmethod
+    def _comparison_trend(series: list[dict], key: str) -> str:
+        if len(series) < 2:
+            return "样本不足"
+        first = float(series[0].get(key) or 0)
+        last = float(series[-1].get(key) or 0)
+        if last > first * 1.15:
+            return "整体上升"
+        if last < first * 0.85:
+            return "整体下降"
+        return "整体平稳"
+
+    @staticmethod
+    def _comparison_average(series: list[dict], key: str) -> float:
+        if not series:
+            return 0.0
+        return sum(float(item.get(key) or 0) for item in series) / len(series)
+
+    @staticmethod
+    def _comparison_peak(series: list[dict], key: str) -> float:
+        if not series:
+            return 0.0
+        return max(float(item.get(key) or 0) for item in series)
+
+    @staticmethod
+    def _comparison_latest(series: list[dict], key: str) -> float:
+        if not series:
+            return 0.0
+        return float(series[-1].get(key) or 0)
+
+    @staticmethod
+    def _window_summary(window: dict | None) -> str:
+        payload = dict(window or {})
+        window_type = str(payload.get("window_type") or "")
+        window_value = payload.get("window_value")
+        if window_type == "months" and window_value:
+            return f"过去{window_value}个月"
+        if window_type == "weeks" and window_value:
+            return f"过去{window_value}周"
+        if window_type == "days" and window_value:
+            return f"过去{window_value}天"
+        return "当前时间窗"
+
+    def _comparison_summary(self, domain: str, region_name: str, series: list[dict]) -> dict:
+        key = self._comparison_metric_key(domain)
+        return {
+            "region_name": region_name,
+            "domain": domain,
+            "trend": self._comparison_trend(series, key),
+            "average": self._comparison_average(series, key),
+            "peak": self._comparison_peak(series, key),
+            "latest": self._comparison_latest(series, key),
+            "sample_days": len(series),
+        }
+
+    def _comparison_conclusion(self, left: dict, right: dict, left_label: str, right_label: str) -> str:
+        left_score = (float(left.get("average") or 0), float(left.get("peak") or 0), float(left.get("latest") or 0))
+        right_score = (float(right.get("average") or 0), float(right.get("peak") or 0), float(right.get("latest") or 0))
+        if left_score == right_score:
+            return f"综合看，{left_label}和{right_label}接近，没有明显一边更突出。"
+        winner = left_label if left_score > right_score else right_label
+        return f"综合看，{winner}更突出。"
+
+    @staticmethod
+    def _reasoning_metric_key(domain: str, series: list[dict]) -> tuple[str, str, str]:
+        if domain == "soil" or any("avg_anomaly_score" in item for item in series):
+            return "avg_anomaly_score", "异常值", "墒情"
+        return "severity_score", "严重度", "虫情"
+
+    @staticmethod
+    def _reasoning_point_date(point: dict) -> str:
+        return str(point.get("date") or point.get("bucket") or "")
+
+    @staticmethod
+    def _reasoning_format_metric(value: float) -> str:
+        if float(value).is_integer():
+            return f"{value:.0f}"
+        return f"{value:.1f}"
+
+    def _reasoning_series_summary(self, domain: str, series: list[dict]) -> dict:
+        metric_key, metric_label, domain_label = self._reasoning_metric_key(domain, series)
+        if not series:
+            return {
+                "domain_label": domain_label,
+                "metric_label": metric_label,
+                "trend": "样本不足",
+                "average": 0.0,
+                "peak_value": 0.0,
+                "peak_date": "",
+                "latest_value": 0.0,
+                "latest_date": "",
+                "active_days": 0,
+                "sample_days": 0,
+            }
+
+        peak_point = max(series, key=lambda item: float(item.get(metric_key) or 0))
+        latest_point = series[-1]
+        active_days = sum(1 for item in series if float(item.get(metric_key) or 0) > 0)
+        return {
+            "domain_label": domain_label,
+            "metric_label": metric_label,
+            "trend": self._comparison_trend(series, metric_key),
+            "average": self._comparison_average(series, metric_key),
+            "peak_value": float(peak_point.get(metric_key) or 0),
+            "peak_date": self._reasoning_point_date(peak_point),
+            "latest_value": float(latest_point.get(metric_key) or 0),
+            "latest_date": self._reasoning_point_date(latest_point),
+            "active_days": active_days,
+            "sample_days": len(series),
+        }
+
+    def _build_data_grounded_explanation(
+        self,
+        *,
+        plan_context: dict,
+        query_result: dict,
+        forecast_result: dict,
+        knowledge: list[dict],
+    ) -> str:
+        domain = str(plan_context.get("domain") or "")
+        region_name = str(plan_context.get("region_name") or self._first_region_name(query_result) or "当前地区")
+        series = list(query_result.get("data") or [])
+        if not series or not isinstance(series[0], dict):
+            return ""
+
+        summary = self._reasoning_series_summary(domain, series)
+        average = float(summary["average"] or 0)
+        peak_value = float(summary["peak_value"] or 0)
+        latest_value = float(summary["latest_value"] or 0)
+        trend = str(summary["trend"] or "整体平稳")
+        metric_label = str(summary["metric_label"] or "指标")
+
+        sentences = [
+            f"{region_name}{summary['domain_label']}在这个时间窗内{trend}，高值主要出现在{summary['peak_date'] or '窗口内高点'}，峰值{self._reasoning_format_metric(peak_value)}。"
+        ]
+        if latest_value <= average * 0.7 and peak_value > 0:
+            sentences.append(
+                f"最近值{self._reasoning_format_metric(latest_value)}，明显低于窗口均值{self._reasoning_format_metric(average)}，说明当前已经从前期高点回落，但前段时间确实存在一轮明显抬升。"
+            )
+        elif latest_value >= average * 1.2 and latest_value > 0:
+            sentences.append(
+                f"最近值{self._reasoning_format_metric(latest_value)}，仍高于窗口均值{self._reasoning_format_metric(average)}，说明当前压力还没有完全消退。"
+            )
+        else:
+            sentences.append(
+                f"最近值{self._reasoning_format_metric(latest_value)}，与窗口均值{self._reasoning_format_metric(average)}接近，说明当前处于高点后的回落或平稳阶段。"
+            )
+
+        if summary["active_days"] >= max(3, summary["sample_days"] // 3):
+            sentences.append(
+                f"窗口内共有{summary['active_days']}个观测日{metric_label}大于0，不是单点异常，更像是一段持续性的高值过程。"
+            )
+        else:
+            sentences.append(
+                f"窗口内只有{summary['active_days']}个观测日{metric_label}大于0，更像是局部时段冲高。"
+            )
+
+        forecast = dict(forecast_result.get("forecast") or {})
+        if forecast:
+            horizon_days = int(forecast.get("horizon_days") or 14)
+            horizon_phrase = "未来两周" if horizon_days == 14 else f"未来{horizon_days}天"
+            risk_level = str(forecast.get("risk_level") or "中")
+            projected_score = self._reasoning_format_metric(float(forecast.get("projected_score") or 0))
+            sentences.append(
+                f"按{horizon_phrase}预测，风险仍为{risk_level}，预测得分{projected_score}，所以后续应优先复核前期高值点位，而不是只看单日波动。"
+            )
+
+        if knowledge:
+            first_title = str(knowledge[0].get("title") or "")
+            if first_title:
+                sentences.append(f"结合{first_title}的经验，这类“先冲高、后回落”或持续高值形态，通常都需要复核监测点位、阈值判断和田间处置时机。")
+
+        return "".join(sentences)
+
+    def _build_data_grounded_advice(
+        self,
+        *,
+        plan_context: dict,
+        query_result: dict,
+        forecast_result: dict,
+    ) -> str:
+        domain = str(plan_context.get("domain") or "")
+        region_name = str(plan_context.get("region_name") or self._first_region_name(query_result) or "当前地区")
+        series = list(query_result.get("data") or [])
+        if not series or not isinstance(series[0], dict):
+            return ""
+
+        summary = self._reasoning_series_summary(domain, series)
+        average = float(summary["average"] or 0)
+        latest_value = float(summary["latest_value"] or 0)
+        peak_value = float(summary["peak_value"] or 0)
+        forecast = dict(forecast_result.get("forecast") or {})
+        risk_level = str(forecast.get("risk_level") or "")
+        rising_pressure = latest_value >= average * 1.2 if average > 0 else latest_value > 0
+        clearly_receded = latest_value <= average * 0.7 if average > 0 else latest_value == 0
+
+        if domain == "pest":
+            if risk_level == "高" or rising_pressure:
+                return (
+                    f"{region_name}当前仍处在偏高压力区，先复核高值点位和诱捕监测，再对连续高值地块按阈值分区处置；"
+                    "本轮不要全域铺开，优先盯住峰值附近区域，处置后 24-48 小时复查虫口变化。"
+                )
+            if clearly_receded:
+                return (
+                    f"{region_name}当前已经较峰值阶段明显回落，建议先以复核高值点位和维持监测为主，"
+                    "暂不直接扩大处置范围；如果后续连续几天再抬升，再升级到分区防控。"
+                )
+            return (
+                f"{region_name}当前处于中间压力阶段，建议先复核高值点位，再对持续偏高地块做分区处置，"
+                "同时保留连续监测，避免因为短时回落就过早撤掉巡查。"
+            )
+
+        if risk_level == "高" or rising_pressure:
+            return (
+                f"{region_name}当前异常压力偏高，建议先分区复核低墒/高墒地块，再优先处理持续异常区域；"
+                "低墒先补灌，高墒先排水，处置后继续看 3-5 天监测是否回落。"
+            )
+        if clearly_receded:
+            return (
+                f"{region_name}当前已经较前期高点回落，建议先维持监测和抽样复核，不要一次性加大灌排动作；"
+                "重点盯住此前异常最集中的地块，看是否再次抬头。"
+            )
+        return (
+            f"{region_name}当前仍有一定异常压力，建议先复核异常分布，再按地块类型做补灌或排水，"
+            "并持续复查，避免处置动作和实时墒情脱节。"
+        )
+
+    def _answer_compare_request(
+        self,
+        question: str,
+        compare_request: dict,
+        understanding: dict | None,
+        plan: dict | None,
+        previous_context: dict | None,
+    ) -> dict:
+        understanding = dict(understanding or {})
+        plan = dict(plan or {})
+        previous_context = dict(previous_context or {})
+        route_seed = self._normalize_historical_route(
+            understanding.get("historical_query_text") or question,
+            dict(plan.get("route") or {}),
+            understanding,
+            previous_context,
+        )
+        if compare_request["kind"] == "region_compare":
+            domain = str(compare_request["domain"])
+            domain_label = self._comparison_domain_label(domain)
+            regions = list(compare_request["regions"])
+            base_query_type = str(compare_request["base_query_type"])
+            summaries: list[dict] = []
+            subqueries: list[dict] = []
+            for region in regions:
+                route = dict(route_seed)
+                route.update(
+                    {
+                        "query_type": base_query_type,
+                        "city": region,
+                        "county": None,
+                        "region_level": "city",
+                    }
+                )
+                result = self.query_engine.answer(question, plan=route)
+                summaries.append(self._comparison_summary(domain, region, list(result.data or [])))
+                subqueries.append(
+                    {
+                        "region_name": region,
+                        "query_type": base_query_type,
+                        "since": route.get("since"),
+                        "until": route.get("until"),
+                    }
+                )
+            title = "变化对比" if base_query_type.endswith("_trend") else "对比结果"
+            left, right = summaries[0], summaries[1]
+            answer = "\n".join(
+                [
+                    f"{self._window_summary(route_seed.get('window'))}{domain_label}{title}：",
+                    f"- {left['region_name']}：趋势{left['trend']}，均值{left['average']:.1f}，峰值{left['peak']:.1f}，最近值{left['latest']:.1f}",
+                    f"- {right['region_name']}：趋势{right['trend']}，均值{right['average']:.1f}，峰值{right['peak']:.1f}，最近值{right['latest']:.1f}",
+                    self._comparison_conclusion(left, right, left["region_name"], right["region_name"]),
+                ]
+            )
+            evidence = {
+                "query_type": compare_request["query_type"],
+                "sql": base_query_type,
+                "compare_kind": "region_compare",
+                "subqueries": subqueries,
+                "comparisons": summaries,
+                "analysis_context": {
+                    "domain": domain,
+                    "region_name": "",
+                    "query_type": compare_request["query_type"],
+                    "window": route_seed.get("window") or {},
+                },
+            }
+            return {
+                "mode": "data_query",
+                "answer": answer,
+                "data": summaries,
+                "evidence": evidence,
+            }
+
+        region = str(compare_request["region"])
+        base_mode = str(compare_request["base_query_type"])
+        pest_query_type = f"pest_{base_mode}" if base_mode in {"detail", "trend", "overview"} else "pest_overview"
+        soil_query_type = f"soil_{base_mode}" if base_mode in {"detail", "trend", "overview"} else "soil_overview"
+        pest_route = dict(route_seed)
+        pest_route.update({"query_type": pest_query_type, "city": region, "county": None, "region_level": "city"})
+        soil_route = dict(route_seed)
+        soil_route.update({"query_type": soil_query_type, "city": region, "county": None, "region_level": "city"})
+        pest_result = self.query_engine.answer(question, plan=pest_route)
+        soil_result = self.query_engine.answer(question, plan=soil_route)
+        pest_summary = self._comparison_summary("pest", region, list(pest_result.data or []))
+        soil_summary = self._comparison_summary("soil", region, list(soil_result.data or []))
+        answer = "\n".join(
+            [
+                f"{region}{self._window_summary(route_seed.get('window'))}问题对比：",
+                f"- 虫情：趋势{pest_summary['trend']}，均值{pest_summary['average']:.1f}，峰值{pest_summary['peak']:.1f}，最近值{pest_summary['latest']:.1f}",
+                f"- 墒情：趋势{soil_summary['trend']}，均值{soil_summary['average']:.1f}，峰值{soil_summary['peak']:.1f}，最近值{soil_summary['latest']:.1f}",
+                self._comparison_conclusion(pest_summary, soil_summary, "虫情", "墒情"),
+            ]
+        )
+        evidence = {
+            "query_type": compare_request["query_type"],
+            "sql": "cross_domain_compare",
+            "compare_kind": "cross_domain_compare",
+            "subqueries": [
+                {"domain": "pest", "query_type": pest_query_type, "region_name": region, "since": pest_route.get("since"), "until": pest_route.get("until")},
+                {"domain": "soil", "query_type": soil_query_type, "region_name": region, "since": soil_route.get("since"), "until": soil_route.get("until")},
+            ],
+            "comparisons": [pest_summary, soil_summary],
+            "analysis_context": {
+                "domain": "mixed",
+                "region_name": region,
+                "query_type": compare_request["query_type"],
+                "window": route_seed.get("window") or {},
+            },
+        }
+        return {
+            "mode": "data_query",
+            "answer": answer,
+            "data": [pest_summary, soil_summary],
+            "evidence": evidence,
         }
 
     def _advice_node(self, state: AgentState) -> dict:
@@ -559,21 +1068,47 @@ class DocAIAgent:
         )
         if forecast_result.get("analysis_context", {}).get("region_name"):
             plan_context["region_name"] = forecast_result["analysis_context"]["region_name"]
-        elif self._first_region_name(query_result):
+        elif not plan_context.get("region_name") and self._first_region_name(query_result):
             plan_context["region_name"] = self._first_region_name(query_result)
         if forecast_result.get("forecast"):
             plan_context["forecast"] = forecast_result["forecast"]
 
+        explanation_text = ""
+        explanation_sources = []
+        if understanding.get("needs_explanation"):
+            explanation_text = self._build_data_grounded_explanation(
+                plan_context=plan_context,
+                query_result=query_result,
+                forecast_result=forecast_result,
+                knowledge=knowledge,
+            )
+            if not explanation_text:
+                explanation_result = self.advice_engine.answer("为什么", context=plan_context)
+                explanation_text = explanation_result.answer
+                explanation_sources = explanation_result.sources
+            else:
+                explanation_sources = knowledge
+
         advice_text = ""
         advice_sources = []
         if understanding.get("needs_advice"):
-            advice_result = self.advice_engine.answer(state.get("question", ""), context=plan_context)
-            advice_text = advice_result.answer
-            advice_sources = advice_result.sources
+            advice_text = self._build_data_grounded_advice(
+                plan_context=plan_context,
+                query_result=query_result,
+                forecast_result=forecast_result,
+            )
+            if not advice_text:
+                advice_result = self.advice_engine.answer("给建议", context=plan_context)
+                advice_text = advice_result.answer
+                advice_sources = advice_result.sources
+            else:
+                advice_sources = knowledge
 
         sections: list[str] = []
         if query_result.get("answer"):
             sections.append(f"历史数据：{query_result['answer']}")
+        if explanation_text:
+            sections.append(f"原因解释：{explanation_text}")
         if forecast_result.get("answer"):
             sections.append(f"预测：{forecast_result['answer']}")
         if knowledge:
@@ -591,7 +1126,7 @@ class DocAIAgent:
             "historical_query": query_result.get("evidence") or {},
             "forecast": forecast_result.get("forecast") or {},
             "knowledge": knowledge,
-            "knowledge_sources": advice_sources or knowledge,
+            "knowledge_sources": advice_sources or explanation_sources or knowledge,
             "generation_mode": "analysis_synthesis",
         }
         if plan.get("context_trace"):
@@ -777,7 +1312,7 @@ class DocAIAgent:
             "turn_count": turn_count,
             "domain": domain,
             "region_name": region_name,
-            "query_type": route.get("query_type") or previous_context.get("query_type") or "",
+            "query_type": analysis_context.get("query_type") or route.get("query_type") or previous_context.get("query_type") or "",
             "window": window,
             "route": route,
             "forecast": forecast,

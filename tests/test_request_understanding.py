@@ -15,6 +15,17 @@ class FakeBackend:
         }
 
 
+class FutureWindowBackend:
+    def extract(self, _question: str, context: dict | None = None) -> dict:
+        return {
+            "engine": "instructor",
+            "domain": "pest",
+            "task_type": "trend",
+            "region_name": "南京市",
+            "future_window": {"window_type": "weeks", "window_value": 2},
+        }
+
+
 class RequestUnderstandingTests(unittest.TestCase):
     def setUp(self):
         self.understanding = RequestUnderstanding()
@@ -218,6 +229,51 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["domain"], "pest")
         self.assertEqual(result["historical_window"]["window_type"], "months")
         self.assertEqual(result["historical_window"]["window_value"], 5)
+
+    def test_colloquial_vocative_noise_does_not_override_region(self):
+        result = self.understanding.analyze("苏州啊哥，过去5个月虫情具体数据")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "苏州市")
+        self.assertEqual(result["task_type"], "data_detail")
+        self.assertNotIn("啊哥", result["normalized_question"])
+
+    def test_future_window_without_horizon_days_does_not_crash(self):
+        understanding = RequestUnderstanding(backend=FutureWindowBackend())
+
+        result = understanding.analyze("下个月南京虫情趋势怎么样")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "南京市")
+        self.assertEqual(result["future_window"]["window_type"], "months")
+        self.assertEqual(result["future_window"]["window_value"], 1)
+        self.assertEqual(result["normalized_question"], "下个月南京市虫情趋势怎么样 未来1个月")
+
+    def test_negated_advice_does_not_enable_advice_mode(self):
+        result = self.understanding.analyze("不要建议，先给我数据，徐州过去3个月墒情")
+
+        self.assertEqual(result["domain"], "soil")
+        self.assertEqual(result["region_name"], "徐州市")
+        self.assertEqual(result["task_type"], "data_detail")
+        self.assertFalse(result["needs_advice"])
+        self.assertTrue(result["needs_historical"])
+        self.assertIn("徐州市过去3个月墒情", result["normalized_question"])
+        self.assertNotIn("处置建议", result["normalized_question"])
+
+    def test_compare_question_uses_compare_task_type(self):
+        result = self.understanding.analyze("对比过去5个月徐州和苏州的虫情")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["task_type"], "compare")
+        self.assertEqual(result["window"]["window_type"], "months")
+        self.assertEqual(result["window"]["window_value"], 5)
+
+    def test_cross_domain_compare_question_uses_cross_domain_compare_task_type(self):
+        result = self.understanding.analyze("过去3个月苏州虫情和墒情哪个问题更突出")
+
+        self.assertEqual(result["domain"], "mixed")
+        self.assertEqual(result["task_type"], "cross_domain_compare")
+        self.assertEqual(result["region_name"], "苏州市")
 
     def test_understanding_prefers_entity_extraction_before_rule_fallback(self):
         understanding = RequestUnderstanding()
