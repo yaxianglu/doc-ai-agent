@@ -148,6 +148,28 @@ class FakeStructuredRepo:
         ][:top_n]
 
 
+class CountyRankingRepo(FakeStructuredRepo):
+    def __init__(self):
+        self.last_top_pest_region_level = None
+
+    def top_pest_regions(self, since, until, region_level="city", top_n=5):
+        self.last_top_pest_region_level = region_level
+        return [
+            {
+                "region_name": "铜山区",
+                "severity_score": 92,
+                "record_count": 18,
+                "active_days": 9,
+            },
+            {
+                "region_name": "睢宁县",
+                "severity_score": 75,
+                "record_count": 13,
+                "active_days": 7,
+            },
+        ][:top_n]
+
+
 class VerboseDetailRepo(FakeStructuredRepo):
     def pest_trend(self, since, until, region_name, region_level="city"):
         return [
@@ -639,6 +661,24 @@ class AgentGraphTests(unittest.TestCase):
             [task["type"] for task in result["evidence"]["task_graph"]["tasks"]],
             ["historical_rank", "merge_answer"],
         )
+
+    def test_county_ranking_request_preserves_county_scope_end_to_end(self):
+        repo = CountyRankingRepo()
+        agent = DocAIAgent(
+            repo,
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("过去5个月虫情最严重的是哪些县", thread_id="thread-county-ranking")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(repo.last_top_pest_region_level, "county")
+        self.assertIn("区县", result["answer"])
+        self.assertIn("铜山区", result["answer"])
+        self.assertEqual(result["evidence"]["request_understanding"]["region_level"], "county")
+        self.assertEqual(result["evidence"]["historical_query"]["region_level"], "county")
+        self.assertEqual(result["evidence"]["analysis_context"]["region_level"], "county")
+        self.assertEqual(result["evidence"]["memory_state"]["route"]["region_level"], "county")
 
     def test_memory_state_exposes_slot_metadata(self):
         agent = DocAIAgent(

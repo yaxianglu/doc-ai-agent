@@ -551,6 +551,50 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["city"], "苏州市")
         self.assertEqual(plan["answer_mode"], "detail")
 
+    def test_generic_county_scope_question_uses_county_region_level(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("过去一年墒情最严重的是哪个县")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "soil_top")
+        self.assertEqual(plan["route"]["county"], None)
+        self.assertEqual(plan["route"]["region_level"], "county")
+        self.assertEqual(plan["query_plan"]["slots"]["region_scope"], {"level": "county", "value": "all"})
+        self.assertEqual(plan["answer_mode"], "ranking")
+
+    def test_plural_county_scope_question_uses_county_region_level(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("过去5个月虫情最严重的是哪些县")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_top")
+        self.assertEqual(plan["route"]["county"], None)
+        self.assertEqual(plan["route"]["region_level"], "county")
+        self.assertEqual(plan["query_plan"]["slots"]["region_scope"], {"level": "county", "value": "all"})
+        self.assertEqual(plan["route"]["window"]["window_type"], "months")
+        self.assertEqual(plan["route"]["window"]["window_value"], 5)
+
+    def test_router_cannot_downgrade_generic_county_scope_to_city(self):
+        planner = QueryPlanner(
+            FakeRouter(
+                {
+                    "intent": "data_query",
+                    "query_type": "pest_top",
+                    "region_level": "city",
+                    "since": "1970-01-01 00:00:00",
+                }
+            )
+        )
+
+        plan = planner.plan("过去5个月虫情最严重的是哪些县")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_top")
+        self.assertEqual(plan["route"]["region_level"], "county")
+        self.assertEqual(plan["query_plan"]["slots"]["region_scope"], {"level": "county", "value": "all"})
+
     def test_detail_follow_up_preserves_previous_scope(self):
         planner = QueryPlanner(None)
         plan = planner.plan(
