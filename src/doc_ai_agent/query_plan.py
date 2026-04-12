@@ -1,6 +1,26 @@
 from __future__ import annotations
 
 
+def _normalized_route(route: dict | None) -> dict:
+    raw = dict(route or {})
+    top_n = raw.get("top_n")
+    if top_n not in {None, ""}:
+        top_n = max(1, int(top_n))
+    return {
+        "query_type": str(raw.get("query_type") or ""),
+        "since": str(raw.get("since") or "1970-01-01 00:00:00"),
+        "until": raw.get("until"),
+        "city": raw.get("city"),
+        "county": raw.get("county"),
+        "device_code": raw.get("device_code"),
+        "region_level": str(raw.get("region_level") or ("county" if raw.get("county") else "city")),
+        "window": dict(raw.get("window") or {"window_type": "all", "window_value": None}),
+        "top_n": top_n,
+        "forecast_window": dict(raw.get("forecast_window") or {}) if isinstance(raw.get("forecast_window"), dict) else None,
+        "forecast_mode": str(raw.get("forecast_mode") or ""),
+    }
+
+
 def _metric_for_query_type(query_type: str, domain: str) -> str:
     if query_type.startswith("pest") or domain == "pest":
         return "pest_severity"
@@ -51,6 +71,26 @@ def _aggregation_for_query_type(query_type: str, answer_mode: str, goal: str) ->
     return "none"
 
 
+def execution_route(query_plan: dict | None) -> dict:
+    execution = dict((query_plan or {}).get("execution") or {})
+    route = execution.get("route")
+    if isinstance(route, dict):
+        return _normalized_route(route)
+    return {}
+
+
+def replace_execution_route(query_plan: dict | None, route: dict) -> dict:
+    updated = dict(query_plan or {})
+    execution = dict(updated.get("execution") or {})
+    execution["route"] = _normalized_route(route)
+    updated["execution"] = execution
+    slots = dict(updated.get("slots") or {})
+    if slots.get("aggregation") == "top_k":
+        slots["k"] = execution["route"].get("top_n") or 1
+        updated["slots"] = slots
+    return updated
+
+
 def build_query_plan(
     *,
     plan_intent: str,
@@ -86,9 +126,18 @@ def build_query_plan(
                 "must_use_structured_data": False,
                 "allow_clarification": False,
             },
+            "execution": {
+                "route": _normalized_route(route),
+                "domain": "",
+                "region_name": "",
+                "historical_window": {"window_type": "none", "window_value": None},
+                "future_window": None,
+                "answer_mode": "clarify" if needs_clarification else "none",
+            },
         }
 
     query_type = str(route.get("query_type") or "")
+    normalized_route = _normalized_route(route)
     aggregation = _aggregation_for_query_type(query_type, answer_mode, "agri_analysis" if domain else "conversation")
     return {
         "version": "v1",
@@ -108,5 +157,13 @@ def build_query_plan(
         "constraints": {
             "must_use_structured_data": bool(domain),
             "allow_clarification": not is_greeting,
+        },
+        "execution": {
+            "route": normalized_route,
+            "domain": domain,
+            "region_name": region_name,
+            "historical_window": dict(historical_window or {}),
+            "future_window": dict(future_window or {}) if isinstance(future_window, dict) else None,
+            "answer_mode": answer_mode,
         },
     }

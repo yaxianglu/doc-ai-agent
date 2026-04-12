@@ -457,6 +457,9 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["recovery_suggestions"][0]["action"], "use_available_window")
         self.assertIn("2026-01-02 至 2026-01-03", result["evidence"]["recovery_suggestions"][0]["message"])
         self.assertIn("2026年1月以来", result["evidence"]["recovery_suggestions"][0]["suggested_question"])
+        self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], "outside_available_window")
+        self.assertIn("db", result["evidence"]["response_meta"]["source_types"])
+        self.assertLess(result["evidence"]["response_meta"]["confidence"], 0.5)
 
     def test_count_query_returns_available_range_when_no_rows(self):
         result = self.agent.answer("2030年以来指挥调度平台发生了多少预警信息？")
@@ -526,6 +529,8 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result["processing"]["intent_recognition"], "GPT-4.1-mini")
         self.assertEqual(result["processing"]["answer_generation"], "GPT-4.1")
         self.assertEqual(result["processing"]["ai_involvement"], "高")
+        self.assertIn("llm", result["evidence"]["response_meta"]["source_types"])
+        self.assertGreater(result["evidence"]["response_meta"]["confidence"], 0.7)
 
     def test_advice_with_sources(self):
         agent = DocAIAgent(
@@ -621,6 +626,14 @@ class AgentGraphTests(unittest.TestCase):
             [task["type"] for task in result["evidence"]["task_graph"]["tasks"]],
             ["historical_rank", "cause_retrieval", "forecast", "advice_retrieval", "merge_answer"],
         )
+        self.assertEqual(result["evidence"]["task_graph"]["merge_strategy"], "sectioned_answer")
+        self.assertEqual(
+            [task["stage"] for task in result["evidence"]["task_graph"]["tasks"]],
+            ["historical_query", "knowledge_retrieval", "forecast", "knowledge_retrieval", "answer_synthesis"],
+        )
+        self.assertGreater(result["evidence"]["response_meta"]["confidence"], 0.7)
+        self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], "")
+        self.assertEqual(result["evidence"]["response_meta"]["source_types"], ["db", "forecast", "rag"])
 
     def test_compare_two_regions_returns_actual_comparison(self):
         agent = DocAIAgent(
@@ -710,6 +723,74 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(len(result["data"]), 10)
         self.assertIn("Top10", result["answer"])
         self.assertIn("10.", result["answer"])
+
+    def test_agent_prefers_query_plan_execution_route_over_legacy_route(self):
+        agent = DocAIAgent(
+            LargeRankingRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        execution_route = {
+            "query_type": "pest_top",
+            "since": "2025-11-01 00:00:00",
+            "until": None,
+            "city": None,
+            "county": None,
+            "device_code": None,
+            "region_level": "city",
+            "window": {"window_type": "months", "window_value": 5},
+            "top_n": 3,
+            "forecast_window": None,
+            "forecast_mode": "",
+        }
+        legacy_route = dict(execution_route)
+        legacy_route["top_n"] = 1
+        query_plan = {
+            "version": "v1",
+            "goal": "agri_analysis",
+            "intent": "analysis",
+            "slots": {
+                "domain": "pest",
+                "metric": "pest_severity",
+                "time_range": {"mode": "relative", "value": "5_months"},
+                "region_scope": {"level": "city", "value": "all"},
+                "aggregation": "top_k",
+                "k": 3,
+                "need_explanation": False,
+                "need_forecast": False,
+                "need_advice": False,
+            },
+            "constraints": {
+                "must_use_structured_data": True,
+                "allow_clarification": True,
+            },
+            "execution": {
+                "route": execution_route,
+                "domain": "pest",
+                "region_name": "",
+                "historical_window": {"window_type": "months", "window_value": 5},
+                "future_window": None,
+                "answer_mode": "ranking",
+            },
+        }
+
+        agent.query_planner.plan = lambda *args, **kwargs: {
+            "intent": "data_query",
+            "confidence": 0.9,
+            "route": legacy_route,
+            "query_plan": query_plan,
+            "needs_clarification": False,
+            "clarification": None,
+            "reason": "test_execution_route_source",
+            "context_trace": [],
+        }
+
+        result = agent.answer("过去5个月虫情最严重的地方是哪里？", thread_id="thread-query-plan-route")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(len(result["data"]), 3)
+        self.assertIn("Top3", result["answer"])
+        self.assertEqual(result["evidence"]["memory_state"]["route"]["top_n"], 3)
 
     def test_memory_state_exposes_slot_metadata(self):
         agent = DocAIAgent(
@@ -979,6 +1060,8 @@ class AgentGraphTests(unittest.TestCase):
         result = agent.answer("虫情", thread_id="thread-domain-dataset")
 
         self.assertEqual(first["mode"], "advice")
+        self.assertEqual(first["evidence"]["response_meta"]["fallback_reason"], "agri_domain_ambiguous")
+        self.assertIn("planner", first["evidence"]["response_meta"]["source_types"])
         self.assertEqual(result["mode"], "data_query")
         self.assertEqual(result["evidence"]["analysis_context"]["query_type"], "pest_detail")
         self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "苏州市")
