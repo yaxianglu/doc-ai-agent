@@ -205,9 +205,13 @@ class EntityExtractionService:
         if city_positions:
             city_positions.sort(key=lambda item: item[0])
             return city_positions[-1][1]
-        county = re.findall(r"([\u4e00-\u9fa5]{1,12}(?:县|区))", normalized)
-        if county:
-            return county[-1]
+        county_match = re.search(r"(?<!哪些)(?<!哪个)(?<!什么)([\u4e00-\u9fa5]{1,12}(?:县|区))", normalized)
+        if county_match:
+            county = county_match.group(1)
+            if county not in {"地区", "区域", "市区", "城区"} and not any(
+                token in county for token in ["预警", "最多", "最严重", "地方", "地区"]
+            ) and not county.startswith("个"):
+                return county
         city = re.findall(r"([\u4e00-\u9fa5]{2,6}市)", normalized)
         for item in reversed(city):
             if item not in {"城市"} and not item.endswith("城市"):

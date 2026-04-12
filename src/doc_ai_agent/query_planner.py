@@ -211,6 +211,15 @@ class QueryPlanner:
             return county
         return None
 
+    @staticmethod
+    def _asks_for_county_scope(question: str) -> bool:
+        q = question or ""
+        if not q:
+            return False
+        if any(token in q for token in ["区县", "按县", "按区县", "各县", "各区县"]):
+            return True
+        return any(token in q for token in ["哪个县", "哪些县", "什么县", "哪几个县", "哪个区", "哪些区", "什么区", "哪几个区"])
+
     def _extract_device_code(self, question: str) -> Optional[str]:
         m = re.search(r"(SNS\d+)", question)
         if m:
@@ -321,13 +330,14 @@ class QueryPlanner:
         if since is None:
             since = "1970-01-01 00:00:00"
             window = {"window_type": "all", "window_value": None}
-        region_level = "county" if self._extract_county(question) else "city"
+        county = self._extract_county(question)
+        region_level = "county" if county or self._asks_for_county_scope(question) else "city"
         return {
             "query_type": query_type,
             "since": since,
             "until": until,
             "city": self._extract_city(question),
-            "county": self._extract_county(question),
+            "county": county,
             "device_code": self._extract_device_code(question),
             "region_level": region_level,
             "window": window,
@@ -354,6 +364,8 @@ class QueryPlanner:
             if key in {"city", "county", "device_code", "until"} and value in {None, ""}:
                 continue
             if key in {"city", "county", "device_code"} and base.get(key) not in {None, ""}:
+                continue
+            if key == "region_level" and base.get("region_level") == "county" and value == "city":
                 continue
             if key in {"since", "until"} and base["window"]["window_type"] != "all":
                 continue

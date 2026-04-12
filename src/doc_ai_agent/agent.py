@@ -245,22 +245,38 @@ class DocAIAgent:
     def _asks_region_ranking(question: str) -> bool:
         return any(token in question for token in ["哪里", "哪儿", "哪些地区", "哪些地方", "最严重的地方"])
 
+    @staticmethod
+    def _infer_region_level_from_name(region_name: str) -> str:
+        normalized = str(region_name or "")
+        if normalized.endswith(("县", "区")):
+            return "county"
+        if normalized.endswith("市"):
+            return "city"
+        return ""
+
     def _build_forecast_plan_from_understanding(self, understanding: dict, memory_context: dict | None = None) -> dict:
         memory_context = dict(memory_context or {})
         domain = understanding.get("domain") or memory_context.get("domain") or ""
         future_window = understanding.get("future_window") or {"horizon_days": 14}
         inherited_region = memory_context.get("region_name") if understanding.get("reuse_region_from_context") else None
+        region_name = understanding.get("region_name") or inherited_region or None
+        region_level = (
+            understanding.get("region_level")
+            or str((memory_context.get("route") or {}).get("region_level") or "")
+            or self._infer_region_level_from_name(str(region_name or ""))
+            or "city"
+        )
         route = {
             "query_type": f"{domain}_forecast" if domain else "count",
             "since": memory_context.get("route", {}).get("since") or "1970-01-01 00:00:00",
             "until": None,
-            "city": understanding.get("region_name") or inherited_region or None,
-            "county": None,
+            "city": region_name if region_level != "county" else None,
+            "county": region_name if region_level == "county" else None,
             "device_code": None,
-            "region_level": "city",
+            "region_level": region_level,
             "window": understanding.get("window") or memory_context.get("window") or {"window_type": "all", "window_value": None},
             "forecast_window": future_window,
-            "forecast_mode": "ranking" if self._asks_region_ranking(understanding.get("original_question", "")) and not understanding.get("region_name") else "region",
+            "forecast_mode": "ranking" if self._asks_region_ranking(understanding.get("original_question", "")) and not region_name else "region",
         }
         return {
             "intent": "data_query",
@@ -399,15 +415,22 @@ class DocAIAgent:
         domain = understanding.get("domain") or memory_context.get("domain") or self._derive_domain(state.get("question", ""), plan, memory_context)
         first_region = self._first_region_name(query_result) if query_result else ""
         inherited_region = memory_context.get("region_name") if understanding.get("reuse_region_from_context") else ""
-        region_name = understanding.get("region_name") or route.get("city") or inherited_region or first_region
+        region_name = understanding.get("region_name") or route.get("county") or route.get("city") or inherited_region or first_region
+        region_level = (
+            understanding.get("region_level")
+            or route.get("region_level")
+            or str((memory_context.get("route") or {}).get("region_level") or "")
+            or self._infer_region_level_from_name(str(region_name or ""))
+            or "city"
+        )
         forecast_mode = route.get("forecast_mode") or ("ranking" if not region_name and self._asks_region_ranking(understanding.get("original_question", "")) else "region")
         forecast_route = {
             "query_type": f"{domain}_forecast",
             "since": route.get("since") or memory_context.get("route", {}).get("since") or "1970-01-01 00:00:00",
             "until": route.get("until"),
-            "city": region_name or None,
-            "county": None,
-            "region_level": "city",
+            "city": region_name if region_level != "county" else None,
+            "county": region_name if region_level == "county" else None,
+            "region_level": region_level,
             "window": route.get("window") or understanding.get("window") or memory_context.get("window") or {"window_type": "all", "window_value": None},
             "forecast_window": future_window,
             "forecast_mode": forecast_mode,
@@ -415,6 +438,7 @@ class DocAIAgent:
         runtime_context = {
             "domain": domain,
             "region_name": region_name or "",
+            "region_level": region_level,
             "query_type": route.get("query_type") or memory_context.get("query_type") or "",
             "window": forecast_route["window"],
             "route": route or memory_context.get("route") or {},
@@ -495,6 +519,7 @@ class DocAIAgent:
             return {
                 "domain": "",
                 "region_name": "",
+                "region_level": "",
                 "query_type": "",
                 "window": {},
                 "route": {},
@@ -504,6 +529,7 @@ class DocAIAgent:
         return {
             "domain": self._derive_domain(question, plan, previous_context),
             "region_name": route.get("county") or route.get("city") or inherited_region or "",
+            "region_level": route.get("region_level") or str((previous_context.get("route") or {}).get("region_level") or ""),
             "query_type": route.get("query_type") or previous_context.get("query_type") or "",
             "window": route.get("window") or previous_context.get("window") or {},
             "route": route or previous_context.get("route") or {},
@@ -524,6 +550,7 @@ class DocAIAgent:
         base_route = dict(self.query_planner._build_route(query_text, str(normalized.get("query_type") or "structured_agri")))
         domain = understanding.get("domain") or self._derive_domain(query_text, {"route": normalized}, previous_context)
         region_name = str(understanding.get("region_name") or "")
+        region_level = str(understanding.get("region_level") or "")
         task_type = str(understanding.get("task_type") or "")
         explicit_window = understanding.get("window") if isinstance(understanding.get("window"), dict) else {}
 
@@ -541,8 +568,12 @@ class DocAIAgent:
 
         if not normalized.get("city") and not normalized.get("county"):
             if region_name:
-                normalized["city"] = region_name
-                normalized["region_level"] = "city"
+                resolved_region_level = region_level or self._infer_region_level_from_name(region_name) or "city"
+                if resolved_region_level == "county":
+                    normalized["county"] = region_name
+                else:
+                    normalized["city"] = region_name
+                normalized["region_level"] = resolved_region_level
             elif base_route.get("city"):
                 normalized["city"] = base_route.get("city")
                 normalized["region_level"] = base_route.get("region_level") or normalized.get("region_level") or "city"
@@ -933,6 +964,7 @@ class DocAIAgent:
                 "analysis_context": {
                     "domain": domain,
                     "region_name": "",
+                    "region_level": "city",
                     "query_type": compare_request["query_type"],
                     "window": route_seed.get("window") or {},
                 },
@@ -976,6 +1008,7 @@ class DocAIAgent:
             "analysis_context": {
                 "domain": "mixed",
                 "region_name": region,
+                "region_level": self._infer_region_level_from_name(region) or "city",
                 "query_type": compare_request["query_type"],
                 "window": route_seed.get("window") or {},
             },
@@ -1347,6 +1380,7 @@ class DocAIAgent:
             {
                 "domain": snapshot.get("domain"),
                 "region_name": snapshot.get("region_name"),
+                "region_level": str((snapshot.get("route") or {}).get("region_level") or ""),
                 "query_type": snapshot.get("query_type"),
             },
         )

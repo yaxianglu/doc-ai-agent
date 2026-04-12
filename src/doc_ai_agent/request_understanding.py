@@ -97,6 +97,13 @@ class RequestUnderstanding:
             structured.get("region_name") if isinstance(structured.get("region_name"), str) else "",
             extracted.get("region_name") if isinstance(extracted.get("region_name"), str) else self._extract_region(cleaned),
         ) or (str((context or {}).get("region_name") or "") if reuse_region_from_context else "")
+        region_level = self._resolve_region_level(
+            text=cleaned,
+            region_name=region_name,
+            structured_level=str(structured.get("region_level") or ""),
+            extracted_level=str(extracted.get("region_level") or ""),
+            context_level=str(((context or {}).get("route") or {}).get("region_level") or "") if reuse_region_from_context else "",
+        )
 
         needs_explanation = any(token in cleaned for token in ["为什么", "原因", "依据"])
         needs_advice = (
@@ -131,6 +138,7 @@ class RequestUnderstanding:
             needs_advice=needs_advice,
             task_type=task_type,
             region_name=region_name,
+            region_level=region_level,
         )
         historical_query_text = self._build_historical_query_text(
             domain=domain,
@@ -138,6 +146,7 @@ class RequestUnderstanding:
             cleaned=cleaned,
             task_type=task_type,
             region_name=region_name,
+            region_level=region_level,
         )
 
         return {
@@ -155,6 +164,7 @@ class RequestUnderstanding:
             "window": historical_window,
             "future_window": future_window,
             "region_name": region_name,
+            "region_level": region_level,
             "needs_historical": needs_historical,
             "needs_forecast": needs_forecast,
             "needs_explanation": needs_explanation,
@@ -193,6 +203,9 @@ class RequestUnderstanding:
         region_name = self._coalesce_region_name(str(payload.get("region_name") or ""), "")
         if region_name:
             normalized["region_name"] = region_name
+        region_level = str(payload.get("region_level") or "")
+        if region_level in {"city", "county"}:
+            normalized["region_level"] = region_level
         historical_window = self._normalize_window_payload(payload.get("historical_window"))
         if historical_window:
             normalized["historical_window"] = historical_window
@@ -311,6 +324,12 @@ class RequestUnderstanding:
     def _coalesce_region_name(primary: str, secondary: str | None) -> str:
         for candidate in [primary, secondary or ""]:
             if not candidate:
+                continue
+            if candidate in {"地区", "区域", "市区", "城区"}:
+                continue
+            if any(token in candidate for token in ["预警", "最多", "最严重", "地方", "地区"]):
+                continue
+            if candidate.startswith("个"):
                 continue
             if candidate in CITY_ALIASES.values():
                 return candidate
@@ -459,14 +478,49 @@ class RequestUnderstanding:
         if city_positions:
             city_positions.sort(key=lambda item: item[0])
             return city_positions[-1][1]
-        county = re.findall(r"([\u4e00-\u9fa5]{1,12}(?:县|区))", normalized)
-        if county:
-            return county[-1]
+        county_match = re.search(r"(?<!哪些)(?<!哪个)(?<!什么)([\u4e00-\u9fa5]{1,12}(?:县|区))", normalized)
+        if county_match:
+            county = county_match.group(1)
+            if county not in {"地区", "区域", "市区", "城区"} and not any(
+                token in county for token in ["预警", "最多", "最严重", "地方", "地区"]
+            ) and not county.startswith("个"):
+                return county
         city = re.findall(r"([\u4e00-\u9fa5]{2,6}市)", normalized)
         for item in reversed(city):
             if item not in {"城市"} and not item.endswith("城市"):
                 return item
         return None
+
+    @staticmethod
+    def _asks_for_county_scope(text: str) -> bool:
+        if not text:
+            return False
+        if any(token in text for token in ["区县", "按县", "按区县", "各县", "各区县"]):
+            return True
+        return any(token in text for token in ["哪个县", "哪些县", "什么县", "哪几个县", "哪个区", "哪些区", "什么区", "哪几个区"])
+
+    @classmethod
+    def _resolve_region_level(
+        cls,
+        *,
+        text: str,
+        region_name: str,
+        structured_level: str,
+        extracted_level: str,
+        context_level: str,
+    ) -> str:
+        for level in [structured_level, extracted_level]:
+            if level in {"city", "county"}:
+                return level
+        if region_name.endswith(("县", "区")):
+            return "county"
+        if region_name.endswith("市"):
+            return "city"
+        if cls._asks_for_county_scope(text):
+            return "county"
+        if context_level in {"city", "county"} and region_name:
+            return context_level
+        return ""
 
     @staticmethod
     def _extract_all_regions(text: str) -> list[str]:
@@ -602,10 +656,20 @@ class RequestUnderstanding:
             return f"过去{window['window_value']}天"
         return "历史上"
 
-    def _build_historical_query_text(self, domain: str, historical_window: dict, cleaned: str, task_type: str, region_name: str) -> str:
+    def _build_historical_query_text(
+        self,
+        domain: str,
+        historical_window: dict,
+        cleaned: str,
+        task_type: str,
+        region_name: str,
+        region_level: str,
+    ) -> str:
         if not domain:
             return cleaned
         if task_type in {"trend", "region_overview", "joint_risk", "compare", "cross_domain_compare"}:
+            return cleaned
+        if task_type == "ranking" and region_level == "county":
             return cleaned
         prefix = self._window_prefix(historical_window)
         if domain == "pest" and task_type == "ranking":
@@ -627,10 +691,11 @@ class RequestUnderstanding:
         needs_advice: bool,
         task_type: str,
         region_name: str,
+        region_level: str,
     ) -> str:
         parts: list[str] = []
         if domain and self._needs_historical(cleaned, historical_window, future_window, domain, task_type, region_name):
-            parts.append(self._build_historical_query_text(domain, historical_window, cleaned, task_type, region_name))
+            parts.append(self._build_historical_query_text(domain, historical_window, cleaned, task_type, region_name, region_level))
         elif cleaned:
             parts.append(cleaned)
 

@@ -196,6 +196,24 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["historical_query_text"], "近两个月哪些地方虫情高而且缺水更明显")
         self.assertEqual(result["normalized_question"], "近两个月哪些地方虫情高而且缺水更明显")
 
+    def test_generic_county_ranking_preserves_county_scope(self):
+        result = self.understanding.analyze("过去5个月虫情最严重的是哪些县")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["task_type"], "ranking")
+        self.assertEqual(result["region_name"], "")
+        self.assertEqual(result["region_level"], "county")
+        self.assertEqual(result["historical_query_text"], "过去5个月虫情最严重的是哪些县")
+        self.assertEqual(result["normalized_question"], "过去5个月虫情最严重的是哪些县")
+
+    def test_specific_county_question_marks_county_region_level(self):
+        result = self.understanding.analyze("铜山区过去5个月虫情具体数据")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["task_type"], "data_detail")
+        self.assertEqual(result["region_name"], "铜山区")
+        self.assertEqual(result["region_level"], "county")
+
     def test_preserves_region_overview_semantics_for_pest_summary_question(self):
         result = self.understanding.analyze("给我过去五个月徐州的虫害情况")
 
