@@ -50,10 +50,15 @@ class RequestUnderstanding:
         "判断一下",
         "判断",
     ]
+    NOISE_REGEX_PATTERNS = [
+        r"(?<=[\u4e00-\u9fa5])啊哥(?=(?:[\s，。！？；、]|$))",
+        r"(?<=[\u4e00-\u9fa5])老哥(?=(?:[\s，。！？；、]|$))",
+    ]
     OVERVIEW_HINTS = ["情况", "概况", "整体", "总体", "态势", "表现", "怎么样", "如何", "什么情况"]
     RANKING_HINTS = ["最严重", "最厉害", "最多", "top", "Top", "TOP", "排行", "排名", "前5", "前十"]
     TREND_HINTS = ["走势", "趋势", "走向", "波动", "变化"]
     DETAIL_HINTS = ["具体数据", "详细数据", "数据明细", "明细数据", "原始数据", "具体数值", "详细数值", "逐日数据", "每天数据"]
+    COMPARE_HINTS = ["对比", "比较", "相比", "哪个更突出", "哪个问题更突出", "哪边更突出", "谁更突出"]
     GREETING_PATTERNS = {
         "你好",
         "您好",
@@ -87,7 +92,7 @@ class RequestUnderstanding:
             extracted.get("historical_window"),
             self._extract_past_window(cleaned),
         )
-        future_window = structured.get("future_window") or extracted.get("future_window") or self._extract_future_window(cleaned)
+        future_window = self._extract_future_window(cleaned) or structured.get("future_window") or extracted.get("future_window")
         region_name = self._coalesce_region_name(
             structured.get("region_name") if isinstance(structured.get("region_name"), str) else "",
             extracted.get("region_name") if isinstance(extracted.get("region_name"), str) else self._extract_region(cleaned),
@@ -97,6 +102,7 @@ class RequestUnderstanding:
         needs_advice = (
             any(token in cleaned for token in ["建议", "处置", "怎么办", "怎么做", "怎么处理", "怎么养", "防治", "如何防治"])
             and not self._asks_stored_disposal_field(cleaned)
+            and not self._has_negated_advice(cleaned)
         )
         if structured.get("needs_explanation") is True:
             needs_explanation = True
@@ -267,6 +273,10 @@ class RequestUnderstanding:
             if phrase in cleaned:
                 ignored.append(phrase)
                 cleaned = cleaned.replace(phrase, " ")
+        for pattern in self.NOISE_REGEX_PATTERNS:
+            if re.search(pattern, cleaned):
+                ignored.append(re.sub(r"[?:(?<=>)|\\[\\]\\\\]", "", pattern))
+                cleaned = re.sub(pattern, " ", cleaned)
         cleaned = re.sub(r"[，。！？；、]+", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         return cleaned, ignored
@@ -410,6 +420,12 @@ class RequestUnderstanding:
         )
 
     @staticmethod
+    def _has_negated_advice(text: str) -> bool:
+        return bool(re.search(r"(不要|别|不用|不需要|先不要|先别)(?:再)?(?:给)?(?:我)?建议", text)) or bool(
+            re.search(r"(不要|别|不用|不需要|先不要|先别)(?:给)?(?:我)?(?:处置|防治)", text)
+        )
+
+    @staticmethod
     def _needs_forecast(text: str, future_window: dict | None, needs_advice: bool) -> bool:
         if future_window is not None:
             return True
@@ -452,6 +468,20 @@ class RequestUnderstanding:
                 return item
         return None
 
+    @staticmethod
+    def _extract_all_regions(text: str) -> list[str]:
+        normalized = RequestUnderstanding._normalize_city_mentions(text)
+        city_positions: list[tuple[int, str]] = []
+        for canonical in CITY_ALIASES.values():
+            for match in re.finditer(re.escape(canonical), normalized):
+                city_positions.append((match.start(), canonical))
+        city_positions.sort(key=lambda item: item[0])
+        regions: list[str] = []
+        for _, canonical in city_positions:
+            if canonical not in regions:
+                regions.append(canonical)
+        return regions
+
     @classmethod
     def _parse_number_token(cls, token: str) -> int | None:
         token = str(token or "").strip()
@@ -480,6 +510,8 @@ class RequestUnderstanding:
 
     @staticmethod
     def _extract_future_window(text: str) -> dict | None:
+        if "下个月" in text or "下月" in text:
+            return {"window_type": "months", "window_value": 1, "horizon_days": 30}
         if "未来两周" in text:
             return {"window_type": "weeks", "window_value": 2, "horizon_days": 14}
         if m := re.search(r"未来(\d+|[一二两三四五六七八九十])个?(?:星期|周)", text):
@@ -495,6 +527,11 @@ class RequestUnderstanding:
 
     @classmethod
     def _infer_task_type(cls, text: str, domain: str, region_name: str, needs_explanation: bool, needs_advice: bool) -> str:
+        if any(token in text for token in cls.COMPARE_HINTS):
+            if domain == "mixed" or (cls._contains_pest(text) and cls._contains_soil(text)):
+                return "cross_domain_compare"
+            if len(cls._extract_all_regions(text)) >= 2:
+                return "compare"
         if needs_explanation or needs_advice:
             if any(token in text for token in cls.TREND_HINTS) and not cls._has_negated_trend(text):
                 return "trend"
@@ -529,7 +566,10 @@ class RequestUnderstanding:
     def _has_detail_hint(cls, text: str) -> bool:
         if any(token in text for token in cls.DETAIL_HINTS):
             return True
-        return "数据" in text and not any(token in text for token in cls.OVERVIEW_HINTS)
+        return (
+            any(token in text for token in ["明细", "按天", "逐天", "列出来"])
+            or ("数据" in text and not any(token in text for token in cls.OVERVIEW_HINTS))
+        )
 
     @staticmethod
     def _has_negated_trend(text: str) -> bool:
@@ -565,7 +605,7 @@ class RequestUnderstanding:
     def _build_historical_query_text(self, domain: str, historical_window: dict, cleaned: str, task_type: str, region_name: str) -> str:
         if not domain:
             return cleaned
-        if task_type in {"trend", "region_overview", "joint_risk"}:
+        if task_type in {"trend", "region_overview", "joint_risk", "compare", "cross_domain_compare"}:
             return cleaned
         prefix = self._window_prefix(historical_window)
         if domain == "pest" and task_type == "ranking":
@@ -595,12 +635,7 @@ class RequestUnderstanding:
             parts.append(cleaned)
 
         if future_window:
-            if future_window["window_type"] == "weeks" and future_window["window_value"] == 2:
-                parts.append("未来两周")
-            elif future_window["window_type"] == "months":
-                parts.append(f"未来{future_window['window_value']}个月")
-            else:
-                parts.append(f"未来{future_window['horizon_days']}天")
+            parts.append(self._future_window_phrase(future_window))
 
         if needs_explanation:
             parts.append("原因")
@@ -609,3 +644,20 @@ class RequestUnderstanding:
 
         normalized = " ".join(part for part in parts if part)
         return re.sub(r"\s+", " ", normalized).strip()
+
+    @classmethod
+    def _future_window_phrase(cls, future_window: dict) -> str:
+        window_type = str(future_window.get("window_type") or "")
+        window_value = future_window.get("window_value")
+        if window_type == "weeks" and window_value == 2:
+            return "未来两周"
+        if window_type == "months":
+            return f"未来{window_value}个月"
+        if window_type == "weeks" and window_value not in {None, ''}:
+            return f"未来{window_value}周"
+        if window_type == "days" and window_value not in {None, ''}:
+            return f"未来{window_value}天"
+        horizon_days = future_window.get("horizon_days")
+        if horizon_days not in {None, ''}:
+            return f"未来{horizon_days}天"
+        return "未来一段时间"

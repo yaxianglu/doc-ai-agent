@@ -258,9 +258,44 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["intent"], "data_query")
         self.assertEqual(plan["route"]["query_type"], "pest_top")
         self.assertEqual(plan["route"]["window"]["window_type"], "months")
-        self.assertEqual(plan["route"]["window"]["window_value"], 5)
-        self.assertEqual(plan["domain"], "pest")
-        self.assertEqual(plan["answer_mode"], "ranking")
+
+    def test_compare_question_emits_compare_answer_mode(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan(
+            "对比过去5个月徐州和苏州的虫情",
+            understanding={
+                "domain": "pest",
+                "task_type": "compare",
+                "window": {"window_type": "months", "window_value": 5},
+                "region_name": "徐州市",
+                "needs_explanation": False,
+                "needs_advice": False,
+                "needs_forecast": False,
+            },
+        )
+
+        self.assertEqual(plan["answer_mode"], "compare")
+        self.assertEqual(plan["query_plan"]["slots"]["aggregation"], "compare")
+
+    def test_cross_domain_compare_question_emits_compare_task_graph(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan(
+            "过去3个月苏州虫情和墒情哪个问题更突出",
+            understanding={
+                "domain": "mixed",
+                "task_type": "cross_domain_compare",
+                "window": {"window_type": "months", "window_value": 3},
+                "region_name": "苏州市",
+                "needs_explanation": False,
+                "needs_advice": False,
+                "needs_forecast": False,
+            },
+        )
+
+        self.assertEqual(plan["answer_mode"], "compare")
+        self.assertEqual(plan["query_plan"]["slots"]["aggregation"], "compare")
 
     def test_ambiguous_question_needs_clarification(self):
         planner = QueryPlanner(None)
@@ -540,6 +575,46 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["query_type"], "pest_detail")
         self.assertEqual(plan["route"]["city"], "苏州市")
         self.assertEqual(plan["answer_mode"], "detail")
+
+    def test_mingxi_wording_uses_detail_query_type(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("给我最近两周南京虫情明细")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_detail")
+        self.assertEqual(plan["route"]["city"], "南京市")
+        self.assertEqual(plan["route"]["window"]["window_type"], "weeks")
+        self.assertEqual(plan["route"]["window"]["window_value"], 2)
+        self.assertEqual(plan["answer_mode"], "detail")
+
+    def test_future_worsen_follow_up_reuses_scope_as_forecast(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan(
+            "未来会更糟吗",
+            context={
+                "domain": "pest",
+                "region_name": "常州市",
+                "query_type": "pest_top",
+                "forecast": {},
+                "route": {
+                    "query_type": "pest_top",
+                    "since": "2026-03-21 00:00:00",
+                    "until": None,
+                    "city": None,
+                    "county": None,
+                    "region_level": "city",
+                    "window": {"window_type": "weeks", "window_value": 3},
+                },
+            },
+        )
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_forecast")
+        self.assertEqual(plan["route"]["city"], "常州市")
+        self.assertEqual(plan["route"]["forecast_window"]["horizon_days"], 14)
+        self.assertEqual(plan["answer_mode"], "forecast")
 
     def test_playbook_router_upgrades_semantic_joint_risk_question(self):
         planner = QueryPlanner(

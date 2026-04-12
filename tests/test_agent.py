@@ -179,6 +179,54 @@ class BucketDetailRepo(FakeStructuredRepo):
         ]
 
 
+class CompareStructuredRepo(FakeStructuredRepo):
+    PEST_SERIES = {
+        "徐州市": [
+            {"date": "2026-03-28", "severity_score": 18},
+            {"date": "2026-03-29", "severity_score": 24},
+            {"date": "2026-03-30", "severity_score": 32},
+        ],
+        "苏州市": [
+            {"date": "2026-03-28", "severity_score": 5},
+            {"date": "2026-03-29", "severity_score": 7},
+            {"date": "2026-03-30", "severity_score": 9},
+        ],
+        "淮安市": [
+            {"date": "2026-03-28", "severity_score": 9},
+            {"date": "2026-03-29", "severity_score": 12},
+            {"date": "2026-03-30", "severity_score": 16},
+        ],
+        "南京市": [
+            {"date": "2026-03-28", "severity_score": 7},
+            {"date": "2026-03-29", "severity_score": 8},
+            {"date": "2026-03-30", "severity_score": 10},
+        ],
+    }
+    SOIL_SERIES = {
+        "南京市": [
+            {"date": "2026-03-28", "avg_anomaly_score": 11},
+            {"date": "2026-03-29", "avg_anomaly_score": 9},
+            {"date": "2026-03-30", "avg_anomaly_score": 8},
+        ],
+        "无锡市": [
+            {"date": "2026-03-28", "avg_anomaly_score": 4},
+            {"date": "2026-03-29", "avg_anomaly_score": 3},
+            {"date": "2026-03-30", "avg_anomaly_score": 2},
+        ],
+        "苏州市": [
+            {"date": "2026-03-28", "avg_anomaly_score": 3},
+            {"date": "2026-03-29", "avg_anomaly_score": 4},
+            {"date": "2026-03-30", "avg_anomaly_score": 3},
+        ],
+    }
+
+    def pest_trend(self, since, until, region_name, region_level="city"):
+        return list(self.PEST_SERIES.get(region_name, self.PEST_SERIES["苏州市"]))
+
+    def soil_trend(self, since, until, region_name, region_level="city"):
+        return list(self.SOIL_SERIES.get(region_name, self.SOIL_SERIES["苏州市"]))
+
+
 class EmptyStructuredRepo:
     def top_pest_regions(self, since, until, region_level="city", top_n=5):
         return []
@@ -534,6 +582,50 @@ class AgentGraphTests(unittest.TestCase):
             ["historical_rank", "cause_retrieval", "forecast", "advice_retrieval", "merge_answer"],
         )
 
+    def test_compare_two_regions_returns_actual_comparison(self):
+        agent = DocAIAgent(
+            CompareStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("对比过去5个月徐州和苏州的虫情", thread_id="thread-compare-regions")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertIn("徐州市", result["answer"])
+        self.assertIn("苏州市", result["answer"])
+        self.assertIn("对比结果", result["answer"])
+        self.assertIn("更突出", result["answer"])
+        self.assertEqual(result["evidence"]["analysis_context"]["query_type"], "pest_compare")
+
+    def test_compare_two_regions_trend_returns_two_sided_answer(self):
+        agent = DocAIAgent(
+            CompareStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("今年以来徐州和淮安虫情变化对比", thread_id="thread-compare-trend")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertIn("徐州市", result["answer"])
+        self.assertIn("淮安市", result["answer"])
+        self.assertIn("变化对比", result["answer"])
+        self.assertEqual(result["evidence"]["analysis_context"]["query_type"], "pest_compare")
+
+    def test_compare_same_region_cross_domain_returns_more_prominent_issue(self):
+        agent = DocAIAgent(
+            CompareStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("过去3个月苏州虫情和墒情哪个问题更突出", thread_id="thread-compare-cross-domain")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertIn("苏州市", result["answer"])
+        self.assertIn("虫情", result["answer"])
+        self.assertIn("墒情", result["answer"])
+        self.assertIn("更突出", result["answer"])
+        self.assertEqual(result["evidence"]["analysis_context"]["query_type"], "cross_domain_compare")
+
     def test_simple_ranking_request_emits_minimal_task_graph(self):
         agent = DocAIAgent(
             FakeStructuredRepo(),
@@ -629,6 +721,80 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["analysis_context"]["domain"], "soil")
         self.assertIn("原因", result["answer"])
         self.assertIn(result["evidence"]["analysis_context"]["region_name"], result["answer"])
+
+    def test_direct_explanation_question_preserves_scope_and_returns_reasoning(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            llm_client=FakeLLMClient(),
+            router_model="gpt-4.1-mini",
+            source_provider=RichFakeSourceProvider(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("为什么过去5个月徐州虫情这么高", thread_id="thread-why-direct")
+
+        self.assertEqual(result["mode"], "analysis")
+        self.assertIn("徐州市", result["answer"])
+        self.assertIn("原因", result["answer"])
+        self.assertNotIn("Top5地区", result["answer"])
+        self.assertEqual(result["evidence"]["historical_query"]["query_type"], "pest_overview")
+        self.assertEqual(result["evidence"]["historical_query"]["region_name"], "徐州市")
+        self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "徐州市")
+        self.assertEqual(
+            result["evidence"]["analysis_context"]["window"],
+            {"window_type": "months", "window_value": 5},
+        )
+        self.assertTrue(str(result["evidence"]["historical_query"]["since"]).startswith("2025-"))
+
+    def test_mixed_reason_and_advice_emit_separate_sections(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer("过去5个月徐州虫情具体数据，解释为什么高，再给建议", thread_id="thread-mix-sections")
+
+        self.assertEqual(result["mode"], "analysis")
+        self.assertIn("原因解释：", result["answer"])
+        self.assertIn("建议：", result["answer"])
+        advice_section = result["answer"].split("建议：", 1)[1]
+        self.assertIn("复核高值点位", advice_section)
+        self.assertIn("分区处置", advice_section)
+
+    def test_mixed_reasoning_references_observed_metrics(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer(
+            "过去5个月徐州虫情具体数据，解释为什么高，再判断未来两周会不会更糟",
+            thread_id="thread-mix-grounded",
+        )
+
+        self.assertEqual(result["mode"], "analysis")
+        reason_section = result["answer"].split("原因解释：", 1)[1].split("预测：", 1)[0]
+        self.assertIn("峰值86", reason_section)
+        self.assertIn("最近值86", reason_section)
+        self.assertIn("整体", reason_section)
+        self.assertIn("未来两周", reason_section)
+        self.assertIn("高值", reason_section)
+
+    def test_explicit_no_advice_request_returns_data_only(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer("不要建议，先给我数据，徐州过去3个月墒情", thread_id="thread-no-advice")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertNotIn("建议：", result["answer"])
+        self.assertNotIn("知识依据：", result["answer"])
+        self.assertIn("徐州市", result["answer"])
 
     def test_identity_question_returns_agent_intro(self):
         agent = DocAIAgent(
