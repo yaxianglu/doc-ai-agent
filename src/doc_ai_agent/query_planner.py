@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 
+from .agri_semantics import asks_county_scope, has_detail_intent, has_overview_intent, has_ranking_intent, has_trend_intent, infer_domain_from_text
 from .query_plan import build_query_plan, execution_route
 from .task_decomposition import build_task_graph
 
@@ -214,12 +215,7 @@ class QueryPlanner:
 
     @staticmethod
     def _asks_for_county_scope(question: str) -> bool:
-        q = question or ""
-        if not q:
-            return False
-        if any(token in q for token in ["区县", "按县", "按区县", "各县", "各区县"]):
-            return True
-        return any(token in q for token in ["哪个县", "哪些县", "什么县", "哪几个县", "哪个区", "哪些区", "什么区", "哪几个区"])
+        return asks_county_scope(question)
 
     def _extract_device_code(self, question: str) -> Optional[str]:
         m = re.search(r"(SNS\d+)", question)
@@ -308,18 +304,18 @@ class QueryPlanner:
             return "pest_detail"
         if has_region and self._has_detail_hint(question) and "墒情" in question:
             return "soil_detail"
-        if any(token in question for token in ["走势", "走向", "波动", "趋势", "变化"]) and not self._has_negated_trend(question) and ("虫情" in question or "虫害" in question):
+        if has_trend_intent(question) and not self._has_negated_trend(question) and ("虫情" in question or "虫害" in question):
             return "pest_trend"
-        if any(token in question for token in ["走势", "走向", "波动", "趋势", "变化"]) and not self._has_negated_trend(question) and "墒情" in question:
+        if has_trend_intent(question) and not self._has_negated_trend(question) and "墒情" in question:
             return "soil_trend"
-        asks_overview = any(token in question for token in ["情况", "概况", "整体", "总体", "态势", "表现", "怎么样", "如何", "数据"])
+        asks_overview = has_overview_intent(question) or "数据" in question
         if has_region and asks_overview and ("虫情" in question or "虫害" in question):
             return "pest_overview"
         if has_region and asks_overview and "墒情" in question:
             return "soil_overview"
-        if ("最严重" in question or "严重" in question or "最多" in question) and ("虫情" in question or "虫害" in question):
+        if (has_ranking_intent(question) or "严重" in question) and ("虫情" in question or "虫害" in question):
             return "pest_top"
-        if ("异常最多" in question or "异常" in question or "最多" in question or "最严重" in question or "严重" in question) and "墒情" in question:
+        if ("异常最多" in question or "异常" in question or has_ranking_intent(question) or "严重" in question) and "墒情" in question:
             return "soil_top"
         if "最近一次" in question and self._extract_device_code(question):
             return "latest_device"
@@ -461,18 +457,7 @@ class QueryPlanner:
         return None
 
     def _infer_domain_from_text(self, question: str, context: dict | None = None) -> str:
-        has_pest = "虫情" in question or "虫害" in question
-        has_soil = any(token in question for token in ["墒情", "低墒", "高墒", "缺水", "干旱", "土壤", "含水"])
-        if has_pest and has_soil:
-            return "mixed"
-        if has_pest:
-            return "pest"
-        if has_soil:
-            return "soil"
-        context_domain = str((context or {}).get("domain") or "")
-        if context_domain in {"pest", "soil", "mixed"}:
-            return context_domain
-        return ""
+        return infer_domain_from_text(question, str((context or {}).get("domain") or ""))
 
     @staticmethod
     def _answer_mode_for_plan(intent: str, route: dict, needs_clarification: bool) -> str:
@@ -733,10 +718,7 @@ class QueryPlanner:
 
     @staticmethod
     def _has_detail_hint(question: str) -> bool:
-        q = question or ""
-        return any(token in q for token in ["具体数据", "详细数据", "数据明细", "明细数据", "原始数据", "具体数值", "详细数值", "逐日数据", "每天数据", "明细", "按天", "逐天", "列出来"]) or (
-            "数据" in q and not any(token in q for token in ["概况", "情况", "整体", "总体", "态势"])
-        )
+        return has_detail_intent(question)
 
     @staticmethod
     def _has_negated_trend(question: str) -> bool:

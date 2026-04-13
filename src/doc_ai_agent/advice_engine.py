@@ -31,6 +31,25 @@ class AdviceEngine:
         self.model = model
         self.source_provider = source_provider
 
+    @staticmethod
+    def _prefixed_section(prefix: str, content: str) -> str:
+        text = str(content or "").strip()
+        if not text:
+            return ""
+        marker = f"{prefix}："
+        return text if text.startswith(marker) else f"{marker}{text}"
+
+    @classmethod
+    def _format_explanation_answer(cls, reason: str, evidence: str) -> str:
+        sections = [cls._prefixed_section("原因", reason)]
+        if evidence:
+            sections.append(cls._prefixed_section("依据", evidence))
+        return "\n".join(section for section in sections if section)
+
+    @classmethod
+    def _format_advice_answer(cls, advice: str) -> str:
+        return cls._prefixed_section("建议", advice)
+
     def answer(self, question: str, context: dict | None = None) -> AdviceResult:
         context = dict(context or {})
         normalized_question = str(question or "").strip()
@@ -96,6 +115,11 @@ class AdviceEngine:
             if source_text:
                 user_prompt = f"{question}\n可参考资料:\n{source_text}"
             answer = self.llm_client.complete_text(self.model, system_prompt, user_prompt)
+            if is_explanation_question:
+                evidence_text = f"结合上下文与{sources[0].get('title', '检索资料') if sources else '监测数据'}综合判断。"
+                answer = self._format_explanation_answer(answer, evidence_text)
+            else:
+                answer = self._format_advice_answer(answer)
             if not sources:
                 sources = [{"title": "OpenAI模型生成", "url": "", "published_at": "", "snippet": ""}]
             return AdviceResult(
@@ -112,9 +136,9 @@ class AdviceEngine:
         if is_explanation_question and domain == "pest":
             level = forecast.get("risk_level") or "中"
             return AdviceResult(
-                answer=(
-                    f"原因：{region_name or '当前地区'}虫情风险偏{level}，通常和近期监测值抬升、温湿条件适宜、局部田块防控不及时有关。"
-                    "可以优先复核高值点位、诱捕器数据和阈值判断，再决定是否加密巡田或分区处置。"
+                answer=self._format_explanation_answer(
+                    f"{region_name or '当前地区'}虫情风险偏{level}，通常和近期监测值抬升、温湿条件适宜、局部田块防控不及时有关。",
+                    "近期监测值抬升、温湿条件与高值点位复核信号共同支持这个判断。",
                 ),
                 sources=sources or ["虫情解释规则库（Phase 2）"],
                 generation_mode="rule",
@@ -123,9 +147,9 @@ class AdviceEngine:
         if is_explanation_question and domain == "soil":
             level = forecast.get("risk_level") or "中"
             return AdviceResult(
-                answer=(
-                    f"原因：{region_name or '当前地区'}墒情风险偏{level}，通常与近期降水偏离、灌排不均、土壤保水排水条件差有关。"
-                    "可以先复核低墒/高墒分布，再结合未来天气判断是补灌还是排水。"
+                answer=self._format_explanation_answer(
+                    f"{region_name or '当前地区'}墒情风险偏{level}，通常与近期降水偏离、灌排不均、土壤保水排水条件差有关。",
+                    "降水偏离、灌排条件与低墒/高墒分布信号共同支持这个判断。",
                 ),
                 sources=sources or ["墒情解释规则库（Phase 2）"],
                 generation_mode="rule",
@@ -133,8 +157,8 @@ class AdviceEngine:
             )
         if "台风" in q and "小麦" in q:
             return AdviceResult(
-                answer=(
-                    "台风后小麦建议：1) 先排水降渍，避免根系缺氧；2) 清沟理墒，减轻倒伏风险；"
+                answer=self._format_advice_answer(
+                    "1) 先排水降渍，避免根系缺氧；2) 清沟理墒，减轻倒伏风险；"
                     "3) 叶面喷施磷酸二氢钾提升抗逆；4) 病害高发期加强赤霉病与纹枯病监测。"
                 ),
                 sources=sources or ["内置农业防灾规则库（MVP占位）"],
@@ -144,8 +168,8 @@ class AdviceEngine:
         if domain == "pest":
             level = forecast.get("risk_level") or "中"
             return AdviceResult(
-                answer=(
-                    f"{region_name or '当前地区'}虫情风险{level}。建议：1) 先核查诱捕设备与田间样点；"
+                answer=self._format_advice_answer(
+                    f"{region_name or '当前地区'}虫情风险{level}。1) 先核查诱捕设备与田间样点；"
                     "2) 对高值地块优先做成虫/幼虫复核；3) 达到阈值后分区施策并复盘监测频次。"
                 ),
                 sources=sources or ["虫情处置规则库（Phase 2）"],
@@ -155,8 +179,8 @@ class AdviceEngine:
         if domain == "soil":
             level = forecast.get("risk_level") or "中"
             return AdviceResult(
-                answer=(
-                    f"{region_name or '当前地区'}墒情风险{level}。建议：1) 先看低墒/高墒分布；"
+                answer=self._format_advice_answer(
+                    f"{region_name or '当前地区'}墒情风险{level}。1) 先看低墒/高墒分布；"
                     "2) 低墒优先补灌，高墒优先排水；3) 结合未来天气滚动复测 3-5 天。"
                 ),
                 sources=sources or ["墒情调度规则库（Phase 2）"],
@@ -164,7 +188,7 @@ class AdviceEngine:
                 model="",
             )
         return AdviceResult(
-            answer="建议结合当前告警类型、作物和天气过程做分区处置，并由农技人员复核后执行。",
+            answer=self._format_advice_answer("结合当前告警类型、作物和天气过程做分区处置，并由农技人员复核后执行。"),
             sources=sources or ["通用处置规则（MVP占位）"],
             generation_mode="rule",
             model="",

@@ -681,6 +681,38 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["window"]["window_type"], "months")
         self.assertEqual(plan["route"]["window"]["window_value"], 5)
 
+    def test_highest_county_scope_question_uses_county_region_level(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("近3个月虫情最高的县有哪些")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_top")
+        self.assertEqual(plan["route"]["county"], None)
+        self.assertEqual(plan["route"]["region_level"], "county")
+        self.assertEqual(plan["query_plan"]["slots"]["region_scope"], {"level": "county", "value": "all"})
+        self.assertEqual(plan["route"]["window"]["window_type"], "months")
+        self.assertEqual(plan["route"]["window"]["window_value"], 3)
+
+    def test_prominent_county_scope_variant_uses_county_region_level(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("近3个月虫情最突出的县有哪些")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_top")
+        self.assertEqual(plan["route"]["region_level"], "county")
+        self.assertEqual(plan["query_plan"]["slots"]["region_scope"], {"level": "county", "value": "all"})
+
+    def test_front_ranked_county_variant_uses_county_region_level(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("近3个月虫情排前面的县有哪些")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_top")
+        self.assertEqual(plan["route"]["region_level"], "county")
+
     def test_router_cannot_downgrade_generic_county_scope_to_city(self):
         planner = QueryPlanner(
             FakeRouter(

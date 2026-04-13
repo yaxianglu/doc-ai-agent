@@ -197,6 +197,14 @@ class DocAIAgent:
         return "未知", False
 
     @staticmethod
+    def _format_answer_section(title: str, content: str) -> str:
+        text = str(content or "").strip()
+        if not text:
+            return ""
+        prefix = f"{title}："
+        return text if text.startswith(prefix) else f"{prefix}{text}"
+
+    @staticmethod
     def _ai_involvement_label(used_ai_in_routing: bool, used_ai_in_answer: bool) -> str:
         ai_steps = int(used_ai_in_routing) + int(used_ai_in_answer)
         if ai_steps >= 2:
@@ -1357,17 +1365,20 @@ class DocAIAgent:
 
         sections: list[str] = []
         if query_result.get("answer"):
-            sections.append(f"历史数据：{query_result['answer']}")
+            sections.append(self._format_answer_section("结论", query_result["answer"]))
         if explanation_text:
-            sections.append(f"原因解释：{explanation_text}")
+            if explanation_text.startswith("原因：") or explanation_text.startswith("依据："):
+                sections.append(explanation_text)
+            else:
+                sections.append(self._format_answer_section("原因", explanation_text))
         if forecast_result.get("answer"):
-            sections.append(f"预测：{forecast_result['answer']}")
+            sections.append(self._format_answer_section("预测", forecast_result["answer"]))
         if knowledge:
             titles = "；".join(str(item.get("title") or "") for item in knowledge[:2] if item.get("title"))
             if titles:
-                sections.append(f"知识依据：参考 {titles}")
+                sections.append(self._format_answer_section("依据", f"参考 {titles}"))
         if advice_text:
-            sections.append(f"建议：{advice_text}")
+            sections.append(self._format_answer_section("建议", advice_text))
         answer = "\n".join(sections) if sections else (query_result.get("answer") or advice_text or "当前暂无可综合输出的结果。")
 
         evidence = {
