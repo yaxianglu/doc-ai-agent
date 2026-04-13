@@ -206,6 +206,34 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["historical_query_text"], "过去5个月虫情最严重的是哪些县")
         self.assertEqual(result["normalized_question"], "过去5个月虫情最严重的是哪些县")
 
+    def test_highest_county_ranking_preserves_county_scope(self):
+        result = self.understanding.analyze("近3个月虫情最高的县有哪些")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["task_type"], "ranking")
+        self.assertEqual(result["region_name"], "")
+        self.assertEqual(result["region_level"], "county")
+        self.assertEqual(result["window"]["window_type"], "months")
+        self.assertEqual(result["window"]["window_value"], 3)
+        self.assertEqual(result["historical_query_text"], "近3个月虫情最高的县有哪些")
+        self.assertEqual(result["normalized_question"], "近3个月虫情最高的县有哪些")
+
+    def test_prominent_county_ranking_variant_preserves_county_scope(self):
+        result = self.understanding.analyze("近3个月虫情最突出的县有哪些")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["task_type"], "ranking")
+        self.assertEqual(result["region_level"], "county")
+        self.assertEqual(result["window"]["window_type"], "months")
+        self.assertEqual(result["window"]["window_value"], 3)
+
+    def test_front_ranked_county_variant_preserves_county_scope(self):
+        result = self.understanding.analyze("近3个月虫情排前面的县有哪些")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["task_type"], "ranking")
+        self.assertEqual(result["region_level"], "county")
+
     def test_specific_county_question_marks_county_region_level(self):
         result = self.understanding.analyze("铜山区过去5个月虫情具体数据")
 

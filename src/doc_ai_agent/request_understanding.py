@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from .agri_semantics import asks_county_scope, has_detail_intent, has_overview_intent, has_ranking_intent, has_trend_intent, infer_domain_from_text
 from .entity_extraction import EntityExtractionService
 
 CITY_ALIASES = {
@@ -54,10 +55,6 @@ class RequestUnderstanding:
         r"(?<=[\u4e00-\u9fa5])啊哥(?=(?:[\s，。！？；、]|$))",
         r"(?<=[\u4e00-\u9fa5])老哥(?=(?:[\s，。！？；、]|$))",
     ]
-    OVERVIEW_HINTS = ["情况", "概况", "整体", "总体", "态势", "表现", "怎么样", "如何", "什么情况"]
-    RANKING_HINTS = ["最严重", "最厉害", "最多", "top", "Top", "TOP", "排行", "排名", "前5", "前十"]
-    TREND_HINTS = ["走势", "趋势", "走向", "波动", "变化"]
-    DETAIL_HINTS = ["具体数据", "详细数据", "数据明细", "明细数据", "原始数据", "具体数值", "详细数值", "逐日数据", "每天数据"]
     COMPARE_HINTS = ["对比", "比较", "相比", "哪个更突出", "哪个问题更突出", "哪边更突出", "谁更突出"]
     GREETING_PATTERNS = {
         "你好",
@@ -456,17 +453,7 @@ class RequestUnderstanding:
 
     @staticmethod
     def _infer_domain(text: str, context: dict | None) -> str:
-        has_pest = "虫情" in text or "虫害" in text
-        has_soil = any(token in text for token in ["墒情", "低墒", "高墒", "缺水", "干旱", "土壤", "含水"])
-        if has_pest and has_soil:
-            return "mixed"
-        if has_pest:
-            return "pest"
-        if has_soil:
-            return "soil"
-        if context and context.get("domain"):
-            return str(context["domain"])
-        return ""
+        return infer_domain_from_text(text, str((context or {}).get("domain") or ""))
 
     @staticmethod
     def _extract_region(text: str) -> str | None:
@@ -493,11 +480,7 @@ class RequestUnderstanding:
 
     @staticmethod
     def _asks_for_county_scope(text: str) -> bool:
-        if not text:
-            return False
-        if any(token in text for token in ["区县", "按县", "按区县", "各县", "各区县"]):
-            return True
-        return any(token in text for token in ["哪个县", "哪些县", "什么县", "哪几个县", "哪个区", "哪些区", "什么区", "哪几个区"])
+        return asks_county_scope(text)
 
     @classmethod
     def _resolve_region_level(
@@ -587,9 +570,9 @@ class RequestUnderstanding:
             if len(cls._extract_all_regions(text)) >= 2:
                 return "compare"
         if needs_explanation or needs_advice:
-            if any(token in text for token in cls.TREND_HINTS) and not cls._has_negated_trend(text):
+            if has_trend_intent(text) and not cls._has_negated_trend(text):
                 return "trend"
-            if any(token in text for token in cls.RANKING_HINTS):
+            if has_ranking_intent(text):
                 return "ranking"
             if domain == "mixed" and any(token in text for token in ["同时", "而且", "共同", "叠加"]):
                 return "joint_risk"
@@ -602,15 +585,15 @@ class RequestUnderstanding:
             return "joint_risk"
         if cls._has_detail_hint(text) and domain in {"pest", "soil"} and region_name:
             return "data_detail"
-        if any(token in text for token in cls.TREND_HINTS) and not cls._has_negated_trend(text):
+        if has_trend_intent(text) and not cls._has_negated_trend(text):
             return "trend"
-        if any(token in text for token in cls.RANKING_HINTS):
+        if has_ranking_intent(text):
             return "ranking"
-        if region_name and domain in {"pest", "soil"} and any(token in text for token in cls.OVERVIEW_HINTS):
+        if region_name and domain in {"pest", "soil"} and has_overview_intent(text):
             return "region_overview"
         if region_name and domain in {"pest", "soil"} and "数据" in text:
             return "data_detail"
-        if region_name and domain in {"pest", "soil"} and not any(token in text for token in cls.TREND_HINTS + cls.RANKING_HINTS):
+        if region_name and domain in {"pest", "soil"} and not has_trend_intent(text) and not has_ranking_intent(text):
             return "region_overview"
         if domain and re.search(r"(哪些地区|哪些地方|哪个地区|哪个地方|哪里|哪儿)", text):
             return "ranking"
@@ -618,12 +601,7 @@ class RequestUnderstanding:
 
     @classmethod
     def _has_detail_hint(cls, text: str) -> bool:
-        if any(token in text for token in cls.DETAIL_HINTS):
-            return True
-        return (
-            any(token in text for token in ["明细", "按天", "逐天", "列出来"])
-            or ("数据" in text and not any(token in text for token in cls.OVERVIEW_HINTS))
-        )
+        return has_detail_intent(text)
 
     @staticmethod
     def _has_negated_trend(text: str) -> bool:
@@ -638,7 +616,7 @@ class RequestUnderstanding:
             return True
         if historical_window.get("window_type") != "all":
             return True
-        if any(token in text for token in ["最严重", "最多", "最高", "趋势", "历史", "过去", "近"]) and domain:
+        if (has_ranking_intent(text) or has_trend_intent(text) or any(token in text for token in ["历史", "过去", "近"])) and domain:
             return True
         if domain and re.search(r"(哪些地区|哪些地方|哪个地区|哪个地方|哪里|哪儿)", text):
             return True

@@ -500,6 +500,12 @@ class AgentTests(unittest.TestCase):
         self.assertIn("排水", result["answer"])
         self.assertEqual(result["evidence"]["generation_mode"], "rule")
 
+    def test_advice_query_uses_expert_style_sections(self):
+        result = self.agent.answer("台风过后，对于小麦种植需要注意哪些？")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("建议：", result["answer"])
+
     def test_llm_driven_top_query(self):
         agent = DocAIAgent(
             self.agent.repo,
@@ -593,6 +599,19 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(spy_advice.calls[-1]["context"]["domain"], "pest")
         self.assertIn("徐州市", result["answer"])
 
+    def test_follow_up_explanation_uses_expert_style_sections(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("过去5个月虫情最严重的地方是哪里？", thread_id="thread-explanation")
+        result = agent.answer("为什么", thread_id="thread-explanation")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("原因：", result["answer"])
+        self.assertIn("依据：", result["answer"])
+
     def test_mixed_historical_forecast_and_rag_request_returns_execution_plan(self):
         agent = DocAIAgent(
             FakeStructuredRepo(),
@@ -619,7 +638,7 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["knowledge"][0]["retrieval_backend"], "qdrant")
         self.assertEqual(result["evidence"]["memory_state"]["memory_version"], 2)
         self.assertEqual(result["processing"]["retrieval"], "Qdrant / semantic-vector")
-        self.assertIn("历史数据", result["answer"])
+        self.assertIn("结论：", result["answer"])
         self.assertIn("预测", result["answer"])
         self.assertIn("建议", result["answer"])
         self.assertEqual(
@@ -634,6 +653,10 @@ class AgentGraphTests(unittest.TestCase):
         self.assertGreater(result["evidence"]["response_meta"]["confidence"], 0.7)
         self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], "")
         self.assertEqual(result["evidence"]["response_meta"]["source_types"], ["db", "forecast", "rag"])
+        self.assertIn("结论：", result["answer"])
+        self.assertIn("原因：", result["answer"])
+        self.assertIn("依据：", result["answer"])
+        self.assertIn("建议：", result["answer"])
 
     def test_compare_two_regions_returns_actual_comparison(self):
         agent = DocAIAgent(
@@ -707,6 +730,26 @@ class AgentGraphTests(unittest.TestCase):
         self.assertIn("区县", result["answer"])
         self.assertIn("铜山区", result["answer"])
         self.assertEqual(result["evidence"]["request_understanding"]["region_level"], "county")
+        self.assertEqual(result["evidence"]["historical_query"]["region_level"], "county")
+        self.assertEqual(result["evidence"]["analysis_context"]["region_level"], "county")
+        self.assertEqual(result["evidence"]["memory_state"]["route"]["region_level"], "county")
+
+    def test_highest_county_ranking_request_preserves_county_scope_end_to_end(self):
+        repo = CountyRankingRepo()
+        agent = DocAIAgent(
+            repo,
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("近3个月虫情最高的县有哪些", thread_id="thread-county-ranking-highest")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(repo.last_top_pest_region_level, "county")
+        self.assertIn("区县", result["answer"])
+        self.assertIn("铜山区", result["answer"])
+        self.assertEqual(result["evidence"]["request_understanding"]["task_type"], "ranking")
+        self.assertEqual(result["evidence"]["request_understanding"]["region_level"], "county")
+        self.assertEqual(result["evidence"]["historical_query"]["query_type"], "pest_top")
         self.assertEqual(result["evidence"]["historical_query"]["region_level"], "county")
         self.assertEqual(result["evidence"]["analysis_context"]["region_level"], "county")
         self.assertEqual(result["evidence"]["memory_state"]["route"]["region_level"], "county")
@@ -908,7 +951,7 @@ class AgentGraphTests(unittest.TestCase):
         result = agent.answer("过去5个月徐州虫情具体数据，解释为什么高，再给建议", thread_id="thread-mix-sections")
 
         self.assertEqual(result["mode"], "analysis")
-        self.assertIn("原因解释：", result["answer"])
+        self.assertIn("原因：", result["answer"])
         self.assertIn("建议：", result["answer"])
         advice_section = result["answer"].split("建议：", 1)[1]
         self.assertIn("复核高值点位", advice_section)
@@ -944,7 +987,7 @@ class AgentGraphTests(unittest.TestCase):
         )
 
         self.assertEqual(result["mode"], "analysis")
-        reason_section = result["answer"].split("原因解释：", 1)[1].split("预测：", 1)[0]
+        reason_section = result["answer"].split("原因：", 1)[1].split("预测：", 1)[0]
         self.assertIn("峰值86", reason_section)
         self.assertIn("最近值86", reason_section)
         self.assertIn("整体", reason_section)
