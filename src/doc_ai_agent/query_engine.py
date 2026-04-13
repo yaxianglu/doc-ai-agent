@@ -376,10 +376,14 @@ class QueryEngine:
         until = plan.get("until") or None
         region_level = str(plan.get("region_level") or "city")
         top_n = max(1, int(plan.get("top_n") or 1))
-        data = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=top_n)
+        city = plan.get("city")
+        county = plan.get("county")
+        data = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=top_n, city=city, county=county)
         scope_label = "区县" if region_level == "county" else "地区"
         if data:
-            answer = f"从{since[:10]}起，虫情严重度最高的Top{top_n}{scope_label}为："
+            since_scope = self._format_since_scope(since)
+            prefix = f"{since_scope}，" if since_scope else "历史上，"
+            answer = f"{prefix}虫情严重度最高的Top{top_n}{scope_label}为："
             answer += "；".join(
                 f"{idx+1}.{row['region_name']}（严重度{row['severity_score']}，记录{row['record_count']}条）"
                 for idx, row in enumerate(data)
@@ -398,6 +402,8 @@ class QueryEngine:
                 "since": since,
                 "until": until,
                 "region_level": region_level,
+                "city": city,
+                "county": county,
                 "samples": self.repo.sample_pest_records(since, until, 3),
                 "available_data_ranges": self._available_pest_ranges() if not data else [],
                 "no_data_reasons": [
@@ -435,10 +441,22 @@ class QueryEngine:
         region_level = str(plan.get("region_level") or "city")
         top_n = max(1, int(plan.get("top_n") or 1))
         anomaly_direction = "low" if "低墒" in question else ("high" if "高墒" in question else None)
-        data = self.repo.top_soil_regions(since, until, region_level=region_level, top_n=top_n, anomaly_direction=anomaly_direction)
+        city = plan.get("city")
+        county = plan.get("county")
+        data = self.repo.top_soil_regions(
+            since,
+            until,
+            region_level=region_level,
+            top_n=top_n,
+            anomaly_direction=anomaly_direction,
+            city=city,
+            county=county,
+        )
         direction_text = "低墒" if anomaly_direction == "low" else ("高墒" if anomaly_direction == "high" else "异常")
         if data:
-            answer = f"从{since[:10]}起，墒情{direction_text}最多的地区为："
+            since_scope = self._format_since_scope(since)
+            prefix = f"{since_scope}，" if since_scope else "历史上，"
+            answer = f"{prefix}墒情{direction_text}最多的地区为："
             answer += "；".join(
                 f"{idx+1}.{row['region_name']}（异常强度{row['anomaly_score']}，异常{row['abnormal_count']}条，低墒{row['low_count']}，高墒{row['high_count']}）"
                 for idx, row in enumerate(data)
@@ -457,6 +475,8 @@ class QueryEngine:
                 "since": since,
                 "until": until,
                 "region_level": region_level,
+                "city": city,
+                "county": county,
                 "mapping_notice": "墒情地区字段来自主表或辅助告警映射，未映射设备会落入未知地区",
                 "samples": self.repo.sample_soil_records(since, until, 3),
                 "available_data_ranges": self._available_soil_ranges(anomaly_direction=anomaly_direction) if not data else [],
@@ -1154,6 +1174,71 @@ class QueryEngine:
                 answer=f"自{since[:10]}以来，连续至少{min_days}天触发预警的设备有：{details}。",
                 data=data,
                 evidence={"sql": "SELECT device_code ... HAVING day_cnt >= ?", "since": since, "min_days": min_days},
+            )
+
+        if query_type == "active_devices":
+            top_n = max(1, int(plan.get("top_n") or 10))
+            until = plan.get("until") or None
+            data = self.repo.top_active_devices(since, until=until, limit=top_n)
+            since_scope = self._format_since_scope(since)
+            prefix = f"{since_scope}，" if since_scope else "历史上，"
+            details = "；".join(
+                f"{idx+1}.{row['device_code']}（预警{row['alert_count']}次，活跃{row['active_days']}天）"
+                for idx, row in enumerate(data)
+            ) if data else "无"
+            answer = f"{prefix}最活跃的Top{top_n}台设备为：{details}。"
+            return QueryResult(
+                answer=answer,
+                data=data,
+                evidence={"sql": "top_active_devices", "since": since, "until": until, "top_n": top_n},
+            )
+
+        if query_type == "unknown_region_devices":
+            data = self.repo.unknown_region_devices(limit=max(1, int(plan.get("top_n") or 20)))
+            if data:
+                details = "；".join(
+                    f"{idx+1}.{row['device_code']}（{row.get('device_name') or '未命名设备'}，出现{row['alert_count']}次）"
+                    for idx, row in enumerate(data)
+                )
+                answer = f"未知区域对应的设备有：{details}。"
+            else:
+                answer = "当前没有落入未知区域的设备。"
+            return QueryResult(
+                answer=answer,
+                data=data,
+                evidence={"sql": "unknown_region_devices"},
+            )
+
+        if query_type == "empty_county_records":
+            rows = self.repo.empty_county_records(limit=max(1, int(plan.get("top_n") or 20)))
+            if rows:
+                details = "；".join(
+                    f"{idx+1}.{row.get('alert_time', '')[:10]} {row.get('device_code') or ''}"
+                    for idx, row in enumerate(rows[:10])
+                )
+                answer = f"县字段为空的记录共{len(rows)}条，示例：{details}。"
+            else:
+                answer = "当前没有县字段为空的记录。"
+            return QueryResult(
+                answer=answer,
+                data=rows,
+                evidence={"sql": "empty_county_records"},
+            )
+
+        if query_type == "unmatched_region_records":
+            rows = self.repo.unmatched_region_records(limit=max(1, int(plan.get("top_n") or 20)))
+            if rows:
+                details = "；".join(
+                    f"{idx+1}.{row.get('alert_time', '')[:10]} {row.get('device_code') or ''}"
+                    for idx, row in enumerate(rows[:10])
+                )
+                answer = f"没有匹配到区域的数据共{len(rows)}条，示例：{details}。"
+            else:
+                answer = "当前没有未匹配到区域的数据。"
+            return QueryResult(
+                answer=answer,
+                data=rows,
+                evidence={"sql": "unmatched_region_records"},
             )
 
         if query_type == "latest_device":

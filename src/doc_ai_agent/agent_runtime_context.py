@@ -81,6 +81,10 @@ def normalize_historical_route(
         normalized["until"] = base_route.get("until")
     if not normalized.get("region_level") and base_route.get("region_level"):
         normalized["region_level"] = base_route.get("region_level")
+    if str(normalized.get("city") or "") in {"江苏", "江苏省"}:
+        normalized["city"] = None
+    if str(normalized.get("county") or "") in {"江苏", "江苏省"}:
+        normalized["county"] = None
     return normalized
 
 

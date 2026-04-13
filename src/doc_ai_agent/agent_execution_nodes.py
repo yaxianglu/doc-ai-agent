@@ -69,9 +69,11 @@ def build_forecast_execution_context(
     )
     future_window = understanding.get("future_window") or {"horizon_days": 14}
     domain = understanding.get("domain") or memory_context.get("domain") or derive_domain(question, plan, memory_context)
+    forecast_mode = route.get("forecast_mode") or ("ranking" if asks_region_ranking(understanding.get("original_question", "")) else "region")
     first_region = first_region_name(query_result) if query_result else ""
     inherited_region = memory_context.get("region_name") if understanding.get("reuse_region_from_context") else ""
-    region_name = understanding.get("region_name") or route.get("county") or route.get("city") or inherited_region or first_region
+    explicit_region_name = understanding.get("region_name") or route.get("county") or route.get("city")
+    region_name = explicit_region_name if forecast_mode == "ranking" else (explicit_region_name or inherited_region or first_region)
     region_level = (
         understanding.get("region_level")
         or route.get("region_level")
@@ -79,13 +81,12 @@ def build_forecast_execution_context(
         or infer_region_level_from_name(str(region_name or ""))
         or "city"
     )
-    forecast_mode = route.get("forecast_mode") or ("ranking" if not region_name and asks_region_ranking(understanding.get("original_question", "")) else "region")
     forecast_route = {
         "query_type": f"{domain}_forecast",
         "since": route.get("since") or memory_context.get("route", {}).get("since") or "1970-01-01 00:00:00",
         "until": route.get("until"),
-        "city": region_name if region_level != "county" else None,
-        "county": region_name if region_level == "county" else None,
+        "city": explicit_region_name if forecast_mode != "ranking" and region_level != "county" else (route.get("city") or None),
+        "county": explicit_region_name if forecast_mode != "ranking" and region_level == "county" else (route.get("county") or None),
         "region_level": region_level,
         "top_n": route.get("top_n") or 1,
         "window": route.get("window") or understanding.get("window") or memory_context.get("window") or {"window_type": "all", "window_value": None},

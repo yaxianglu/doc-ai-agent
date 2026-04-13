@@ -306,8 +306,18 @@ class DocAIAgent:
         memory_context = dict(memory_context or {})
         domain = understanding.get("domain") or memory_context.get("domain") or ""
         future_window = understanding.get("future_window") or {"horizon_days": 14}
+        original_question = str(understanding.get("original_question", "") or "")
+        forecast_mode = "ranking" if self._asks_region_ranking(original_question) else "region"
+        if (
+            forecast_mode != "ranking"
+            and str(memory_context.get("query_type") or "") in {"pest_top", "soil_top"}
+            and str((memory_context.get("route") or {}).get("region_level") or "") == "county"
+            and len(original_question.strip()) <= 8
+            and not any(token in original_question for token in ["更糟", "恶化", "更严重", "会怎样", "怎么样"])
+        ):
+            forecast_mode = "ranking"
         inherited_region = memory_context.get("region_name") if understanding.get("reuse_region_from_context") else None
-        region_name = understanding.get("region_name") or inherited_region or None
+        region_name = understanding.get("region_name") or (None if forecast_mode == "ranking" else inherited_region) or None
         region_level = (
             understanding.get("region_level")
             or str((memory_context.get("route") or {}).get("region_level") or "")
@@ -324,7 +334,7 @@ class DocAIAgent:
             "region_level": region_level,
             "window": understanding.get("window") or memory_context.get("window") or {"window_type": "all", "window_value": None},
             "forecast_window": future_window,
-            "forecast_mode": "ranking" if self._asks_region_ranking(understanding.get("original_question", "")) and not region_name else "region",
+            "forecast_mode": forecast_mode,
         }
         return {
             "intent": "data_query",
@@ -415,6 +425,8 @@ class DocAIAgent:
                 horizon_days=int(forecast_route.get("forecast_window", {}).get("horizon_days") or 14),
                 region_level=str(forecast_route.get("region_level") or "city"),
                 top_n=max(1, int(forecast_route.get("top_n") or 1)),
+                city=forecast_route.get("city"),
+                county=forecast_route.get("county"),
             )
         else:
             result = self.forecast_service.forecast_region(forecast_route, context=runtime_context)

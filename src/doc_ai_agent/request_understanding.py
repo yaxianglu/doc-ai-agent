@@ -234,7 +234,7 @@ class RequestUnderstanding:
         return payload
 
     def _extract_with_backend(self, cleaned: str, context: dict | None) -> dict:
-        if self.backend is None or not cleaned:
+        if self.backend is None or not cleaned or self._should_skip_backend(cleaned):
             return {}
         try:
             payload = self.backend.extract(cleaned, context=context)
@@ -267,6 +267,35 @@ class RequestUnderstanding:
         if payload.get("needs_advice") is True:
             normalized["needs_advice"] = True
         return normalized
+
+    @classmethod
+    def _should_skip_backend(cls, text: str) -> bool:
+        normalized = str(text or "")
+        if not normalized:
+            return True
+        if any(token in normalized for token in ["某设备", "某县", "某市", "某地区", "某区域", "某个设备", "某个县"]):
+            return True
+        deterministic_data_tokens = [
+            "最近一次",
+            "最活跃",
+            "最频繁",
+            "未知区域",
+            "县字段为空",
+            "没有匹配到区域",
+            "未匹配到区域",
+            "sms_content",
+            "告警值",
+            "占比",
+            "连续两天",
+        ]
+        if any(token in normalized for token in deterministic_data_tokens):
+            return True
+        if not needs_explanation(normalized) and not needs_advice(normalized):
+            if has_ranking_intent(normalized) or has_trend_intent(normalized) or has_detail_intent(normalized) or has_overview_intent(normalized):
+                return True
+            if cls._extract_future_window(normalized):
+                return True
+        return False
 
     @staticmethod
     def _normalize_window_payload(payload: object) -> dict | None:
@@ -426,12 +455,12 @@ class RequestUnderstanding:
         for level in [structured_level, extracted_level]:
             if level in {"city", "county"}:
                 return level
+        if cls._asks_for_county_scope(text):
+            return "county"
         if region_name.endswith(("县", "区")):
             return "county"
         if region_name.endswith("市"):
             return "city"
-        if cls._asks_for_county_scope(text):
-            return "county"
         if context_level in {"city", "county"} and region_name:
             return context_level
         return ""

@@ -716,6 +716,114 @@ class MySQLRepository:
         """
         return self._fetch_json(sql)
 
+    def top_active_devices(self, since: str, until: Optional[str] = None, limit: int = 10) -> List[dict]:
+        until_sql = f"AND alert_time < {self._quote(until)}" if until else ""
+        sql = f"""
+        SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
+        FROM (
+          SELECT JSON_OBJECT(
+            'device_code', device_code,
+            'device_name', device_name,
+            'alert_count', alert_count,
+            'active_days', active_days,
+            'last_alert_time', last_alert_time
+          ) AS item
+          FROM (
+            SELECT
+              device_code,
+              device_name,
+              COUNT(*) AS alert_count,
+              COUNT(DISTINCT DATE(alert_time)) AS active_days,
+              DATE_FORMAT(MAX(alert_time), '%Y-%m-%d %H:%i:%s') AS last_alert_time
+            FROM alerts
+            WHERE alert_time >= {self._quote(since)}
+              {until_sql}
+              AND device_code IS NOT NULL
+              AND TRIM(device_code) != ''
+            GROUP BY device_code, device_name
+            ORDER BY alert_count DESC, active_days DESC, MAX(alert_time) DESC, device_code ASC
+            LIMIT {max(1, int(limit))}
+          ) ranked
+        ) q;
+        """
+        return self._fetch_json(sql)
+
+    def unknown_region_devices(self, limit: int = 20) -> List[dict]:
+        sql = f"""
+        SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
+        FROM (
+          SELECT JSON_OBJECT(
+            'device_code', device_code,
+            'device_name', device_name,
+            'alert_count', alert_count,
+            'last_alert_time', last_alert_time
+          ) AS item
+          FROM (
+            SELECT
+              device_code,
+              device_name,
+              COUNT(*) AS alert_count,
+              DATE_FORMAT(MAX(alert_time), '%Y-%m-%d %H:%i:%s') AS last_alert_time
+            FROM alerts
+            WHERE device_code IS NOT NULL
+              AND TRIM(device_code) != ''
+              AND (
+                city IS NULL OR TRIM(city) = ''
+                OR county IS NULL OR TRIM(county) = ''
+                OR county IN ('未知地区', '未知区域', '未知区')
+              )
+            GROUP BY device_code, device_name
+            ORDER BY alert_count DESC, MAX(alert_time) DESC, device_code ASC
+            LIMIT {max(1, int(limit))}
+          ) ranked
+        ) q;
+        """
+        return self._fetch_json(sql)
+
+    def empty_county_records(self, limit: int = 20) -> List[dict]:
+        sql = f"""
+        SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
+        FROM (
+          SELECT JSON_OBJECT(
+            'alert_time', DATE_FORMAT(alert_time, '%Y-%m-%d %H:%i:%s'),
+            'city', city,
+            'county', county,
+            'region_name', region_name,
+            'device_code', device_code,
+            'device_name', device_name,
+            'alert_level', alert_level
+          ) AS item
+          FROM alerts
+          WHERE county IS NULL OR TRIM(county) = ''
+          ORDER BY alert_time DESC
+          LIMIT {max(1, int(limit))}
+        ) q;
+        """
+        return self._fetch_json(sql)
+
+    def unmatched_region_records(self, limit: int = 20) -> List[dict]:
+        sql = f"""
+        SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
+        FROM (
+          SELECT JSON_OBJECT(
+            'alert_time', DATE_FORMAT(alert_time, '%Y-%m-%d %H:%i:%s'),
+            'city', city,
+            'county', county,
+            'region_name', region_name,
+            'device_code', device_code,
+            'device_name', device_name,
+            'alert_level', alert_level
+          ) AS item
+          FROM alerts
+          WHERE city IS NULL OR TRIM(city) = ''
+             OR county IS NULL OR TRIM(county) = ''
+             OR region_name IS NULL OR TRIM(region_name) = ''
+          ORDER BY alert_time DESC
+          LIMIT {max(1, int(limit))}
+        ) q;
+        """
+        return self._fetch_json(sql)
+
     def subtype_ratio(self, alert_type: str, alert_subtype: str, since: str) -> dict:
         total = self._fetch_int(
             f"SELECT COUNT(*) FROM alerts WHERE alert_time >= {self._quote(since)} AND alert_type = {self._quote(alert_type)};"
@@ -819,9 +927,24 @@ class MySQLRepository:
             "max_time": str(result["max_time"]),
         }
 
-    def top_pest_regions(self, since: str, until: Optional[str], region_level: str = "city", top_n: int = 5):
+    def top_pest_regions(
+        self,
+        since: str,
+        until: Optional[str],
+        region_level: str = "city",
+        top_n: int = 5,
+        city: Optional[str] = None,
+        county: Optional[str] = None,
+    ):
         region_col = "county_name" if region_level == "county" else "city_name"
         until_sql = f"AND monitor_time < {self._quote(until)}" if until else ""
+        filter_sql = ""
+        if region_level == "county" and city:
+            filter_sql += f" AND city_name = {self._quote(city)}"
+        if county:
+            filter_sql += f" AND county_name = {self._quote(county)}"
+        if region_level == "city" and city:
+            filter_sql += f" AND city_name = {self._quote(city)}"
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -841,6 +964,7 @@ class MySQLRepository:
             WHERE severity_usable = 1
               AND monitor_time >= {self._quote(since)}
               {until_sql}
+              {filter_sql}
             GROUP BY COALESCE({region_col}, '未知地区')
             ORDER BY severity_score DESC, record_count DESC, active_days DESC, region_name ASC
             LIMIT {int(top_n)}
@@ -849,10 +973,26 @@ class MySQLRepository:
         """
         return self._fetch_json(sql)
 
-    def top_soil_regions(self, since: str, until: Optional[str], region_level: str = "city", top_n: int = 5, anomaly_direction: Optional[str] = None):
+    def top_soil_regions(
+        self,
+        since: str,
+        until: Optional[str],
+        region_level: str = "city",
+        top_n: int = 5,
+        anomaly_direction: Optional[str] = None,
+        city: Optional[str] = None,
+        county: Optional[str] = None,
+    ):
         region_col = "county_name" if region_level == "county" else "city_name"
         until_sql = f"AND sample_time < {self._quote(until)}" if until else ""
         direction_sql = f"AND soil_anomaly_type = {self._quote(anomaly_direction)}" if anomaly_direction in {"low", "high"} else "AND soil_anomaly_type IN (\'low\', \'high\')"
+        filter_sql = ""
+        if region_level == "county" and city:
+            filter_sql += f" AND city_name = {self._quote(city)}"
+        if county:
+            filter_sql += f" AND county_name = {self._quote(county)}"
+        if region_level == "city" and city:
+            filter_sql += f" AND city_name = {self._quote(city)}"
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -875,6 +1015,7 @@ class MySQLRepository:
               AND sample_time >= {self._quote(since)}
               {until_sql}
               {direction_sql}
+              {filter_sql}
             GROUP BY COALESCE({region_col}, '未知地区')
             ORDER BY anomaly_score DESC, abnormal_count DESC, region_name ASC
             LIMIT {int(top_n)}

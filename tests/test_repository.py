@@ -228,6 +228,113 @@ class RepositoryTests(unittest.TestCase):
             self.assertEqual(devices[0]["device_code"], "d1")
             self.assertEqual(devices[0]["active_days"], 2)
 
+    def test_device_activity_and_unmatched_region_queries(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = os.path.join(td, "alerts.db")
+            repo = AlertRepository(db)
+            repo.init_schema()
+            repo.insert_alerts(
+                [
+                    {
+                        "alert_content": "a",
+                        "alert_type": "墒情预警",
+                        "alert_subtype": "土壤",
+                        "alert_time": "2026-01-02 00:00:00",
+                        "alert_level": "重旱",
+                        "region_code": "1",
+                        "region_name": "x",
+                        "alert_value": "10",
+                        "device_code": "d1",
+                        "device_name": "n1",
+                        "longitude": "1",
+                        "latitude": "2",
+                        "city": "淮安市",
+                        "county": "A",
+                        "sms_content": "",
+                        "disposal_suggestion": "",
+                        "source_file": "f.xlsx",
+                        "source_sheet": "sheet1",
+                        "source_row": 2,
+                    },
+                    {
+                        "alert_content": "b",
+                        "alert_type": "墒情预警",
+                        "alert_subtype": "土壤",
+                        "alert_time": "2026-01-03 00:00:00",
+                        "alert_level": "重旱",
+                        "region_code": "2",
+                        "region_name": "x",
+                        "alert_value": "20",
+                        "device_code": "d1",
+                        "device_name": "n1",
+                        "longitude": "1",
+                        "latitude": "2",
+                        "city": "淮安市",
+                        "county": "A",
+                        "sms_content": "",
+                        "disposal_suggestion": "",
+                        "source_file": "f.xlsx",
+                        "source_sheet": "sheet1",
+                        "source_row": 3,
+                    },
+                    {
+                        "alert_content": "c",
+                        "alert_type": "虫情预警",
+                        "alert_subtype": "虫情",
+                        "alert_time": "2026-01-04 00:00:00",
+                        "alert_level": "中",
+                        "region_code": "3",
+                        "region_name": "",
+                        "alert_value": "30",
+                        "device_code": "d2",
+                        "device_name": "n2",
+                        "longitude": "1",
+                        "latitude": "2",
+                        "city": "",
+                        "county": "",
+                        "sms_content": "",
+                        "disposal_suggestion": "",
+                        "source_file": "f.xlsx",
+                        "source_sheet": "sheet1",
+                        "source_row": 4,
+                    },
+                    {
+                        "alert_content": "d",
+                        "alert_type": "虫情预警",
+                        "alert_subtype": "虫情",
+                        "alert_time": "2026-01-05 00:00:00",
+                        "alert_level": "中",
+                        "region_code": "4",
+                        "region_name": "",
+                        "alert_value": "40",
+                        "device_code": "d3",
+                        "device_name": "n3",
+                        "longitude": "1",
+                        "latitude": "2",
+                        "city": "",
+                        "county": None,
+                        "sms_content": "ok",
+                        "disposal_suggestion": "",
+                        "source_file": "f.xlsx",
+                        "source_sheet": "sheet1",
+                        "source_row": 5,
+                    },
+                ]
+            )
+
+            activity = repo.top_active_devices("1970-01-01 00:00:00", limit=2)
+            self.assertEqual(activity[0]["device_code"], "d1")
+            self.assertEqual(activity[0]["alert_count"], 2)
+
+            unknown_devices = repo.unknown_region_devices(limit=5)
+            self.assertEqual({row["device_code"] for row in unknown_devices}, {"d2", "d3"})
+
+            empty_county = repo.empty_county_records(limit=5)
+            self.assertEqual(len(empty_county), 2)
+
+            unmatched = repo.unmatched_region_records(limit=5)
+            self.assertEqual(len(unmatched), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -139,6 +139,14 @@ def infer_query_type(
         return "soil_top"
     if "最近一次" in question and extract_device_code(question):
         return "latest_device"
+    if ("最活跃" in question or "最频繁" in question) and "设备" in question:
+        return "active_devices"
+    if "未知区域" in question and "设备" in question:
+        return "unknown_region_devices"
+    if ("县字段" in question or "county字段" in question.lower()) and "为空" in question:
+        return "empty_county_records"
+    if "没有匹配到区域" in question or "未匹配到区域" in question:
+        return "unmatched_region_records"
     if "处置建议" in question and ("镇" in question or "街道" in question):
         return "region_disposal"
     if "sms_content" in question and "为空" in question:

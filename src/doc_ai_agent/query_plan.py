@@ -45,7 +45,7 @@ def _region_scope_payload(route: dict, region_name: str, goal: str) -> dict:
         return {"level": "none", "value": ""}
     if region_name:
         return {
-            "level": "county" if route.get("county") else "city",
+            "level": str(route.get("region_level") or ("county" if route.get("county") else "city")),
             "value": region_name,
         }
     return {"level": str(route.get("region_level") or "city"), "value": "all"}
