@@ -1,5 +1,19 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_path(raw_value: str | None, default: str, *, allow_empty: bool = False) -> str:
+    candidate = raw_value if raw_value not in (None, "") else default
+    if allow_empty and candidate == "":
+        return ""
+    path = Path(candidate).expanduser()
+    if not path.is_absolute():
+        path = (PROJECT_ROOT / path).resolve()
+    return str(path)
 
 
 @dataclass(frozen=True)
@@ -34,13 +48,13 @@ class AppConfig:
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "AppConfig":
         return cls(
-            data_dir=env.get("DOC_AGENT_DATA_DIR", "."),
-            db_path=env.get("DOC_AGENT_DB_PATH", "./data/alerts.db"),
+            data_dir=_resolve_path(env.get("DOC_AGENT_DATA_DIR"), "."),
+            db_path=_resolve_path(env.get("DOC_AGENT_DB_PATH"), "./data/alerts.db"),
             refresh_interval_minutes=int(env.get("DOC_AGENT_REFRESH_MINUTES", "5")),
             port=int(env.get("DOC_AGENT_PORT", "8000")),
-            auth_db_path=env.get("DOC_AGENT_AUTH_DB_PATH", "./data/auth.db"),
-            auth_bootstrap_path=env.get(
-                "DOC_AGENT_AUTH_BOOTSTRAP_PATH",
+            auth_db_path=_resolve_path(env.get("DOC_AGENT_AUTH_DB_PATH"), "./data/auth.db"),
+            auth_bootstrap_path=_resolve_path(
+                env.get("DOC_AGENT_AUTH_BOOTSTRAP_PATH"),
                 "./output/auth-initial-credentials.txt",
             ),
             auth_session_ttl_days=int(env.get("DOC_AGENT_AUTH_SESSION_TTL_DAYS", "7")),
@@ -51,15 +65,15 @@ class AppConfig:
             openai_router_model=env.get("OPENAI_ROUTER_MODEL", "gpt-4.1-mini"),
             openai_advice_model=env.get("OPENAI_ADVICE_MODEL", "gpt-4.1"),
             openai_timeout_seconds=int(env.get("OPENAI_TIMEOUT_SECONDS", "30")),
-            source_catalog_path=env.get("DOC_AGENT_SOURCE_CATALOG", "./data/knowledge_sources.json"),
+            source_catalog_path=_resolve_path(env.get("DOC_AGENT_SOURCE_CATALOG"), "./data/knowledge_sources.json"),
             source_provider_backend=env.get("DOC_AGENT_SOURCE_PROVIDER", "static"),
             source_provider_embedding_model=env.get("DOC_AGENT_SOURCE_EMBEDDING_MODEL", "text-embedding-3-small"),
-            source_provider_qdrant_path=env.get("DOC_AGENT_SOURCE_QDRANT_PATH", "./data/qdrant"),
+            source_provider_qdrant_path=_resolve_path(env.get("DOC_AGENT_SOURCE_QDRANT_PATH"), "./data/qdrant"),
             source_provider_qdrant_collection=env.get("DOC_AGENT_SOURCE_QDRANT_COLLECTION", "knowledge_sources"),
             query_playbook_backend=env.get("DOC_AGENT_QUERY_PLAYBOOK_BACKEND", "llamaindex"),
             query_playbook_embedding_model=env.get("DOC_AGENT_QUERY_PLAYBOOK_EMBEDDING_MODEL", "text-embedding-3-small"),
-            enrichment_xlsx_path=env.get("DOC_AGENT_ENRICHMENT_XLSX", ""),
-            memory_store_path=env.get("DOC_AGENT_MEMORY_STORE_PATH", "./data/agent-memory.json"),
+            enrichment_xlsx_path=_resolve_path(env.get("DOC_AGENT_ENRICHMENT_XLSX"), "", allow_empty=True),
+            memory_store_path=_resolve_path(env.get("DOC_AGENT_MEMORY_STORE_PATH"), "./data/agent-memory.json"),
             letta_base_url=env.get("LETTA_BASE_URL", ""),
             letta_api_key=env.get("LETTA_API_KEY", ""),
             letta_block_prefix=env.get("LETTA_BLOCK_PREFIX", "doc-cloud-thread"),
