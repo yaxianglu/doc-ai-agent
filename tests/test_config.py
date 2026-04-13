@@ -1,5 +1,6 @@
 import os
 import unittest
+from pathlib import Path
 
 from doc_ai_agent.config import AppConfig
 
@@ -7,18 +8,21 @@ from doc_ai_agent.config import AppConfig
 class ConfigTests(unittest.TestCase):
     def test_defaults(self):
         cfg = AppConfig.from_env({})
-        self.assertEqual(cfg.data_dir, ".")
+        repo_root = Path(__file__).resolve().parents[1]
+        self.assertEqual(cfg.data_dir, str(repo_root))
         self.assertEqual(cfg.refresh_interval_minutes, 5)
-        self.assertEqual(cfg.db_path, "./data/alerts.db")
+        self.assertEqual(cfg.db_path, str(repo_root / "data" / "alerts.db"))
+        self.assertEqual(cfg.auth_db_path, str(repo_root / "data" / "auth.db"))
+        self.assertEqual(cfg.auth_bootstrap_path, str(repo_root / "output" / "auth-initial-credentials.txt"))
         self.assertEqual(cfg.openai_base_url, "https://api.openai.com/v1")
         self.assertEqual(cfg.openai_router_model, "gpt-4.1-mini")
         self.assertEqual(cfg.openai_advice_model, "gpt-4.1")
         self.assertEqual(cfg.openai_timeout_seconds, 30)
         self.assertEqual(cfg.openai_api_key, "")
-        self.assertEqual(cfg.source_catalog_path, "./data/knowledge_sources.json")
+        self.assertEqual(cfg.source_catalog_path, str(repo_root / "data" / "knowledge_sources.json"))
         self.assertEqual(cfg.source_provider_backend, "static")
         self.assertEqual(cfg.source_provider_embedding_model, "text-embedding-3-small")
-        self.assertEqual(cfg.source_provider_qdrant_path, "./data/qdrant")
+        self.assertEqual(cfg.source_provider_qdrant_path, str(repo_root / "data" / "qdrant"))
         self.assertEqual(cfg.source_provider_qdrant_collection, "knowledge_sources")
         self.assertEqual(cfg.query_playbook_backend, "llamaindex")
         self.assertEqual(cfg.query_playbook_embedding_model, "text-embedding-3-small")
@@ -59,6 +63,27 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.source_provider_qdrant_collection, "agri_sources")
         self.assertEqual(cfg.query_playbook_backend, "static")
         self.assertEqual(cfg.query_playbook_embedding_model, "text-embedding-3-large")
+
+    def test_relative_overrides_resolve_from_repo_root(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        cfg = AppConfig.from_env(
+            {
+                "DOC_AGENT_DATA_DIR": "fixtures/data",
+                "DOC_AGENT_DB_PATH": "runtime/alerts.db",
+                "DOC_AGENT_AUTH_DB_PATH": "runtime/auth.db",
+                "DOC_AGENT_AUTH_BOOTSTRAP_PATH": "runtime/auth.txt",
+                "DOC_AGENT_SOURCE_CATALOG": "runtime/sources.json",
+                "DOC_AGENT_SOURCE_QDRANT_PATH": "runtime/qdrant",
+                "DOC_AGENT_MEMORY_STORE_PATH": "runtime/memory.json",
+            }
+        )
+        self.assertEqual(cfg.data_dir, str(repo_root / "fixtures" / "data"))
+        self.assertEqual(cfg.db_path, str(repo_root / "runtime" / "alerts.db"))
+        self.assertEqual(cfg.auth_db_path, str(repo_root / "runtime" / "auth.db"))
+        self.assertEqual(cfg.auth_bootstrap_path, str(repo_root / "runtime" / "auth.txt"))
+        self.assertEqual(cfg.source_catalog_path, str(repo_root / "runtime" / "sources.json"))
+        self.assertEqual(cfg.source_provider_qdrant_path, str(repo_root / "runtime" / "qdrant"))
+        self.assertEqual(cfg.memory_store_path, str(repo_root / "runtime" / "memory.json"))
 
 
 if __name__ == "__main__":
