@@ -930,11 +930,14 @@ class AgentGraphTests(unittest.TestCase):
 
         self.assertEqual(result["mode"], "analysis")
         self.assertIn("徐州市", result["answer"])
+        self.assertIn("结论：当前判断，", result["answer"])
         self.assertIn("原因", result["answer"])
         self.assertNotIn("Top5地区", result["answer"])
         self.assertEqual(result["evidence"]["historical_query"]["query_type"], "pest_overview")
         self.assertEqual(result["evidence"]["historical_query"]["region_name"], "徐州市")
         self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "徐州市")
+        reason_section = result["answer"].split("原因：", 1)[1]
+        self.assertIn("从数据看", reason_section)
         self.assertEqual(
             result["evidence"]["analysis_context"]["window"],
             {"window_type": "months", "window_value": 5},
@@ -953,9 +956,50 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["mode"], "analysis")
         self.assertIn("原因：", result["answer"])
         self.assertIn("建议：", result["answer"])
+        self.assertIn("\n\n原因：", result["answer"])
+        self.assertIn("\n\n建议：", result["answer"])
         advice_section = result["answer"].split("建议：", 1)[1]
         self.assertIn("复核高值点位", advice_section)
         self.assertIn("分区处置", advice_section)
+
+    def test_colloquial_reason_and_advice_variant_returns_expert_sections(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer("过去5个月徐州虫情为啥这么高，再说说怎么处理", thread_id="thread-colloquial-why")
+
+        self.assertEqual(result["mode"], "analysis")
+        self.assertIn("原因：", result["answer"])
+        self.assertIn("建议：", result["answer"])
+        self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "徐州市")
+
+    def test_colloquial_how_to_handle_variant_returns_advice(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer("过去5个月徐州虫情这么高，该咋办", thread_id="thread-colloquial-advice")
+
+        self.assertIn("建议：", result["answer"])
+        self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "徐州市")
+
+    def test_continue_to_worsen_variant_returns_forecast_section(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer("过去5个月徐州虫情这么高，未来会不会继续变严重", thread_id="thread-colloquial-forecast")
+
+        self.assertEqual(result["mode"], "analysis")
+        self.assertIn("预测：", result["answer"])
+        self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "徐州市")
 
     def test_high_risk_advice_uses_time_bound_follow_up_language(self):
         agent = DocAIAgent(

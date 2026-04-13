@@ -2,8 +2,43 @@ from __future__ import annotations
 
 import re
 
-from .agri_semantics import asks_county_scope, has_detail_intent, has_overview_intent, has_ranking_intent, has_trend_intent, infer_domain_from_text
+from .agri_semantics import (
+    has_detail_intent,
+    has_overview_intent,
+    has_ranking_intent,
+    has_trend_intent,
+    infer_domain_from_text,
+    infer_region_scope,
+    needs_advice,
+    needs_explanation,
+    needs_forecast,
+)
 from .entity_extraction import EntityExtractionService
+from .request_context_resolution import (
+    coalesce_region_name,
+    contains_pest,
+    contains_soil,
+    domain_label,
+    extract_region,
+    inject_domain_into_question,
+    is_contextual_follow_up,
+    is_domain_switch_follow_up,
+    is_greeting,
+    is_invalid_region_candidate,
+    is_window_only_follow_up,
+    normalize_city_mentions,
+    normalize_follow_up_question,
+    normalize_relative_window_typos,
+    normalize_spaces,
+    resolve_with_context,
+    should_reuse_context_region,
+)
+from .request_understanding_reasoning import (
+    build_historical_query_text,
+    build_normalized_question,
+    infer_task_type,
+    needs_historical_data,
+)
 
 CITY_ALIASES = {
     "南京": "南京市",
@@ -69,6 +104,23 @@ class RequestUnderstanding:
         "下午好",
         "晚上好",
     }
+    INVALID_REGION_PHRASES = {
+        "我问的是县",
+        "我说的是县",
+        "问的是县",
+        "说的是县",
+        "我问的是区",
+        "我说的是区",
+        "问的是区",
+        "说的是区",
+        "我问的是市",
+        "我说的是市",
+        "问的是市",
+        "说的是市",
+        "看县",
+        "看区",
+        "看市",
+    }
 
     def __init__(self, backend=None, extractor: EntityExtractionService | None = None):
         self.backend = backend
@@ -102,49 +154,50 @@ class RequestUnderstanding:
             context_level=str(((context or {}).get("route") or {}).get("region_level") or "") if reuse_region_from_context else "",
         )
 
-        needs_explanation = any(token in cleaned for token in ["为什么", "原因", "依据"])
-        needs_advice = (
-            any(token in cleaned for token in ["建议", "处置", "怎么办", "怎么做", "怎么处理", "怎么养", "防治", "如何防治"])
+        needs_explanation_flag = needs_explanation(cleaned)
+        needs_advice_flag = (
+            needs_advice(cleaned)
             and not self._asks_stored_disposal_field(cleaned)
-            and not self._has_negated_advice(cleaned)
         )
         if structured.get("needs_explanation") is True:
-            needs_explanation = True
+            needs_explanation_flag = True
         if structured.get("needs_advice") is True:
-            needs_advice = True
+            needs_advice_flag = True
 
-        task_type = structured.get("task_type") or self._infer_task_type(cleaned, domain, region_name, needs_explanation, needs_advice)
-        needs_forecast = self._needs_forecast(cleaned, future_window, needs_advice)
-        needs_historical = self._needs_historical(cleaned, historical_window, future_window, domain, task_type, region_name)
+        task_type = structured.get("task_type") or infer_task_type(
+            cleaned,
+            domain,
+            region_name,
+            needs_explanation_flag,
+            needs_advice_flag,
+            self.COMPARE_HINTS,
+            CITY_ALIASES,
+            normalize_city_mentions,
+        )
+        needs_forecast_flag = needs_forecast(cleaned, future_window, needs_advice_flag)
+        needs_historical = needs_historical_data(cleaned, historical_window, future_window, domain, task_type, region_name)
 
         execution_plan = ["understand_request"]
         if needs_historical:
             execution_plan.append("historical_query")
-        if needs_forecast:
+        if needs_forecast_flag:
             execution_plan.append("forecast")
-        if needs_explanation or needs_advice:
+        if needs_explanation_flag or needs_advice_flag:
             execution_plan.append("knowledge_retrieval")
         execution_plan.append("answer_synthesis")
 
-        normalized_question = self._build_normalized_question(
+        normalized_question = build_normalized_question(
             domain=domain,
             historical_window=historical_window,
             future_window=future_window,
             cleaned=cleaned,
-            needs_explanation=needs_explanation,
-            needs_advice=needs_advice,
+            needs_explanation=needs_explanation_flag,
+            needs_advice=needs_advice_flag,
             task_type=task_type,
             region_name=region_name,
             region_level=region_level,
         )
-        historical_query_text = self._build_historical_query_text(
-            domain=domain,
-            historical_window=historical_window,
-            cleaned=cleaned,
-            task_type=task_type,
-            region_name=region_name,
-            region_level=region_level,
-        )
+        historical_query_text = build_historical_query_text(domain, historical_window, cleaned, task_type, region_name, region_level)
 
         return {
             "original_question": text,
@@ -163,9 +216,9 @@ class RequestUnderstanding:
             "region_name": region_name,
             "region_level": region_level,
             "needs_historical": needs_historical,
-            "needs_forecast": needs_forecast,
-            "needs_explanation": needs_explanation,
-            "needs_advice": needs_advice,
+            "needs_forecast": needs_forecast_flag,
+            "needs_explanation": needs_explanation_flag,
+            "needs_advice": needs_advice_flag,
             "execution_plan": execution_plan,
         }
 
@@ -245,36 +298,14 @@ class RequestUnderstanding:
         return all_window or fallback
 
     def _resolve_with_context(self, text: str, context: dict | None) -> tuple[str, list[str]]:
-        context = dict(context or {})
-        cleaned = self._normalize_city_mentions(self._normalize_relative_window_typos(self._normalize_spaces(text)))
-        if not cleaned:
-            return cleaned, []
-        if self._is_greeting(cleaned):
-            return cleaned, []
-
-        pending_question = self._normalize_spaces(str(context.get("pending_user_question") or ""))
-        pending_clarification = str(context.get("pending_clarification") or "")
-        if pending_question and pending_clarification == "agri_domain":
-            if self._contains_pest(cleaned):
-                return self._inject_domain_into_question(pending_question, "pest"), ["resolved_agri_domain_from_pending_question"]
-            if self._contains_soil(cleaned):
-                return self._inject_domain_into_question(pending_question, "soil"), ["resolved_agri_domain_from_pending_question"]
-
-        domain = str(context.get("domain") or "")
-        region_name = self._normalize_spaces(str(context.get("region_name") or ""))
-        if (domain or region_name) and self._is_contextual_follow_up(cleaned):
-            if self._is_domain_switch_follow_up(cleaned) or self._is_window_only_follow_up(cleaned):
-                return cleaned, []
-            current_region = self._extract_region(cleaned)
-            reuse_region = not current_region and self._should_reuse_context_region(cleaned)
-            prefix_region = region_name if reuse_region else ""
-            parts = [part for part in [prefix_region, self._domain_label(domain), cleaned] if part]
-            resolution = ["expanded_short_follow_up_from_memory"]
-            if reuse_region:
-                resolution.append("reused_region_from_memory")
-            return self._normalize_spaces(" ".join(parts)), resolution
-
-        return cleaned, []
+        return resolve_with_context(
+            text,
+            context,
+            city_aliases=CITY_ALIASES,
+            invalid_region_phrases=self.INVALID_REGION_PHRASES,
+            greeting_patterns=self.GREETING_PATTERNS,
+            extract_past_window=self._extract_past_window,
+        )
 
     def _strip_noise(self, text: str) -> tuple[str, list[str]]:
         ignored: list[str] = []
@@ -293,133 +324,68 @@ class RequestUnderstanding:
 
     @staticmethod
     def _normalize_spaces(text: str) -> str:
-        return re.sub(r"\s+", " ", str(text or "").strip())
+        return normalize_spaces(text)
 
     @staticmethod
     def _normalize_relative_window_typos(text: str) -> str:
-        normalized = str(text or "")
-        normalized = re.sub(
-            r"(?<=[\u4e00-\u9fa5])进(?=(\d+|[一二两三四五六七八九十])个?(?:月|星期|周))",
-            "近",
-            normalized,
-        )
-        normalized = re.sub(
-            r"(?<=[\u4e00-\u9fa5])进(?=(\d+|[一二两三四五六七八九十])天)",
-            "近",
-            normalized,
-        )
-        return normalized
+        return normalize_relative_window_typos(text)
 
     @staticmethod
     def _normalize_city_mentions(text: str) -> str:
-        normalized = text
-        for alias, canonical in CITY_ALIASES.items():
-            normalized = re.sub(rf"{alias}(?!市)", canonical, normalized)
-        return normalized
+        return normalize_city_mentions(text, CITY_ALIASES)
 
-    @staticmethod
-    def _coalesce_region_name(primary: str, secondary: str | None) -> str:
-        for candidate in [primary, secondary or ""]:
-            if not candidate:
-                continue
-            if candidate in {"地区", "区域", "市区", "城区"}:
-                continue
-            if any(token in candidate for token in ["预警", "最多", "最严重", "地方", "地区"]):
-                continue
-            if candidate.startswith("个"):
-                continue
-            if candidate in CITY_ALIASES.values():
-                return candidate
-            if re.fullmatch(r"[\u4e00-\u9fa5]{2,12}(?:市|县|区)", candidate):
-                return candidate
-        return ""
+    @classmethod
+    def _coalesce_region_name(cls, primary: str, secondary: str | None) -> str:
+        return coalesce_region_name(primary, secondary, CITY_ALIASES, cls.INVALID_REGION_PHRASES)
+
+    @classmethod
+    def _is_invalid_region_candidate(cls, candidate: str) -> bool:
+        return is_invalid_region_candidate(candidate, cls.INVALID_REGION_PHRASES)
 
     @staticmethod
     def _contains_pest(text: str) -> bool:
-        return "虫情" in text or "虫害" in text or text.strip() == "虫"
+        return contains_pest(text)
 
     @staticmethod
     def _contains_soil(text: str) -> bool:
-        return "墒情" in text or text.strip() == "墒"
+        return contains_soil(text)
 
     @classmethod
     def _domain_label(cls, domain: str) -> str:
-        if domain == "pest":
-            return "虫情"
-        if domain == "soil":
-            return "墒情"
-        return ""
+        return domain_label(domain)
 
     @classmethod
     def _inject_domain_into_question(cls, question: str, domain: str) -> str:
-        label = cls._domain_label(domain)
-        if not label:
-            return cls._normalize_spaces(question)
-        base = cls._normalize_spaces(question)
-        if label in base:
-            return base
-        for token in ["受灾", "灾害情况", "灾害"]:
-            if token in base:
-                return cls._normalize_follow_up_question(base.replace(token, label))
-        if "最严重的地方" in base:
-            return cls._normalize_follow_up_question(base.replace("最严重的地方", f"{label}最严重的地方"))
-        if "最严重" in base:
-            return cls._normalize_follow_up_question(base.replace("最严重", f"{label}最严重"))
-        return cls._normalize_follow_up_question(f"{base} {label}")
+        return inject_domain_into_question(question, domain)
 
     @staticmethod
     def _is_contextual_follow_up(text: str) -> bool:
-        stripped = text.strip()
-        if RequestUnderstanding._is_greeting(stripped):
-            return False
-        if re.search(r"(SNS\d+|设备|预警时间|等级|最近一次|这条预警|哪个|多少|Top|TOP|20\d{2}年)", stripped):
-            return False
-        if len(stripped) <= 8:
-            return True
-        return stripped in {"未来两周呢", "未来两周", "给建议", "建议", "处置建议", "原因呢", "为什么呢", "怎么办", "怎么做"}
+        return is_contextual_follow_up(text, RequestUnderstanding.GREETING_PATTERNS)
 
     @staticmethod
     def _should_reuse_context_region(text: str) -> bool:
-        stripped = text.strip()
-        if RequestUnderstanding._is_greeting(stripped):
-            return False
-        if stripped in {"未来两周呢", "未来两周", "给建议", "建议", "处置建议", "原因呢", "为什么呢", "怎么办", "怎么做", "怎么处理"}:
-            return True
-        if len(stripped) <= 4:
-            return True
-        return any(token in stripped for token in ["那里", "那边", "这边", "这里", "这个地方", "这地方", "该地区", "该地", "那呢", "这呢"])
+        return should_reuse_context_region(text, RequestUnderstanding.GREETING_PATTERNS)
 
     @classmethod
     def _is_greeting(cls, text: str) -> bool:
-        stripped = cls._normalize_follow_up_question(text).lower()
-        if not stripped:
-            return False
-        if stripped in cls.GREETING_PATTERNS:
-            return True
-        return bool(re.fullmatch(r"(你好吗|最近好吗|在吗)", stripped))
+        return is_greeting(text, cls.GREETING_PATTERNS)
 
     @staticmethod
     def _normalize_follow_up_question(text: str) -> str:
-        normalized = re.sub(r"[，。！？；、]+", "", text)
-        return re.sub(r"\s+", " ", normalized).strip()
+        return normalize_follow_up_question(text)
 
     @classmethod
     def _is_domain_switch_follow_up(cls, text: str) -> bool:
-        stripped = cls._normalize_follow_up_question(text)
-        if not stripped or stripped in {"虫情", "虫害", "墒情", "低墒", "高墒"}:
-            return False
-        if not (cls._contains_pest(stripped) or cls._contains_soil(stripped)):
-            return False
-        return bool(re.search(r"(换成|改成|改看|切到|切换到|切换成|改为|换看)", stripped))
+        return is_domain_switch_follow_up(text)
 
     @classmethod
     def _is_window_only_follow_up(cls, text: str) -> bool:
-        stripped = cls._normalize_follow_up_question(text)
-        if not stripped:
-            return False
-        if cls._contains_pest(stripped) or cls._contains_soil(stripped) or cls._extract_region(stripped):
-            return False
-        return cls._extract_past_window(stripped).get("window_type") != "all"
+        return is_window_only_follow_up(
+            text,
+            extract_past_window=cls._extract_past_window,
+            city_aliases=CITY_ALIASES,
+            invalid_region_phrases=cls.INVALID_REGION_PHRASES,
+        )
 
     @staticmethod
     def _asks_stored_disposal_field(text: str) -> bool:
@@ -436,51 +402,16 @@ class RequestUnderstanding:
         )
 
     @staticmethod
-    def _has_negated_advice(text: str) -> bool:
-        return bool(re.search(r"(不要|别|不用|不需要|先不要|先别)(?:再)?(?:给)?(?:我)?建议", text)) or bool(
-            re.search(r"(不要|别|不用|不需要|先不要|先别)(?:给)?(?:我)?(?:处置|防治)", text)
-        )
-
-    @staticmethod
-    def _needs_forecast(text: str, future_window: dict | None, needs_advice: bool) -> bool:
-        if future_window is not None:
-            return True
-        if any(token in text for token in ["会不会更糟", "会不会恶化"]):
-            return True
-        if needs_advice:
-            return False
-        return bool(re.search(r"未来.*(会怎样|怎么样|趋势|风险|变化)", text))
-
-    @staticmethod
     def _infer_domain(text: str, context: dict | None) -> str:
         return infer_domain_from_text(text, str((context or {}).get("domain") or ""))
 
     @staticmethod
     def _extract_region(text: str) -> str | None:
-        normalized = RequestUnderstanding._normalize_city_mentions(text)
-        city_positions: list[tuple[int, str]] = []
-        for canonical in CITY_ALIASES.values():
-            for match in re.finditer(re.escape(canonical), normalized):
-                city_positions.append((match.start(), canonical))
-        if city_positions:
-            city_positions.sort(key=lambda item: item[0])
-            return city_positions[-1][1]
-        county_match = re.search(r"(?<!哪些)(?<!哪个)(?<!什么)([\u4e00-\u9fa5]{1,12}(?:县|区))", normalized)
-        if county_match:
-            county = county_match.group(1)
-            if county not in {"地区", "区域", "市区", "城区"} and not any(
-                token in county for token in ["预警", "最多", "最严重", "地方", "地区"]
-            ) and not county.startswith("个"):
-                return county
-        city = re.findall(r"([\u4e00-\u9fa5]{2,6}市)", normalized)
-        for item in reversed(city):
-            if item not in {"城市"} and not item.endswith("城市"):
-                return item
-        return None
+        return extract_region(text, CITY_ALIASES, RequestUnderstanding.INVALID_REGION_PHRASES)
 
     @staticmethod
     def _asks_for_county_scope(text: str) -> bool:
-        return asks_county_scope(text)
+        return infer_region_scope(text) == "county"
 
     @classmethod
     def _resolve_region_level(
@@ -504,20 +435,6 @@ class RequestUnderstanding:
         if context_level in {"city", "county"} and region_name:
             return context_level
         return ""
-
-    @staticmethod
-    def _extract_all_regions(text: str) -> list[str]:
-        normalized = RequestUnderstanding._normalize_city_mentions(text)
-        city_positions: list[tuple[int, str]] = []
-        for canonical in CITY_ALIASES.values():
-            for match in re.finditer(re.escape(canonical), normalized):
-                city_positions.append((match.start(), canonical))
-        city_positions.sort(key=lambda item: item[0])
-        regions: list[str] = []
-        for _, canonical in city_positions:
-            if canonical not in regions:
-                regions.append(canonical)
-        return regions
 
     @classmethod
     def _parse_number_token(cls, token: str) -> int | None:
@@ -549,6 +466,8 @@ class RequestUnderstanding:
     def _extract_future_window(text: str) -> dict | None:
         if "下个月" in text or "下月" in text:
             return {"window_type": "months", "window_value": 1, "horizon_days": 30}
+        if "未来半个月" in text:
+            return {"window_type": "days", "window_value": 15, "horizon_days": 15}
         if "未来两周" in text:
             return {"window_type": "weeks", "window_value": 2, "horizon_days": 14}
         if m := re.search(r"未来(\d+|[一二两三四五六七八九十])个?(?:星期|周)", text):
@@ -561,146 +480,3 @@ class RequestUnderstanding:
             days = max(1, RequestUnderstanding._parse_number_token(m.group(1)) or 1)
             return {"window_type": "days", "window_value": days, "horizon_days": days}
         return None
-
-    @classmethod
-    def _infer_task_type(cls, text: str, domain: str, region_name: str, needs_explanation: bool, needs_advice: bool) -> str:
-        if any(token in text for token in cls.COMPARE_HINTS):
-            if domain == "mixed" or (cls._contains_pest(text) and cls._contains_soil(text)):
-                return "cross_domain_compare"
-            if len(cls._extract_all_regions(text)) >= 2:
-                return "compare"
-        if needs_explanation or needs_advice:
-            if has_trend_intent(text) and not cls._has_negated_trend(text):
-                return "trend"
-            if has_ranking_intent(text):
-                return "ranking"
-            if domain == "mixed" and any(token in text for token in ["同时", "而且", "共同", "叠加"]):
-                return "joint_risk"
-            return "unknown"
-        if domain == "mixed" or (
-            ("虫情" in text or "虫害" in text)
-            and any(token in text for token in ["墒情", "缺水", "低墒", "干旱"])
-            and any(token in text for token in ["同时", "而且", "共同", "叠加"])
-        ):
-            return "joint_risk"
-        if cls._has_detail_hint(text) and domain in {"pest", "soil"} and region_name:
-            return "data_detail"
-        if has_trend_intent(text) and not cls._has_negated_trend(text):
-            return "trend"
-        if has_ranking_intent(text):
-            return "ranking"
-        if region_name and domain in {"pest", "soil"} and has_overview_intent(text):
-            return "region_overview"
-        if region_name and domain in {"pest", "soil"} and "数据" in text:
-            return "data_detail"
-        if region_name and domain in {"pest", "soil"} and not has_trend_intent(text) and not has_ranking_intent(text):
-            return "region_overview"
-        if domain and re.search(r"(哪些地区|哪些地方|哪个地区|哪个地方|哪里|哪儿)", text):
-            return "ranking"
-        return "unknown"
-
-    @classmethod
-    def _has_detail_hint(cls, text: str) -> bool:
-        return has_detail_intent(text)
-
-    @staticmethod
-    def _has_negated_trend(text: str) -> bool:
-        return any(token in text for token in ["不是趋势", "别看趋势", "不要趋势", "不看趋势"])
-
-    @staticmethod
-    def _needs_historical(text: str, historical_window: dict, future_window: dict | None, domain: str, task_type: str, region_name: str) -> bool:
-        if future_window and historical_window.get("window_type") == "all":
-            if not any(token in text for token in ["过去", "最近", "近", "历史", "此前", "之前"]):
-                return False
-        if task_type in {"ranking", "trend", "region_overview", "joint_risk", "data_detail"} and domain:
-            return True
-        if historical_window.get("window_type") != "all":
-            return True
-        if (has_ranking_intent(text) or has_trend_intent(text) or any(token in text for token in ["历史", "过去", "近"])) and domain:
-            return True
-        if domain and re.search(r"(哪些地区|哪些地方|哪个地区|哪个地方|哪里|哪儿)", text):
-            return True
-        if region_name and domain in {"pest", "soil"} and not any(token in text for token in ["为什么", "原因", "依据", "建议", "处置"]):
-            return True
-        return False
-
-    @staticmethod
-    def _window_prefix(window: dict) -> str:
-        if window.get("window_type") == "months":
-            return f"过去{window['window_value']}个月"
-        if window.get("window_type") == "weeks":
-            return f"过去{window['window_value']}个星期"
-        if window.get("window_type") == "days":
-            return f"过去{window['window_value']}天"
-        return "历史上"
-
-    def _build_historical_query_text(
-        self,
-        domain: str,
-        historical_window: dict,
-        cleaned: str,
-        task_type: str,
-        region_name: str,
-        region_level: str,
-    ) -> str:
-        if not domain:
-            return cleaned
-        if task_type in {"trend", "region_overview", "joint_risk", "compare", "cross_domain_compare"}:
-            return cleaned
-        if task_type == "ranking" and region_level == "county":
-            return cleaned
-        prefix = self._window_prefix(historical_window)
-        if domain == "pest" and task_type == "ranking":
-            return f"{prefix}虫情最严重的地方是哪里"
-        if domain == "soil" and task_type == "ranking":
-            return f"{prefix}墒情最严重的地方是哪里"
-        if region_name and task_type == "region_overview":
-            return cleaned
-        return cleaned
-
-    def _build_normalized_question(
-        self,
-        *,
-        domain: str,
-        historical_window: dict,
-        future_window: dict | None,
-        cleaned: str,
-        needs_explanation: bool,
-        needs_advice: bool,
-        task_type: str,
-        region_name: str,
-        region_level: str,
-    ) -> str:
-        parts: list[str] = []
-        if domain and self._needs_historical(cleaned, historical_window, future_window, domain, task_type, region_name):
-            parts.append(self._build_historical_query_text(domain, historical_window, cleaned, task_type, region_name, region_level))
-        elif cleaned:
-            parts.append(cleaned)
-
-        if future_window:
-            parts.append(self._future_window_phrase(future_window))
-
-        if needs_explanation:
-            parts.append("原因")
-        if needs_advice:
-            parts.append("处置建议")
-
-        normalized = " ".join(part for part in parts if part)
-        return re.sub(r"\s+", " ", normalized).strip()
-
-    @classmethod
-    def _future_window_phrase(cls, future_window: dict) -> str:
-        window_type = str(future_window.get("window_type") or "")
-        window_value = future_window.get("window_value")
-        if window_type == "weeks" and window_value == 2:
-            return "未来两周"
-        if window_type == "months":
-            return f"未来{window_value}个月"
-        if window_type == "weeks" and window_value not in {None, ''}:
-            return f"未来{window_value}周"
-        if window_type == "days" and window_value not in {None, ''}:
-            return f"未来{window_value}天"
-        horizon_days = future_window.get("horizon_days")
-        if horizon_days not in {None, ''}:
-            return f"未来{horizon_days}天"
-        return "未来一段时间"

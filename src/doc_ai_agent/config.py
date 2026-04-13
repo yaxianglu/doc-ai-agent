@@ -8,6 +8,10 @@ class AppConfig:
     db_path: str
     refresh_interval_minutes: int
     port: int
+    auth_db_path: str = "./data/auth.db"
+    auth_bootstrap_path: str = "./output/auth-initial-credentials.txt"
+    auth_session_ttl_days: int = 7
+    auth_usernames: str = "gago-1,gago-2,gago-3,gago-4,gago-5"
     db_url: str = ""
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
@@ -34,6 +38,13 @@ class AppConfig:
             db_path=env.get("DOC_AGENT_DB_PATH", "./data/alerts.db"),
             refresh_interval_minutes=int(env.get("DOC_AGENT_REFRESH_MINUTES", "5")),
             port=int(env.get("DOC_AGENT_PORT", "8000")),
+            auth_db_path=env.get("DOC_AGENT_AUTH_DB_PATH", "./data/auth.db"),
+            auth_bootstrap_path=env.get(
+                "DOC_AGENT_AUTH_BOOTSTRAP_PATH",
+                "./output/auth-initial-credentials.txt",
+            ),
+            auth_session_ttl_days=int(env.get("DOC_AGENT_AUTH_SESSION_TTL_DAYS", "7")),
+            auth_usernames=env.get("DOC_AGENT_AUTH_USERNAMES", "gago-1,gago-2,gago-3,gago-4,gago-5"),
             db_url=env.get("DOC_AGENT_DB_URL", ""),
             openai_api_key=env.get("OPENAI_API_KEY", ""),
             openai_base_url=env.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),

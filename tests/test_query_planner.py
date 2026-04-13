@@ -1,5 +1,7 @@
 import unittest
+from types import SimpleNamespace
 
+from doc_ai_agent.query_context_followup import build_context_follow_up_plan
 from doc_ai_agent.query_planner import QueryPlanner
 
 
@@ -25,6 +27,40 @@ class FakePlaybookRouter:
 
 
 class QueryPlannerTests(unittest.TestCase):
+    def test_context_follow_up_can_use_shared_semantics_without_planner_private_helpers(self):
+        real_planner = QueryPlanner(None)
+        planner = SimpleNamespace(
+            _is_greeting_question=QueryPlanner._is_greeting_question,
+            _domain_from_query_type=QueryPlanner._domain_from_query_type,
+            _extract_future_window=real_planner._extract_future_window,
+            _extract_relative_window=real_planner._extract_relative_window,
+            _extract_city=real_planner._extract_city,
+            _extract_county=real_planner._extract_county,
+            _query_type_for_region_follow_up=QueryPlanner._query_type_for_region_follow_up,
+            _query_type_for_window_follow_up=QueryPlanner._query_type_for_window_follow_up,
+            _query_type_for_domain_switch=QueryPlanner._query_type_for_domain_switch,
+        )
+
+        plan = build_context_follow_up_plan(
+            planner,
+            "为什么",
+            {
+                "domain": "pest",
+                "region_name": "徐州市",
+                "route": {
+                    "query_type": "pest_overview",
+                    "city": "徐州市",
+                    "county": None,
+                    "region_level": "city",
+                },
+            },
+        )
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan["intent"], "advice")
+        self.assertEqual(plan["reason"], "context_explanation_follow_up")
+        self.assertEqual(plan["route"]["query_type"], "pest_overview")
+
     def test_query_plan_is_emitted_for_ranking_request(self):
         planner = QueryPlanner(None)
 
@@ -229,6 +265,30 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["region_name"], "徐州市")
         self.assertEqual(plan["historical_window"]["window_type"], "months")
         self.assertEqual(plan["answer_mode"], "overview")
+
+    def test_context_scope_correction_switches_to_county_without_fake_region_name(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan(
+            "我问的是县，不是市",
+            context={
+                "domain": "pest",
+                "region_name": "徐州市",
+                "route": {
+                    "query_type": "pest_top",
+                    "region_level": "city",
+                    "city": None,
+                    "county": None,
+                    "window": {"window_type": "months", "window_value": 5},
+                    "since": "2025-11-13 00:00:00",
+                    "until": None,
+                },
+            },
+        )
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["region_level"], "county")
+        self.assertEqual(plan["region_name"], "")
 
     def test_router_failure_falls_back_to_heuristics(self):
         planner = QueryPlanner(ExplodingRouter())
@@ -795,6 +855,19 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["query_type"], "pest_forecast")
         self.assertEqual(plan["route"]["city"], "常州市")
         self.assertEqual(plan["route"]["forecast_window"]["horizon_days"], 14)
+        self.assertEqual(plan["answer_mode"], "forecast")
+
+    def test_half_month_future_worsen_question_uses_fifteen_day_forecast(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("徐州未来半个月虫情会不会更严重")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_forecast")
+        self.assertEqual(plan["route"]["city"], "徐州市")
+        self.assertEqual(plan["route"]["forecast_window"]["window_type"], "days")
+        self.assertEqual(plan["route"]["forecast_window"]["window_value"], 15)
+        self.assertEqual(plan["route"]["forecast_window"]["horizon_days"], 15)
         self.assertEqual(plan["answer_mode"], "forecast")
 
     def test_playbook_router_upgrades_semantic_joint_risk_question(self):
