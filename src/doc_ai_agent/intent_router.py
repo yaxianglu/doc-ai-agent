@@ -4,9 +4,11 @@ from __future__ import annotations
 class IntentRouter:
     ALLOWED_QUERY_TYPES = {
         "count",
+        "active_devices",
         "top",
         "avg_by_level",
         "consecutive_devices",
+        "empty_county_records",
         "pest_top",
         "pest_overview",
         "soil_top",
@@ -22,6 +24,8 @@ class IntentRouter:
         "city_day_change",
         "highest_values",
         "threshold_summary",
+        "unknown_region_devices",
+        "unmatched_region_records",
     }
     ALLOWED_FIELDS = {"city", "county", "alert_type", "alert_level", "region_level"}
     ALLOWED_REGION_LEVELS = {"city", "county"}
@@ -33,10 +37,10 @@ class IntentRouter:
     def route(self, question: str) -> dict:
         system_prompt = (
             "你是意图路由器。请仅输出JSON，字段包含: intent(data_query|advice),"
-            "query_type(count|top|avg_by_level|consecutive_devices|pest_top|pest_overview|soil_top|soil_overview|pest_trend|soil_trend|joint_risk|structured_agri|latest_device|region_disposal|sms_empty|subtype_ratio|city_day_change|highest_values|threshold_summary), "
+            "query_type(count|active_devices|top|avg_by_level|consecutive_devices|empty_county_records|pest_top|pest_overview|soil_top|soil_overview|pest_trend|soil_trend|joint_risk|structured_agri|latest_device|region_disposal|sms_empty|subtype_ratio|city_day_change|highest_values|threshold_summary|unknown_region_devices|unmatched_region_records), "
             "field(city|county|alert_type|alert_level|region_level), top_n, min_days, since(YYYY-MM-DD HH:MM:SS), until(YYYY-MM-DD HH:MM:SS|null), "
             "region_level(city|county|null), city, county, device_code, threshold(number|null)。"
-            "如果是设备最近一次预警、地区处置建议、阈值统计、短信为空、子类型占比、城市日变化、最高告警值等确定性数据问题，必须返回 intent=data_query。"
+            "如果是设备最近一次预警、设备活跃排行、未知区域设备、空字段检查、地区处置建议、阈值统计、短信为空、子类型占比、城市日变化、最高告警值等确定性数据问题，必须返回 intent=data_query。"
             "如果不是数据统计问题，intent=advice。"
         )
         user_prompt = f"问题: {question}"

@@ -246,6 +246,38 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["historical_query_text"], "近3个月虫情最高的县有哪些")
         self.assertEqual(result["normalized_question"], "近3个月虫情最高的县有哪些")
 
+    def test_highest_county_follow_up_phrase_is_not_extracted_as_region(self):
+        result = self.understanding.analyze("最高的县有哪些？")
+
+        self.assertEqual(result["region_name"], "")
+        self.assertEqual(result["region_level"], "county")
+        self.assertEqual(result["task_type"], "ranking")
+
+    def test_future_county_risk_question_does_not_extract_fake_region_name(self):
+        result = self.understanding.analyze("未来10天哪些县风险最高？")
+
+        self.assertEqual(result["region_name"], "")
+        self.assertEqual(result["region_level"], "county")
+        self.assertEqual(result["future_window"]["window_type"], "days")
+        self.assertEqual(result["future_window"]["window_value"], 10)
+        self.assertTrue(result["needs_forecast"])
+
+    def test_city_then_county_refinement_does_not_treat_suffix_as_region(self):
+        result = self.understanding.analyze("江苏范围内，虫情最高的是哪些市？再细到县。")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "")
+        self.assertEqual(result["task_type"], "ranking")
+        self.assertEqual(result["region_level"], "county")
+
+    def test_city_scoped_county_ranking_preserves_county_region_level(self):
+        result = self.understanding.analyze("常州市下面虫情最严重的县有哪些？")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "常州市")
+        self.assertEqual(result["task_type"], "ranking")
+        self.assertEqual(result["region_level"], "county")
+
     def test_reasoning_follow_up_wording_keeps_overview_task_type(self):
         result = self.understanding.analyze("给我过去五个月徐州虫情整体情况，再说说原因")
 

@@ -20,13 +20,13 @@ class FakeForecastRepo:
             {"date": "2026-03-31", "avg_anomaly_score": 82},
         ]
 
-    def top_pest_regions(self, since, until, region_level="city", top_n=5):
+    def top_pest_regions(self, since, until, region_level="city", top_n=5, city=None, county=None):
         return [
             {"region_name": "徐州市", "severity_score": 90, "record_count": 18, "active_days": 7},
             {"region_name": "淮安市", "severity_score": 75, "record_count": 14, "active_days": 6},
         ][:top_n]
 
-    def top_soil_regions(self, since, until, region_level="city", top_n=5, anomaly_direction=None):
+    def top_soil_regions(self, since, until, region_level="city", top_n=5, anomaly_direction=None, city=None, county=None):
         return [
             {"region_name": "宿迁市", "anomaly_score": 88, "abnormal_count": 16, "low_count": 11, "high_count": 0},
             {"region_name": "盐城市", "anomaly_score": 73, "abnormal_count": 12, "low_count": 8, "high_count": 1},

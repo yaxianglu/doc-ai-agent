@@ -52,7 +52,9 @@ class QueryPlanner:
     CHINESE_NUMBER_MAP = CHINESE_NUMBER_MAP
     DETERMINISTIC_QUERY_TYPES = {
         "avg_by_level",
+        "active_devices",
         "consecutive_devices",
+        "empty_county_records",
         "latest_device",
         "pest_detail",
         "region_disposal",
@@ -62,6 +64,8 @@ class QueryPlanner:
         "city_day_change",
         "highest_values",
         "threshold_summary",
+        "unknown_region_devices",
+        "unmatched_region_records",
     }
 
     PLAYBOOK_UPGRADEABLE_QUERY_TYPES = {"count", "top", "structured_agri"}
@@ -311,6 +315,11 @@ class QueryPlanner:
     def _is_scope_correction_follow_up(question: str) -> bool:
         return is_scope_correction_follow_up(question)
 
+    @staticmethod
+    def _has_placeholder_entity(question: str) -> bool:
+        q = question or ""
+        return any(token in q for token in ["某设备", "某县", "某市", "某地区", "某区域", "某个设备", "某个县"])
+
     def plan(self, question: str, history: object = None, context: dict | None = None, understanding: dict | None = None) -> dict:
         original_question = question
         question = self._resolve_follow_up_question(question, history, context=context)
@@ -359,6 +368,16 @@ class QueryPlanner:
             }, question, context=context, understanding=understanding)
 
         heuristic_query_type = self._infer_query_type(question)
+        if self._has_placeholder_entity(question):
+            return self._finalize_plan({
+                "intent": "advice",
+                "confidence": 0.3,
+                "route": self._build_route(question, heuristic_query_type),
+                "needs_clarification": True,
+                "clarification": "请补充具体对象，比如设备编码、县名或市名，我再继续查询。",
+                "reason": "placeholder_entity_clarification",
+                "context_trace": [],
+            }, question, context=context, understanding=understanding)
         playbook_route = self._playbook_route(question, context=context)
         if self._should_use_playbook_route(question, heuristic_query_type, playbook_route, context=context):
             return self._finalize_plan({
@@ -416,6 +435,8 @@ class QueryPlanner:
             }, question, context=context, understanding=understanding)
 
         if route.get("query_type") in {
+            "active_devices",
+            "empty_county_records",
             "pest_top",
             "pest_detail",
             "soil_top",
@@ -427,6 +448,8 @@ class QueryPlanner:
             "joint_risk",
             "pest_forecast",
             "soil_forecast",
+            "unknown_region_devices",
+            "unmatched_region_records",
         }:
             return self._finalize_plan({
                 "intent": "data_query",

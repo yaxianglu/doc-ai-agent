@@ -49,11 +49,15 @@ def is_invalid_region_candidate(candidate: str, invalid_region_phrases: set[str]
         return True
     if normalized in {"地区", "区域", "市区", "城区"}:
         return True
+    if normalized.startswith("某"):
+        return True
     if normalized.startswith("个"):
         return True
     if normalized in invalid_region_phrases:
         return True
-    if any(token in normalized for token in ["预警", "最多", "最严重", "地方", "地区"]):
+    if any(token in normalized for token in ["预警", "最多", "最高", "最严重", "最突出", "地方", "地区"]):
+        return True
+    if any(token in normalized for token in ["哪些", "哪个", "什么", "哪几个", "再细到", "下面", "范围内"]):
         return True
     if any(token in normalized for token in ["我问的是", "我说的是", "问的是", "说的是", "不是市", "不是县", "不是区"]):
         return True

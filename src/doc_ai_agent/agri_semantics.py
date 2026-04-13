@@ -64,6 +64,8 @@ def asks_county_scope(text: str) -> bool:
     normalized = str(text or "")
     if not normalized:
         return False
+    if re.search(r"(再细到|细到|细分到)(?:区|县|区县)", normalized):
+        return True
     if re.search(r"(县|区).*(不是).*(市)", normalized):
         return True
     if re.search(r"(我问的是|我说的是|问的是|说的是).*(县|区)", normalized):

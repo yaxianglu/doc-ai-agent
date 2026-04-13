@@ -11,6 +11,14 @@ from .followup_semantics import (
 )
 
 
+def _asks_region_ranking(planner, question: str) -> bool:
+    helper = getattr(planner, "_asks_region_ranking", None)
+    if callable(helper):
+        return bool(helper(question))
+    normalized = str(question or "")
+    return any(token in normalized for token in ["哪里", "哪儿", "哪些地区", "哪些地方", "最高的县", "最高的区", "最严重的地方", "风险最高"])
+
+
 def build_context_follow_up_plan(planner, question: str, context: dict | None) -> dict | None:
     context = dict(context or {})
     if not context:
@@ -29,6 +37,26 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None) -
     relative_since, relative_until, relative_window = planner._extract_relative_window(question)
     city = planner._extract_city(question)
     county = planner._extract_county(question)
+    ranking_follow_up = _asks_region_ranking(planner, question)
+
+    if ranking_follow_up and domain in {"pest", "soil"} and not future_window:
+        route = dict(previous_route)
+        route["query_type"] = planner._query_type_for_region_follow_up(previous_query_type, explicit_domain or domain)
+        route["region_level"] = "county" if planner._asks_for_county_scope(question) else str(route.get("region_level") or "city")
+        route["city"] = city
+        route["county"] = county
+        if not city and not county:
+            route["city"] = None
+            route["county"] = None
+        return {
+            "intent": "data_query",
+            "confidence": 0.9,
+            "route": route,
+            "needs_clarification": False,
+            "clarification": None,
+            "reason": "context_ranking_follow_up",
+            "context_trace": trace + [f"preserve ranking intent scope={route['region_level']}"],
+        }
 
     if is_detail_follow_up(question) and domain in {"pest", "soil"}:
         route = dict(previous_route)
@@ -115,7 +143,21 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None) -
         route = dict(previous_route)
         route["query_type"] = f"{domain}_forecast"
         route["forecast_window"] = future_window
-        if not route.get("city") and not route.get("county") and context.get("region_name"):
+        forecast_ranking_follow_up = ranking_follow_up or (
+            previous_query_type in {"pest_top", "soil_top"}
+            and str(previous_route.get("region_level") or "") == "county"
+            and not any(token in question for token in ["更糟", "恶化", "更严重", "会怎样", "怎么样"])
+            and len((question or "").strip()) <= 8
+        )
+        if forecast_ranking_follow_up:
+            route["forecast_mode"] = "ranking"
+            route["region_level"] = "county" if planner._asks_for_county_scope(question) else str(route.get("region_level") or "city")
+            route["city"] = city
+            route["county"] = county
+            if not city and not county:
+                route["city"] = None
+                route["county"] = None
+        elif not route.get("city") and not route.get("county") and context.get("region_name"):
             route["city"] = context.get("region_name")
             route["region_level"] = "city"
         return {

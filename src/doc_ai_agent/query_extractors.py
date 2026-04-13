@@ -57,11 +57,15 @@ def is_invalid_region_candidate(candidate: str) -> bool:
         return True
     if normalized in {"地区", "区域", "市区", "城区"}:
         return True
+    if normalized.startswith("某"):
+        return True
     if normalized.startswith("个"):
         return True
     if normalized in INVALID_REGION_PHRASES:
         return True
-    if any(token in normalized for token in ["预警", "最多", "最严重", "地方", "地区"]):
+    if any(token in normalized for token in ["预警", "最多", "最高", "最严重", "最突出", "地方", "地区"]):
+        return True
+    if any(token in normalized for token in ["哪些", "哪个", "什么", "哪几个", "再细到", "下面", "范围内"]):
         return True
     if any(token in normalized for token in ["我问的是", "我说的是", "问的是", "说的是", "不是市", "不是县", "不是区"]):
         return True
@@ -157,6 +161,8 @@ def default_top_n(question: str, query_type: str) -> Optional[int]:
     explicit_top_n = extract_top_n(question)
     if explicit_top_n is not None:
         return explicit_top_n
+    if query_type == "active_devices":
+        return 10
     if query_type in {"pest_top", "soil_top", "joint_risk"}:
         return 5 if asks_for_multiple_ranked_results(question) else 1
     if query_type == "top":

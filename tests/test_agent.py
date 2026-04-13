@@ -70,7 +70,7 @@ class RichFakeSourceProvider:
 
 
 class FakeStructuredRepo:
-    def top_pest_regions(self, since, until, region_level="city", top_n=5):
+    def top_pest_regions(self, since, until, region_level="city", top_n=5, city=None, county=None):
         return [
             {
                 "region_name": "徐州市",
@@ -105,7 +105,7 @@ class FakeStructuredRepo:
             {"date": "2026-04-01", "severity_score": 86},
         ]
 
-    def top_soil_regions(self, since, until, region_level="city", top_n=5, anomaly_direction=None):
+    def top_soil_regions(self, since, until, region_level="city", top_n=5, anomaly_direction=None, city=None, county=None):
         return [
             {
                 "region_name": "宿迁市",
@@ -151,9 +151,11 @@ class FakeStructuredRepo:
 class CountyRankingRepo(FakeStructuredRepo):
     def __init__(self):
         self.last_top_pest_region_level = None
+        self.last_top_pest_city = None
 
-    def top_pest_regions(self, since, until, region_level="city", top_n=5):
+    def top_pest_regions(self, since, until, region_level="city", top_n=5, city=None, county=None):
         self.last_top_pest_region_level = region_level
+        self.last_top_pest_city = city
         return [
             {
                 "region_name": "铜山区",
@@ -171,7 +173,7 @@ class CountyRankingRepo(FakeStructuredRepo):
 
 
 class LargeRankingRepo(FakeStructuredRepo):
-    def top_pest_regions(self, since, until, region_level="city", top_n=5):
+    def top_pest_regions(self, since, until, region_level="city", top_n=5, city=None, county=None):
         rows = []
         for idx in range(1, 13):
             rows.append(
@@ -265,7 +267,7 @@ class CompareStructuredRepo(FakeStructuredRepo):
 
 
 class EmptyStructuredRepo:
-    def top_pest_regions(self, since, until, region_level="city", top_n=5):
+    def top_pest_regions(self, since, until, region_level="city", top_n=5, city=None, county=None):
         return []
 
     def sample_pest_records(self, since, until, limit=3):
@@ -280,7 +282,7 @@ class EmptyStructuredRepo:
     def pest_trend(self, since, until, region_name, region_level="city"):
         return []
 
-    def top_soil_regions(self, since, until, region_level="city", top_n=5, anomaly_direction=None):
+    def top_soil_regions(self, since, until, region_level="city", top_n=5, anomaly_direction=None, city=None, county=None):
         return []
 
     def sample_soil_records(self, since, until, limit=3):
@@ -753,6 +755,42 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["historical_query"]["region_level"], "county")
         self.assertEqual(result["evidence"]["analysis_context"]["region_level"], "county")
         self.assertEqual(result["evidence"]["memory_state"]["route"]["region_level"], "county")
+
+    def test_city_scoped_county_ranking_does_not_leak_1970_in_answer(self):
+        repo = CountyRankingRepo()
+        agent = DocAIAgent(
+            repo,
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("常州市下面虫情最严重的县有哪些？", thread_id="thread-city-county-ranking")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(repo.last_top_pest_city, "常州市")
+        self.assertEqual(result["evidence"]["request_understanding"]["region_level"], "county")
+        self.assertEqual(result["evidence"]["historical_query"]["region_level"], "county")
+        self.assertNotIn("1970-01-01", result["answer"])
+        self.assertIn("区县", result["answer"])
+
+    def test_multi_turn_highest_county_and_future_follow_up_preserve_ranking_scope(self):
+        agent = DocAIAgent(
+            CountyRankingRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        first = agent.answer("过去5个月最严重的是哪里？", thread_id="thread-multi-turn-ranking")
+        second = agent.answer("其中虫情的呢？", thread_id="thread-multi-turn-ranking")
+        third = agent.answer("最高的县有哪些？", thread_id="thread-multi-turn-ranking")
+        fourth = agent.answer("那未来两周呢？", thread_id="thread-multi-turn-ranking")
+
+        self.assertEqual(first["mode"], "advice")
+        self.assertEqual(second["mode"], "data_query")
+        self.assertEqual(third["mode"], "data_query")
+        self.assertEqual(third["evidence"]["analysis_context"]["region_level"], "county")
+        self.assertNotEqual(third["evidence"]["analysis_context"]["region_name"], "最高的县")
+        self.assertEqual(fourth["mode"], "data_query")
+        self.assertEqual(fourth["evidence"]["forecast"]["mode"], "ranking")
+        self.assertIn("风险最高", fourth["answer"])
 
     def test_ranking_request_respects_requested_top_n(self):
         agent = DocAIAgent(

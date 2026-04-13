@@ -371,6 +371,127 @@ class AlertRepository:
                 )
             return rows
 
+    def top_active_devices(self, since: str, until: Optional[str] = None, limit: int = 10) -> List[dict]:
+        where = ["alert_time >= ?", "device_code IS NOT NULL", "TRIM(device_code) != ''"]
+        params: list[object] = [since]
+        if until:
+            where.append("alert_time < ?")
+            params.append(until)
+        params.append(max(1, int(limit)))
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT
+                    device_code,
+                    device_name,
+                    COUNT(*) AS alert_count,
+                    COUNT(DISTINCT substr(alert_time, 1, 10)) AS active_days,
+                    MAX(alert_time) AS last_alert_time
+                FROM alerts
+                WHERE {' AND '.join(where)}
+                GROUP BY device_code, device_name
+                ORDER BY alert_count DESC, active_days DESC, last_alert_time DESC, device_code ASC
+                LIMIT ?
+                """,
+                tuple(params),
+            )
+            return [
+                {
+                    "device_code": r["device_code"],
+                    "device_name": r["device_name"],
+                    "alert_count": int(r["alert_count"]),
+                    "active_days": int(r["active_days"]),
+                    "last_alert_time": r["last_alert_time"],
+                }
+                for r in cur.fetchall()
+            ]
+
+    def unknown_region_devices(self, limit: int = 20) -> List[dict]:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT
+                    device_code,
+                    device_name,
+                    COUNT(*) AS alert_count,
+                    MAX(alert_time) AS last_alert_time
+                FROM alerts
+                WHERE device_code IS NOT NULL
+                  AND TRIM(device_code) != ''
+                  AND (
+                    city IS NULL OR TRIM(city) = ''
+                    OR county IS NULL OR TRIM(county) = ''
+                    OR county IN ('未知地区', '未知区域', '未知区')
+                  )
+                GROUP BY device_code, device_name
+                ORDER BY alert_count DESC, last_alert_time DESC, device_code ASC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            )
+            return [
+                {
+                    "device_code": r["device_code"],
+                    "device_name": r["device_name"],
+                    "alert_count": int(r["alert_count"]),
+                    "last_alert_time": r["last_alert_time"],
+                }
+                for r in cur.fetchall()
+            ]
+
+    def empty_county_records(self, limit: int = 20) -> List[dict]:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT alert_time, city, county, region_name, device_code, device_name, alert_level
+                FROM alerts
+                WHERE county IS NULL OR TRIM(county) = ''
+                ORDER BY alert_time DESC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            )
+            return [
+                {
+                    "alert_time": r["alert_time"],
+                    "city": r["city"],
+                    "county": r["county"],
+                    "region_name": r["region_name"],
+                    "device_code": r["device_code"],
+                    "device_name": r["device_name"],
+                    "alert_level": r["alert_level"],
+                }
+                for r in cur.fetchall()
+            ]
+
+    def unmatched_region_records(self, limit: int = 20) -> List[dict]:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT alert_time, city, county, region_name, device_code, device_name, alert_level
+                FROM alerts
+                WHERE
+                    city IS NULL OR TRIM(city) = ''
+                    OR county IS NULL OR TRIM(county) = ''
+                    OR region_name IS NULL OR TRIM(region_name) = ''
+                ORDER BY alert_time DESC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            )
+            return [
+                {
+                    "alert_time": r["alert_time"],
+                    "city": r["city"],
+                    "county": r["county"],
+                    "region_name": r["region_name"],
+                    "device_code": r["device_code"],
+                    "device_name": r["device_name"],
+                    "alert_level": r["alert_level"],
+                }
+                for r in cur.fetchall()
+            ]
+
     def subtype_ratio(self, alert_type: str, alert_subtype: str, since: str) -> dict:
         with self._connect() as conn:
             total_cur = conn.execute(

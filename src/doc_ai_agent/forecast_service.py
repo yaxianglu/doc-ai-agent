@@ -336,15 +336,25 @@ class ForecastService:
         region_level: str = "city",
         top_n: int = 5,
         until: str | None = None,
+        city: str | None = None,
+        county: str | None = None,
     ) -> dict:
         if domain == "pest" and hasattr(self.repo, "top_pest_regions"):
-            raw = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=top_n)
+            raw = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=top_n, city=city, county=county)
             ranked = [
                 {**row, "projected_score": self._uplift(float(row.get("severity_score") or 0), horizon_days)}
                 for row in raw
             ]
         elif domain == "soil" and hasattr(self.repo, "top_soil_regions"):
-            raw = self.repo.top_soil_regions(since, until, region_level=region_level, top_n=top_n, anomaly_direction=None)
+            raw = self.repo.top_soil_regions(
+                since,
+                until,
+                region_level=region_level,
+                top_n=top_n,
+                anomaly_direction=None,
+                city=city,
+                county=county,
+            )
             ranked = [
                 {**row, "projected_score": self._uplift(float(row.get("anomaly_score") or 0), horizon_days)}
                 for row in raw
@@ -369,7 +379,7 @@ class ForecastService:
             row["top_factors"] = self._ranking_factors(row, domain=domain)
 
         label = "虫情" if domain == "pest" else "墒情"
-        answer = f"未来{horizon_days}天{label}风险最高的地区为：" + "；".join(
+        answer = f"{self._horizon_phrase(horizon_days)}{label}风险最高的地区为：" + "；".join(
             f"{idx+1}.{row['region_name']}（{row['risk_level']}，置信度{row['confidence']:.2f}）" for idx, row in enumerate(ranked[:top_n])
         )
         overall_confidence = round(sum(float(row.get("confidence") or 0) for row in ranked[:top_n]) / max(len(ranked[:top_n]), 1), 2) if ranked else 0.2
