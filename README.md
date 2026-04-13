@@ -55,7 +55,7 @@ export OPENAI_ADVICE_MODEL="gpt-4.1"
 export DOC_AGENT_DB_URL="mysql://dev:password@127.0.0.1:3306/doc-cloud"
 export DOC_AGENT_SOURCE_PROVIDER="llamaindex"
 export DOC_AGENT_QUERY_PLAYBOOK_BACKEND="llamaindex"
-PYTHONPATH=src python3 scripts/run_server.py
+PYTHONPATH=src python3.11 scripts/run_server.py
 ```
 
 ## API

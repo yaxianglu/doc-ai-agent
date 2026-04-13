@@ -76,6 +76,34 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["normalized_question"], "过去5个月虫情最严重的地方是哪里")
         self.assertTrue(result["needs_historical"])
 
+    def test_reason_follow_up_reuses_domain_and_region_from_context(self):
+        result = self.understanding.analyze(
+            "原因呢",
+            context={
+                "domain": "pest",
+                "region_name": "徐州市",
+            },
+        )
+
+        self.assertTrue(result["used_context"])
+        self.assertEqual(result["resolved_question"], "徐州市 虫情 原因呢")
+        self.assertIn("expanded_short_follow_up_from_memory", result["context_resolution"])
+        self.assertIn("reused_region_from_memory", result["context_resolution"])
+
+    def test_pending_agri_clarification_rewrites_original_question_for_soil(self):
+        result = self.understanding.analyze(
+            "墒情",
+            context={
+                "pending_user_question": "过去5个月灾害最严重的地方是哪里",
+                "pending_clarification": "agri_domain",
+                "domain": "",
+            },
+        )
+
+        self.assertTrue(result["used_context"])
+        self.assertEqual(result["resolved_question"], "过去5个月墒情最严重的地方是哪里")
+        self.assertEqual(result["normalized_question"], "过去5个月墒情最严重的地方是哪里")
+
     def test_full_question_does_not_inherit_previous_domain_context(self):
         result = self.understanding.analyze(
             "过去5个月灾害最严重的地方是哪里",
@@ -218,6 +246,60 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["historical_query_text"], "近3个月虫情最高的县有哪些")
         self.assertEqual(result["normalized_question"], "近3个月虫情最高的县有哪些")
 
+    def test_reasoning_follow_up_wording_keeps_overview_task_type(self):
+        result = self.understanding.analyze("给我过去五个月徐州虫情整体情况，再说说原因")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "徐州市")
+        self.assertEqual(result["task_type"], "region_overview")
+        self.assertTrue(result["needs_explanation"])
+        self.assertTrue(result["needs_historical"])
+
+    def test_colloquial_why_variant_is_recognized_as_explanation(self):
+        result = self.understanding.analyze("过去5个月徐州虫情为啥这么高")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "徐州市")
+        self.assertEqual(result["task_type"], "region_overview")
+        self.assertTrue(result["needs_explanation"])
+        self.assertTrue(result["needs_historical"])
+
+    def test_colloquial_advice_variant_is_recognized(self):
+        result = self.understanding.analyze("过去5个月徐州虫情这么高，咋处理")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "徐州市")
+        self.assertTrue(result["needs_advice"])
+        self.assertTrue(result["needs_historical"])
+
+    def test_colloquial_how_to_handle_variant_is_recognized(self):
+        result = self.understanding.analyze("过去5个月徐州虫情这么高，该咋办")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "徐州市")
+        self.assertTrue(result["needs_advice"])
+
+    def test_continue_to_worsen_variant_is_recognized_as_forecast(self):
+        result = self.understanding.analyze("过去5个月徐州虫情这么高，未来会不会继续变严重")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "徐州市")
+        self.assertTrue(result["needs_forecast"])
+
+    def test_scope_correction_sentence_does_not_become_fake_region_name(self):
+        result = self.understanding.analyze(
+            "我问的是县，不是市",
+            context={
+                "domain": "pest",
+                "region_name": "徐州市",
+                "route": {"region_level": "city"},
+            },
+        )
+
+        self.assertEqual(result["region_name"], "")
+        self.assertEqual(result["region_level"], "county")
+        self.assertFalse(result["needs_historical"])
+
     def test_prominent_county_ranking_variant_preserves_county_scope(self):
         result = self.understanding.analyze("近3个月虫情最突出的县有哪些")
 
@@ -294,6 +376,16 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["future_window"]["window_type"], "months")
         self.assertEqual(result["future_window"]["window_value"], 1)
         self.assertEqual(result["normalized_question"], "下个月南京市虫情趋势怎么样 未来1个月")
+
+    def test_half_month_future_worsen_question_extracts_forecast_window(self):
+        result = self.understanding.analyze("徐州未来半个月虫情会不会更严重")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "徐州市")
+        self.assertTrue(result["needs_forecast"])
+        self.assertEqual(result["future_window"]["window_type"], "days")
+        self.assertEqual(result["future_window"]["window_value"], 15)
+        self.assertEqual(result["future_window"]["horizon_days"], 15)
 
     def test_negated_advice_does_not_enable_advice_mode(self):
         result = self.understanding.analyze("不要建议，先给我数据，徐州过去3个月墒情")

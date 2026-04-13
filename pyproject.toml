@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "doc-ai-agent"
 version = "0.1.0"
 description = "MVP AI agent for dispatch platform report Q&A"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "hanlp==2.1.3",
     "instructor==1.15.1",

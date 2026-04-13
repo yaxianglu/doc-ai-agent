@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict, Iterable, Optional
 
 from .agent import DocAIAgent
+from .auth import AuthRepository, AuthService, load_or_create_credentials
 from .config import AppConfig
 from .mysql_repository import MySQLRepository
 from .openai_client import OpenAIClient
@@ -22,6 +23,12 @@ from .xlsx_loader import load_alerts_from_xlsx
 class AgentApp:
     def __init__(self, config: AppConfig):
         self.config = config
+        self.auth_repo = AuthRepository(config.auth_db_path)
+        self.auth_repo.init_schema()
+        self.auth = AuthService(self.auth_repo, session_ttl_days=config.auth_session_ttl_days)
+        auth_usernames = [item.strip() for item in config.auth_usernames.split(",") if item.strip()]
+        self.bootstrap_credentials = load_or_create_credentials(config.auth_bootstrap_path, auth_usernames)
+        self.auth.ensure_users(self.bootstrap_credentials)
         if config.db_url:
             self.repo = MySQLRepository(config.db_url)
             self.repo.create_tables()
@@ -151,11 +158,25 @@ class AgentApp:
             raise ValueError("question is required")
         return self.agent.answer(question, history=history, thread_id=thread_id)
 
+    def login(self, username: str, password: str) -> dict | None:
+        return self.auth.login(username, password)
+
+    def current_user(self, token: str) -> dict | None:
+        return self.auth.authenticate(token)
+
+    def logout(self, token: str) -> None:
+        self.auth.logout(token)
+
 
 def build_http_server(config: AppConfig) -> HTTPServer:
     app = AgentApp(config)
 
     class Handler(BaseHTTPRequestHandler):
+        def _read_json(self) -> dict:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length) if length else b"{}"
+            return json.loads(body.decode("utf-8") or "{}")
+
         def _json(self, status: int, payload: dict) -> None:
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
@@ -164,23 +185,62 @@ def build_http_server(config: AppConfig) -> HTTPServer:
             self.end_headers()
             self.wfile.write(data)
 
+        def _bearer_token(self) -> str:
+            auth_header = self.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                return ""
+            return auth_header[7:].strip()
+
+        def _require_user(self) -> dict | None:
+            user = app.current_user(self._bearer_token())
+            if user is None:
+                self._json(401, {"error": "authentication required"})
+                return None
+            return user
+
         def do_GET(self):
             if self.path == "/health":
                 self._json(200, {"status": "ok"})
                 return
+            if self.path == "/auth/me":
+                user = self._require_user()
+                if user is None:
+                    return
+                self._json(200, {"user": user})
+                return
             self._json(404, {"error": "not found"})
 
         def do_POST(self):
-            length = int(self.headers.get("Content-Length", "0"))
-            body = self.rfile.read(length) if length else b"{}"
-            payload = json.loads(body.decode("utf-8") or "{}")
+            payload = self._read_json()
+
+            if self.path == "/auth/login":
+                username = str(payload.get("username", "")).strip()
+                password = str(payload.get("password", ""))
+                result = app.login(username, password)
+                if result is None:
+                    self._json(401, {"error": "用户名或密码错误"})
+                    return
+                self._json(200, result)
+                return
+
+            if self.path == "/auth/logout":
+                user = self._require_user()
+                if user is None:
+                    return
+                app.logout(self._bearer_token())
+                self._json(200, {"ok": True, "user": user})
+                return
 
             if self.path == "/refresh":
+                if self._require_user() is None:
+                    return
                 inserted = app.refresh()
                 self._json(200, {"inserted": inserted})
                 return
 
             if self.path == "/chat":
+                if self._require_user() is None:
+                    return
                 question = payload.get("question", "")
                 if not question:
                     self._json(400, {"error": "question is required"})

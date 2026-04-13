@@ -7,6 +7,24 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from .advice_engine import AdviceEngine
+from .agent_analysis_synthesis import build_data_grounded_advice, build_data_grounded_explanation
+from .agent_comparison import detect_compare_request
+from .agent_compare_execution import execute_compare_request
+from .agent_contracts import FinalResponseEvidence, ForecastExecutionContext
+from .agent_execution_nodes import (
+    build_advice_response,
+    build_clarification_response,
+    build_forecast_execution_context,
+    run_knowledge_node,
+    run_query_node,
+)
+from .agent_orchestration import resolve_planning_question, route_target, should_build_direct_forecast_plan, update_plan_outcome
+from .agent_memory import build_memory_snapshot
+from .agent_response_meta import build_response_meta as build_agent_response_meta
+from .agent_response_meta import execution_plan as resolve_execution_plan
+from .agent_runtime_context import build_runtime_context, derive_domain, normalize_historical_route
+from .agent_synthesis_orchestration import build_advice_payload, build_explanation_payload
+from .agent_synthesis_orchestration import build_plan_context, first_region_name, synthesize_analysis_response
 from .forecast_engine import ForecastEngine
 from .forecast_service import ForecastService
 from .intent_router import IntentRouter
@@ -15,7 +33,7 @@ from .query_playbook_router import create_query_playbook_router
 from .query_plan import execution_route, replace_execution_route
 from .query_planner import QueryPlanner
 from .query_engine import QueryEngine
-from .request_understanding import CITY_ALIASES as REQUEST_CITY_ALIASES, RequestUnderstanding
+from .request_understanding import RequestUnderstanding
 from .repository import AlertRepository
 
 
@@ -197,14 +215,6 @@ class DocAIAgent:
         return "未知", False
 
     @staticmethod
-    def _format_answer_section(title: str, content: str) -> str:
-        text = str(content or "").strip()
-        if not text:
-            return ""
-        prefix = f"{title}："
-        return text if text.startswith(prefix) else f"{prefix}{text}"
-
-    @staticmethod
     def _ai_involvement_label(used_ai_in_routing: bool, used_ai_in_answer: bool) -> str:
         ai_steps = int(used_ai_in_routing) + int(used_ai_in_answer)
         if ai_steps >= 2:
@@ -227,167 +237,12 @@ class DocAIAgent:
         }
         return response
 
-    @staticmethod
-    def _normalized_confidence(value: object, default: float = 0.0) -> float:
-        try:
-            numeric = float(value)
-        except (TypeError, ValueError):
-            numeric = float(default)
-        return round(min(max(numeric, 0.0), 0.99), 2)
-
-    @staticmethod
-    def _dedupe_source_types(source_types: list[str]) -> list[str]:
-        seen: list[str] = []
-        for item in source_types:
-            if item and item not in seen:
-                seen.append(item)
-        return seen
-
-    @staticmethod
-    def _has_meaningful_value(value: object) -> bool:
-        return value not in (None, "", [])
-
-    def _response_source_types(self, response: dict, evidence: dict, plan: dict) -> list[str]:
-        source_types: list[str] = []
-        if evidence.get("generation_mode") == "clarification" or plan.get("needs_clarification"):
-            source_types.append("planner")
-
-        historical_query = dict(evidence.get("historical_query") or {})
-        if not historical_query and response.get("mode") == "data_query":
-            historical_query = dict(evidence)
-        if historical_query and any(
-            historical_query.get(key)
-            for key in ["sql", "query_type", "rule", "no_data_reasons", "available_data_ranges"]
-        ):
-            source_types.append("db")
-
-        forecast = dict(evidence.get("forecast") or {})
-        if forecast and any(
-            self._has_meaningful_value(forecast.get(key))
-            for key in ["domain", "mode", "horizon_days", "risk_level"]
-        ):
-            source_types.append("forecast")
-
-        knowledge = evidence.get("knowledge")
-        knowledge_sources = evidence.get("knowledge_sources")
-        sources = evidence.get("sources")
-        if isinstance(knowledge, list) and knowledge:
-            source_types.append("rag")
-        elif isinstance(knowledge_sources, list) and any(
-            isinstance(item, dict) and (item.get("retrieval_backend") or item.get("retrieval_engine") or item.get("url"))
-            for item in knowledge_sources
-        ):
-            source_types.append("rag")
-        elif isinstance(sources, list) and any(
-            isinstance(item, dict) and (item.get("retrieval_backend") or item.get("retrieval_engine") or item.get("url"))
-            for item in sources
-        ):
-            source_types.append("rag")
-
-        generation_mode = str(evidence.get("generation_mode") or "")
-        if generation_mode == "llm":
-            source_types.append("llm")
-        elif generation_mode == "rule" and response.get("mode") == "advice":
-            source_types.append("rules")
-
-        return self._dedupe_source_types(source_types)
-
-    def _historical_response_confidence(self, response: dict, evidence: dict, plan: dict) -> float:
-        historical_query = dict(evidence.get("historical_query") or {})
-        if not historical_query and response.get("mode") == "data_query":
-            historical_query = dict(evidence)
-        if isinstance(historical_query.get("no_data_reasons"), list) and historical_query.get("no_data_reasons"):
-            return 0.35
-
-        plan_confidence = self._normalized_confidence(plan.get("confidence"), 0.0)
-        data = response.get("data")
-        if isinstance(data, list) and data:
-            return max(plan_confidence, 0.78)
-        if isinstance(data, dict) and data:
-            return max(plan_confidence, 0.76)
-        return min(max(plan_confidence, 0.0), 0.45)
-
-    def _response_confidence(self, state: AgentState, response: dict, evidence: dict, source_types: list[str]) -> float:
-        plan = dict(state.get("plan") or {})
-        forecast = dict(evidence.get("forecast") or {})
-        generation_mode = str(evidence.get("generation_mode") or "")
-        mode = str(response.get("mode") or "")
-
-        if generation_mode == "clarification":
-            return self._normalized_confidence(plan.get("confidence"), 0.4)
-
-        if mode == "analysis":
-            components: list[tuple[float, float]] = []
-            if "db" in source_types:
-                components.append((self._historical_response_confidence(response, evidence, plan), 0.45))
-            if "forecast" in source_types:
-                components.append((self._normalized_confidence(forecast.get("confidence"), 0.0), 0.2))
-            if "rag" in source_types:
-                components.append((0.76, 0.35))
-            if not components:
-                return self._normalized_confidence(plan.get("confidence"), 0.5)
-
-            total_weight = sum(weight for _, weight in components) or 1.0
-            evidence_confidence = sum(value * weight for value, weight in components) / total_weight
-            if len(components) >= 2:
-                plan_confidence = self._normalized_confidence(plan.get("confidence"), evidence_confidence)
-                evidence_confidence = (evidence_confidence * 0.8) + (plan_confidence * 0.2)
-            return self._normalized_confidence(evidence_confidence, 0.5)
-
-        if mode == "data_query":
-            if "forecast" in source_types and forecast:
-                return self._normalized_confidence(forecast.get("confidence"), 0.0)
-            if "db" in source_types:
-                return self._historical_response_confidence(response, evidence, plan)
-            return self._normalized_confidence(plan.get("confidence"), 0.6)
-
-        if mode == "advice":
-            if generation_mode == "llm":
-                return 0.84 if "rag" in source_types else 0.76
-            if generation_mode == "rule":
-                answer = str(response.get("answer") or "")
-                if "AI农情工作台" in answer:
-                    return 0.98
-                analysis_context = dict(evidence.get("analysis_context") or {})
-                if analysis_context.get("domain"):
-                    return 0.72
-                return 0.58
-            return self._normalized_confidence(plan.get("confidence"), 0.55)
-
-        return self._normalized_confidence(plan.get("confidence"), 0.5)
-
-    @staticmethod
-    def _response_fallback_reason(response: dict, evidence: dict, plan: dict, source_types: list[str]) -> str:
-        if evidence.get("generation_mode") == "clarification" or plan.get("needs_clarification"):
-            return str(plan.get("reason") or "clarification")
-
-        historical_query = dict(evidence.get("historical_query") or {})
-        no_data_reasons = historical_query.get("no_data_reasons")
-        if isinstance(no_data_reasons, list) and no_data_reasons:
-            first = no_data_reasons[0]
-            if isinstance(first, dict) and first.get("code"):
-                return str(first["code"])
-
-        forecast = dict(evidence.get("forecast") or {})
-        fallback_reason = str(forecast.get("fallback_reason") or "")
-        if fallback_reason:
-            return fallback_reason
-
-        if response.get("mode") == "advice" and evidence.get("generation_mode") == "rule" and "rag" not in source_types:
-            analysis_context = dict(evidence.get("analysis_context") or {})
-            if not analysis_context.get("domain"):
-                return "rule_only_advice"
-
-        return ""
-
     def _build_response_meta(self, state: AgentState, response: dict, evidence: dict) -> dict:
-        plan = dict(state.get("plan") or {})
-        source_types = self._response_source_types(response, evidence, plan)
-        return {
-            "confidence": self._response_confidence(state, response, evidence, source_types),
-            "source_types": source_types,
-            "fallback_reason": self._response_fallback_reason(response, evidence, plan, source_types),
-        }
+        return build_agent_response_meta(
+            plan=dict(state.get("plan") or {}),
+            response=response,
+            evidence=evidence,
+        )
 
     def _load_memory_node(self, state: AgentState) -> dict:
         thread_id = str(state.get("thread_id") or "default")
@@ -442,12 +297,10 @@ class DocAIAgent:
         return dict(normalized_plan.get("task_graph") or {})
 
     def _execution_plan(self, state: AgentState) -> list[str]:
-        task_graph = self._plan_task_graph(state.get("plan"))
-        execution_plan = list(task_graph.get("execution_plan") or [])
-        if execution_plan:
-            return execution_plan
-        understanding = dict(state.get("understanding") or {})
-        return list(understanding.get("execution_plan") or ["understand_request", "answer_synthesis"])
+        return resolve_execution_plan(
+            plan=state.get("plan"),
+            understanding=state.get("understanding"),
+        )
 
     def _build_forecast_plan_from_understanding(self, understanding: dict, memory_context: dict | None = None) -> dict:
         memory_context = dict(memory_context or {})
@@ -485,19 +338,8 @@ class DocAIAgent:
 
     def _plan_node(self, state: AgentState) -> dict:
         understanding = dict(state.get("understanding") or {})
-        if (
-            understanding.get("used_context")
-            and understanding.get("needs_explanation")
-            and not understanding.get("needs_historical")
-            and not understanding.get("needs_forecast")
-            and not understanding.get("needs_advice")
-        ):
-            question_for_planning = state.get("question", "")
-        elif understanding.get("needs_historical"):
-            question_for_planning = understanding.get("historical_query_text")
-        else:
-            question_for_planning = understanding.get("normalized_question") or state.get("question", "")
-        if understanding.get("needs_forecast") and not understanding.get("needs_historical") and understanding.get("domain"):
+        question_for_planning = resolve_planning_question(state.get("question", ""), understanding)
+        if should_build_direct_forecast_plan(understanding):
             plan = self._build_forecast_plan_from_understanding(understanding, state.get("memory_context"))
         else:
             plan = self.query_planner.plan(
@@ -524,144 +366,48 @@ class DocAIAgent:
                 plan["query_plan"] = query_plan
         plan["route"] = self._plan_route(plan) or route
         plan["task_graph"] = self._plan_task_graph(plan)
-        route = self._plan_route(plan)
-        if route.get("query_type") in {"pest_forecast", "soil_forecast"} and not understanding.get("needs_forecast"):
-            updated_understanding = dict(understanding)
-            updated_understanding["needs_forecast"] = True
-            updated_understanding["needs_historical"] = False
-            execution_plan = list(plan.get("task_graph", {}).get("execution_plan") or updated_understanding.get("execution_plan") or ["understand_request", "answer_synthesis"])
-            if "forecast" not in execution_plan:
-                if "answer_synthesis" in execution_plan:
-                    insert_at = execution_plan.index("answer_synthesis")
-                    execution_plan.insert(insert_at, "forecast")
-                else:
-                    execution_plan.append("forecast")
-            updated_understanding["execution_plan"] = execution_plan
-            return {"plan": plan, "understanding": updated_understanding}
-        return {"plan": plan}
+        outcome = update_plan_outcome(plan=plan, understanding=understanding)
+        if outcome.understanding != understanding:
+            return {"plan": outcome.plan, "understanding": outcome.understanding}
+        return {"plan": outcome.plan}
 
     def _route_from_plan(self, state: AgentState) -> str:
-        plan = state.get("plan") or {}
-        understanding = state.get("understanding") or {}
-        if plan.get("needs_clarification"):
-            return "clarify"
-        if (
-            plan.get("intent") == "advice"
-            and not understanding.get("needs_historical")
-            and not understanding.get("needs_forecast")
-        ):
-            return "advice"
-        if (
-            understanding.get("needs_historical")
-            or understanding.get("needs_forecast")
-            or understanding.get("needs_explanation")
-            or understanding.get("needs_advice")
-            or plan.get("intent") == "data_query"
-        ):
-            return "analysis"
-        if plan.get("intent") == "advice":
-            return "advice"
-        return "analysis"
+        return route_target(state.get("plan") or {}, state.get("understanding") or {})
 
     def _query_node(self, state: AgentState) -> dict:
-        understanding = state.get("understanding") or {}
-        plan = state.get("plan") or {}
-        compare_request = self._detect_compare_request(
-            state.get("question", ""),
-            understanding,
-            plan,
-            state.get("memory_context"),
+        return run_query_node(
+            question=state.get("question", ""),
+            understanding=state.get("understanding") or {},
+            plan=state.get("plan") or {},
+            memory_context=state.get("memory_context"),
+            detect_compare_request=self._detect_compare_request,
+            answer_compare_request=self._answer_compare_request,
+            normalize_historical_route=self._normalize_historical_route,
+            plan_route=self._plan_route,
+            query_engine=self.query_engine,
         )
-        if compare_request:
-            return {
-                "query_result": self._answer_compare_request(
-                    state.get("question", ""),
-                    compare_request,
-                    understanding,
-                    plan,
-                    state.get("memory_context"),
-                )
-            }
-        if not understanding.get("needs_historical") and plan.get("intent") != "data_query":
-            return {"query_result": {}}
-        question_for_query = understanding.get("historical_query_text") or state.get("question", "")
-        route = self._normalize_historical_route(
-            question_for_query,
-            self._plan_route(plan),
-            understanding,
-            state.get("memory_context"),
-        )
-        if route.get("query_type") in {"pest_forecast", "soil_forecast"}:
-            return {"query_result": {}}
-        result = self.query_engine.answer(question_for_query, plan=route)
-        evidence = dict(result.evidence or {})
-        evidence.setdefault("query_type", route.get("query_type") or "")
-        evidence.setdefault("city", route.get("city"))
-        evidence.setdefault("county", route.get("county"))
-        evidence.setdefault("window", route.get("window") or {})
-        return {
-            "query_result": {
-                "mode": "data_query",
-                "answer": result.answer,
-                "data": result.data,
-                "evidence": evidence,
-            }
-        }
 
-    def _resolve_forecast_context(self, state: AgentState) -> tuple[dict | None, dict]:
-        understanding = dict(state.get("understanding") or {})
-        if not understanding.get("needs_forecast"):
-            return None, {}
-
-        plan = dict(state.get("plan") or {})
-        route = self._normalize_historical_route(
-            understanding.get("historical_query_text") or state.get("question", ""),
-            self._plan_route(plan),
-            understanding,
-            state.get("memory_context"),
+    def _resolve_forecast_context(self, state: AgentState) -> ForecastExecutionContext:
+        return build_forecast_execution_context(
+            question=state.get("question", ""),
+            understanding=state.get("understanding") or {},
+            plan=state.get("plan") or {},
+            memory_context=state.get("memory_context"),
+            query_result=state.get("query_result") or {},
+            normalize_historical_route=self._normalize_historical_route,
+            plan_route=self._plan_route,
+            derive_domain=self._derive_domain,
+            infer_region_level_from_name=self._infer_region_level_from_name,
+            asks_region_ranking=self._asks_region_ranking,
+            first_region_name=self._first_region_name,
         )
-        query_result = dict(state.get("query_result") or {})
-        memory_context = dict(state.get("memory_context") or {})
-        future_window = understanding.get("future_window") or {"horizon_days": 14}
-        domain = understanding.get("domain") or memory_context.get("domain") or self._derive_domain(state.get("question", ""), plan, memory_context)
-        first_region = self._first_region_name(query_result) if query_result else ""
-        inherited_region = memory_context.get("region_name") if understanding.get("reuse_region_from_context") else ""
-        region_name = understanding.get("region_name") or route.get("county") or route.get("city") or inherited_region or first_region
-        region_level = (
-            understanding.get("region_level")
-            or route.get("region_level")
-            or str((memory_context.get("route") or {}).get("region_level") or "")
-            or self._infer_region_level_from_name(str(region_name or ""))
-            or "city"
-        )
-        forecast_mode = route.get("forecast_mode") or ("ranking" if not region_name and self._asks_region_ranking(understanding.get("original_question", "")) else "region")
-        forecast_route = {
-            "query_type": f"{domain}_forecast",
-            "since": route.get("since") or memory_context.get("route", {}).get("since") or "1970-01-01 00:00:00",
-            "until": route.get("until"),
-            "city": region_name if region_level != "county" else None,
-            "county": region_name if region_level == "county" else None,
-            "region_level": region_level,
-            "top_n": route.get("top_n") or 1,
-            "window": route.get("window") or understanding.get("window") or memory_context.get("window") or {"window_type": "all", "window_value": None},
-            "forecast_window": future_window,
-            "forecast_mode": forecast_mode,
-        }
-        runtime_context = {
-            "domain": domain,
-            "region_name": region_name or "",
-            "region_level": region_level,
-            "query_type": route.get("query_type") or memory_context.get("query_type") or "",
-            "window": forecast_route["window"],
-            "route": route or memory_context.get("route") or {},
-            "forecast": memory_context.get("forecast") or {},
-        }
-        return forecast_route, runtime_context
 
     def _forecast_node(self, state: AgentState) -> dict:
-        forecast_route, runtime_context = self._resolve_forecast_context(state)
-        if not forecast_route:
+        forecast_context = self._resolve_forecast_context(state)
+        if not forecast_context.enabled:
             return {"forecast_result": {}}
+        forecast_route = dict(forecast_context.route or {})
+        runtime_context = dict(forecast_context.runtime_context)
         if forecast_route.get("forecast_mode") == "ranking":
             result = self.forecast_service.forecast_top_regions(
                 domain=str(runtime_context.get("domain") or "pest"),
@@ -675,79 +421,32 @@ class DocAIAgent:
         return {"forecast_result": result}
 
     def _knowledge_node(self, state: AgentState) -> dict:
-        understanding = dict(state.get("understanding") or {})
-        if not (understanding.get("needs_explanation") or understanding.get("needs_advice")):
-            return {"knowledge": []}
-        if self.source_provider is None:
-            return {"knowledge": []}
-        plan = state.get("plan") or {}
-        query_result = state.get("query_result") or {}
-        forecast_result = state.get("forecast_result") or {}
-        context = self._build_runtime_context(
-            understanding.get("normalized_question") or state.get("question", ""),
-            plan,
-            previous_context=state.get("memory_context"),
-            understanding=understanding,
+        return run_knowledge_node(
+            question=state.get("question", ""),
+            understanding=state.get("understanding") or {},
+            plan=state.get("plan") or {},
+            memory_context=state.get("memory_context"),
+            query_result=state.get("query_result") or {},
+            forecast_result=state.get("forecast_result") or {},
+            source_provider=self.source_provider,
+            build_runtime_context=self._build_runtime_context,
+            first_region_name=self._first_region_name,
         )
-        context["region_name"] = (
-            forecast_result.get("analysis_context", {}).get("region_name")
-            or context.get("region_name")
-            or self._first_region_name(query_result)
-        )
-        if forecast_result.get("forecast"):
-            context["forecast"] = forecast_result["forecast"]
-        knowledge = self.source_provider.search(
-            understanding.get("normalized_question") or state.get("question", ""),
-            limit=3,
-            context=context,
-        )
-        return {"knowledge": knowledge}
 
     def _derive_domain(self, question: str, plan: dict, previous_context: dict | None = None) -> str:
-        previous_context = dict(previous_context or {})
-        route = self._plan_route(plan)
-        query_type = str(route.get("query_type") or "")
-        if query_type.startswith("pest"):
-            return "pest"
-        if query_type.startswith("soil"):
-            return "soil"
-        if previous_context.get("domain"):
-            return str(previous_context["domain"])
-        if "虫" in question:
-            return "pest"
-        if "墒" in question:
-            return "soil"
-        return ""
+        return derive_domain(question, self._plan_route(plan), previous_context)
 
     def _build_runtime_context(self, question: str, plan: dict, previous_context: dict | None = None, understanding: dict | None = None) -> dict:
-        previous_context = dict(previous_context or {})
-        understanding = dict(understanding or {})
-        route = self._normalize_historical_route(
-            understanding.get("historical_query_text") or question,
-            self._plan_route(plan),
-            understanding,
-            previous_context,
+        return build_runtime_context(
+            question=question,
+            plan=plan,
+            previous_context=previous_context,
+            understanding=understanding,
+            build_route=self.query_planner._build_route,
+            plan_route=self._plan_route,
+            infer_region_level_from_name=self._infer_region_level_from_name,
+            is_greeting_question=self.query_planner._is_greeting_question,
         )
-        if self.query_planner._is_greeting_question(question):
-            return {
-                "domain": "",
-                "region_name": "",
-                "region_level": "",
-                "query_type": "",
-                "window": {},
-                "route": {},
-                "forecast": {},
-            }
-        inherited_region = previous_context.get("region_name") if understanding.get("reuse_region_from_context", True) else ""
-        return {
-            "domain": self._derive_domain(question, plan, previous_context),
-            "region_name": route.get("county") or route.get("city") or inherited_region or "",
-            "region_level": route.get("region_level") or str((previous_context.get("route") or {}).get("region_level") or ""),
-            "query_type": route.get("query_type") or previous_context.get("query_type") or "",
-            "window": route.get("window") or previous_context.get("window") or {},
-            "route": route or previous_context.get("route") or {},
-            "forecast": previous_context.get("forecast") or {},
-        }
 
     def _normalize_historical_route(
         self,
@@ -756,76 +455,14 @@ class DocAIAgent:
         understanding: dict | None = None,
         previous_context: dict | None = None,
     ) -> dict:
-        normalized = dict(route or {})
-        understanding = dict(understanding or {})
-        previous_context = dict(previous_context or {})
-        query_text = understanding.get("resolved_question") or question
-        base_route = dict(self.query_planner._build_route(query_text, str(normalized.get("query_type") or "structured_agri")))
-        domain = understanding.get("domain") or self._derive_domain(query_text, {"route": normalized}, previous_context)
-        region_name = str(understanding.get("region_name") or "")
-        region_level = str(understanding.get("region_level") or "")
-        task_type = str(understanding.get("task_type") or "")
-        explicit_window = understanding.get("window") if isinstance(understanding.get("window"), dict) else {}
-
-        if normalized.get("query_type") == "structured_agri" and domain in {"pest", "soil"}:
-            if task_type == "data_detail":
-                normalized["query_type"] = f"{domain}_detail"
-            elif task_type == "trend":
-                normalized["query_type"] = f"{domain}_trend"
-            elif task_type == "ranking":
-                normalized["query_type"] = f"{domain}_top"
-            elif region_name:
-                normalized["query_type"] = f"{domain}_overview"
-            else:
-                normalized["query_type"] = f"{domain}_top"
-
-        if not normalized.get("city") and not normalized.get("county"):
-            if region_name:
-                resolved_region_level = region_level or self._infer_region_level_from_name(region_name) or "city"
-                if resolved_region_level == "county":
-                    normalized["county"] = region_name
-                else:
-                    normalized["city"] = region_name
-                normalized["region_level"] = resolved_region_level
-            elif base_route.get("city"):
-                normalized["city"] = base_route.get("city")
-                normalized["region_level"] = base_route.get("region_level") or normalized.get("region_level") or "city"
-            elif base_route.get("county"):
-                normalized["county"] = base_route.get("county")
-                normalized["region_level"] = base_route.get("region_level") or normalized.get("region_level") or "county"
-
-        current_window = normalized.get("window") if isinstance(normalized.get("window"), dict) else {}
-        if (not current_window or current_window.get("window_type") in {"none", "all"}) and explicit_window:
-            normalized["window"] = explicit_window
-            current_window = explicit_window
-        elif not current_window and base_route.get("window"):
-            normalized["window"] = base_route.get("window")
-            current_window = normalized["window"]
-
-        if normalized.get("since") in {None, "", "1970-01-01 00:00:00"}:
-            if current_window and current_window.get("window_type") not in {"none", "all"}:
-                normalized["since"] = base_route.get("since") or normalized.get("since")
-            elif normalized.get("since") in {None, ""}:
-                normalized["since"] = base_route.get("since") or normalized.get("since")
-        if normalized.get("until") in {None, ""} and base_route.get("until"):
-            normalized["until"] = base_route.get("until")
-        if not normalized.get("region_level") and base_route.get("region_level"):
-            normalized["region_level"] = base_route.get("region_level")
-        return normalized
-
-    @staticmethod
-    def _extract_all_regions(text: str) -> list[str]:
-        normalized = RequestUnderstanding._normalize_city_mentions(text)
-        hits: list[tuple[int, str]] = []
-        for canonical in REQUEST_CITY_ALIASES.values():
-            for match in re.finditer(re.escape(canonical), normalized):
-                hits.append((match.start(), canonical))
-        hits.sort(key=lambda item: item[0])
-        regions: list[str] = []
-        for _, region in hits:
-            if region not in regions:
-                regions.append(region)
-        return regions
+        return normalize_historical_route(
+            question=question,
+            route=route,
+            understanding=understanding,
+            previous_context=previous_context,
+            build_route=self.query_planner._build_route,
+            infer_region_level_from_name=self._infer_region_level_from_name,
+        )
 
     def _detect_compare_request(
         self,
@@ -834,169 +471,7 @@ class DocAIAgent:
         plan: dict | None,
         previous_context: dict | None,
     ) -> dict | None:
-        text = str(question or "").strip()
-        if not text:
-            return None
-        understanding = dict(understanding or {})
-        plan = dict(plan or {})
-        previous_context = dict(previous_context or {})
-        compare_signal = any(token in text for token in ["对比", "比较", "相比", "哪个更突出", "哪个问题更突出"])
-        if not compare_signal:
-            return None
-
-        regions = self._extract_all_regions(text)
-        domain = understanding.get("domain") or self._derive_domain(text, plan, previous_context)
-        task_type = str(understanding.get("task_type") or "")
-        prefers_trend = task_type == "trend" or any(token in text for token in ["趋势", "走势", "走向", "变化", "波动"])
-        prefers_detail = task_type == "data_detail"
-
-        if len(regions) >= 2 and domain in {"pest", "soil"}:
-            if prefers_detail:
-                base_query_type = f"{domain}_detail"
-            elif prefers_trend:
-                base_query_type = f"{domain}_trend"
-            else:
-                base_query_type = f"{domain}_overview"
-            return {
-                "kind": "region_compare",
-                "query_type": f"{domain}_compare",
-                "base_query_type": base_query_type,
-                "domain": domain,
-                "regions": regions[:2],
-            }
-
-        cross_domain_signal = (
-            len(regions) >= 1
-            and any(token in text for token in ["虫情", "虫害"])
-            and any(token in text for token in ["墒情", "缺水", "干旱"])
-        )
-        if cross_domain_signal:
-            return {
-                "kind": "cross_domain_compare",
-                "query_type": "cross_domain_compare",
-                "base_query_type": "trend" if prefers_trend else ("detail" if prefers_detail else "overview"),
-                "region": regions[-1],
-            }
-        return None
-
-    @staticmethod
-    def _comparison_metric_key(domain: str) -> str:
-        return "severity_score" if domain == "pest" else "avg_anomaly_score"
-
-    @staticmethod
-    def _comparison_domain_label(domain: str) -> str:
-        return "虫情" if domain == "pest" else "墒情"
-
-    @staticmethod
-    def _comparison_trend(series: list[dict], key: str) -> str:
-        if len(series) < 2:
-            return "样本不足"
-        first = float(series[0].get(key) or 0)
-        last = float(series[-1].get(key) or 0)
-        if last > first * 1.15:
-            return "整体上升"
-        if last < first * 0.85:
-            return "整体下降"
-        return "整体平稳"
-
-    @staticmethod
-    def _comparison_average(series: list[dict], key: str) -> float:
-        if not series:
-            return 0.0
-        return sum(float(item.get(key) or 0) for item in series) / len(series)
-
-    @staticmethod
-    def _comparison_peak(series: list[dict], key: str) -> float:
-        if not series:
-            return 0.0
-        return max(float(item.get(key) or 0) for item in series)
-
-    @staticmethod
-    def _comparison_latest(series: list[dict], key: str) -> float:
-        if not series:
-            return 0.0
-        return float(series[-1].get(key) or 0)
-
-    @staticmethod
-    def _window_summary(window: dict | None) -> str:
-        payload = dict(window or {})
-        window_type = str(payload.get("window_type") or "")
-        window_value = payload.get("window_value")
-        if window_type == "months" and window_value:
-            return f"过去{window_value}个月"
-        if window_type == "weeks" and window_value:
-            return f"过去{window_value}周"
-        if window_type == "days" and window_value:
-            return f"过去{window_value}天"
-        return "当前时间窗"
-
-    def _comparison_summary(self, domain: str, region_name: str, series: list[dict]) -> dict:
-        key = self._comparison_metric_key(domain)
-        return {
-            "region_name": region_name,
-            "domain": domain,
-            "trend": self._comparison_trend(series, key),
-            "average": self._comparison_average(series, key),
-            "peak": self._comparison_peak(series, key),
-            "latest": self._comparison_latest(series, key),
-            "sample_days": len(series),
-        }
-
-    def _comparison_conclusion(self, left: dict, right: dict, left_label: str, right_label: str) -> str:
-        left_score = (float(left.get("average") or 0), float(left.get("peak") or 0), float(left.get("latest") or 0))
-        right_score = (float(right.get("average") or 0), float(right.get("peak") or 0), float(right.get("latest") or 0))
-        if left_score == right_score:
-            return f"综合看，{left_label}和{right_label}接近，没有明显一边更突出。"
-        winner = left_label if left_score > right_score else right_label
-        return f"综合看，{winner}更突出。"
-
-    @staticmethod
-    def _reasoning_metric_key(domain: str, series: list[dict]) -> tuple[str, str, str]:
-        if domain == "soil" or any("avg_anomaly_score" in item for item in series):
-            return "avg_anomaly_score", "异常值", "墒情"
-        return "severity_score", "严重度", "虫情"
-
-    @staticmethod
-    def _reasoning_point_date(point: dict) -> str:
-        return str(point.get("date") or point.get("bucket") or "")
-
-    @staticmethod
-    def _reasoning_format_metric(value: float) -> str:
-        if float(value).is_integer():
-            return f"{value:.0f}"
-        return f"{value:.1f}"
-
-    def _reasoning_series_summary(self, domain: str, series: list[dict]) -> dict:
-        metric_key, metric_label, domain_label = self._reasoning_metric_key(domain, series)
-        if not series:
-            return {
-                "domain_label": domain_label,
-                "metric_label": metric_label,
-                "trend": "样本不足",
-                "average": 0.0,
-                "peak_value": 0.0,
-                "peak_date": "",
-                "latest_value": 0.0,
-                "latest_date": "",
-                "active_days": 0,
-                "sample_days": 0,
-            }
-
-        peak_point = max(series, key=lambda item: float(item.get(metric_key) or 0))
-        latest_point = series[-1]
-        active_days = sum(1 for item in series if float(item.get(metric_key) or 0) > 0)
-        return {
-            "domain_label": domain_label,
-            "metric_label": metric_label,
-            "trend": self._comparison_trend(series, metric_key),
-            "average": self._comparison_average(series, metric_key),
-            "peak_value": float(peak_point.get(metric_key) or 0),
-            "peak_date": self._reasoning_point_date(peak_point),
-            "latest_value": float(latest_point.get(metric_key) or 0),
-            "latest_date": self._reasoning_point_date(latest_point),
-            "active_days": active_days,
-            "sample_days": len(series),
-        }
+        return detect_compare_request(question, understanding, plan, previous_context, self._derive_domain)
 
     def _build_data_grounded_explanation(
         self,
@@ -1006,62 +481,13 @@ class DocAIAgent:
         forecast_result: dict,
         knowledge: list[dict],
     ) -> str:
-        domain = str(plan_context.get("domain") or "")
-        region_name = str(plan_context.get("region_name") or self._first_region_name(query_result) or "当前地区")
-        series = list(query_result.get("data") or [])
-        if not series or not isinstance(series[0], dict):
-            return ""
-
-        summary = self._reasoning_series_summary(domain, series)
-        average = float(summary["average"] or 0)
-        peak_value = float(summary["peak_value"] or 0)
-        latest_value = float(summary["latest_value"] or 0)
-        trend = str(summary["trend"] or "整体平稳")
-        metric_label = str(summary["metric_label"] or "指标")
-
-        sentences = [
-            f"{region_name}{summary['domain_label']}在这个时间窗内{trend}，高值主要出现在{summary['peak_date'] or '窗口内高点'}，峰值{self._reasoning_format_metric(peak_value)}。"
-        ]
-        if latest_value <= average * 0.7 and peak_value > 0:
-            sentences.append(
-                f"最近值{self._reasoning_format_metric(latest_value)}，明显低于窗口均值{self._reasoning_format_metric(average)}，说明当前已经从前期高点回落，但前段时间确实存在一轮明显抬升。"
-            )
-        elif latest_value >= average * 1.2 and latest_value > 0:
-            sentences.append(
-                f"最近值{self._reasoning_format_metric(latest_value)}，仍高于窗口均值{self._reasoning_format_metric(average)}，说明当前压力还没有完全消退。"
-            )
-        else:
-            sentences.append(
-                f"最近值{self._reasoning_format_metric(latest_value)}，与窗口均值{self._reasoning_format_metric(average)}接近，说明当前处于高点后的回落或平稳阶段。"
-            )
-
-        if summary["active_days"] >= max(3, summary["sample_days"] // 3):
-            sentences.append(
-                f"窗口内共有{summary['active_days']}个观测日{metric_label}大于0，不是单点异常，更像是一段持续性的高值过程。"
-            )
-        else:
-            sentences.append(
-                f"窗口内只有{summary['active_days']}个观测日{metric_label}大于0，更像是局部时段冲高。"
-            )
-
-        forecast = dict(forecast_result.get("forecast") or {})
-        if forecast:
-            horizon_days = int(forecast.get("horizon_days") or 14)
-            horizon_phrase = "未来两周" if horizon_days == 14 else f"未来{horizon_days}天"
-            risk_level = str(forecast.get("risk_level") or "中")
-            confidence = float(forecast.get("confidence") or 0)
-            factor_list = [str(item) for item in list(forecast.get("top_factors") or []) if str(item)]
-            factor_text = "、".join(factor_list[:2]) if factor_list else "历史样本与最近波动"
-            sentences.append(
-                f"按{horizon_phrase}预测，风险仍为{risk_level}，置信度{confidence:.2f}；依据主要是{factor_text}，所以后续应优先复核前期高值点位，而不是只看单日波动。"
-            )
-
-        if knowledge:
-            first_title = str(knowledge[0].get("title") or "")
-            if first_title:
-                sentences.append(f"结合{first_title}的经验，这类“先冲高、后回落”或持续高值形态，通常都需要复核监测点位、阈值判断和田间处置时机。")
-
-        return "".join(sentences)
+        return build_data_grounded_explanation(
+            plan_context=plan_context,
+            query_result=query_result,
+            forecast_result=forecast_result,
+            knowledge=knowledge,
+            default_region_name=self._first_region_name(query_result),
+        )
 
     def _build_data_grounded_advice(
         self,
@@ -1070,61 +496,11 @@ class DocAIAgent:
         query_result: dict,
         forecast_result: dict,
     ) -> str:
-        domain = str(plan_context.get("domain") or "")
-        region_name = str(plan_context.get("region_name") or self._first_region_name(query_result) or "当前地区")
-        series = list(query_result.get("data") or [])
-        if not series or not isinstance(series[0], dict):
-            return ""
-
-        summary = self._reasoning_series_summary(domain, series)
-        average = float(summary["average"] or 0)
-        latest_value = float(summary["latest_value"] or 0)
-        peak_value = float(summary["peak_value"] or 0)
-        forecast = dict(forecast_result.get("forecast") or {})
-        risk_level = str(forecast.get("risk_level") or "")
-        confidence = float(forecast.get("confidence") or 0)
-        rising_pressure = latest_value >= average * 1.2 if average > 0 else latest_value > 0
-        clearly_receded = latest_value <= average * 0.7 if average > 0 else latest_value == 0
-
-        if domain == "pest":
-            if risk_level == "高" or rising_pressure:
-                return (
-                    f"{region_name}当前仍处在偏高压力区，先复核高值点位和诱捕监测，再对连续高值地块按阈值分区处置；"
-                    "本轮不要全域铺开，优先盯住峰值附近区域，处置后 24-48 小时复查虫口变化。"
-                )
-            if confidence and confidence < 0.5:
-                return (
-                    f"{region_name}当前预测把握度一般，建议先保留高频监测和点位复核，"
-                    "不要仅凭一次预测结果直接扩大处置范围，先看 2-3 天连续数据再决定是否升级动作。"
-                )
-            if clearly_receded:
-                return (
-                    f"{region_name}当前已经较峰值阶段明显回落，建议先以复核高值点位和维持监测为主，"
-                    "暂不直接扩大处置范围；如果后续连续几天再抬升，再升级到分区防控。"
-                )
-            return (
-                f"{region_name}当前处于中间压力阶段，建议先复核高值点位，再对持续偏高地块做分区处置，"
-                "同时保留连续监测，避免因为短时回落就过早撤掉巡查。"
-            )
-
-        if risk_level == "高" or rising_pressure:
-            return (
-                f"{region_name}当前异常压力偏高，建议先分区复核低墒/高墒地块，再优先处理持续异常区域；"
-                "低墒先补灌，高墒先排水，处置后继续看 3-5 天监测是否回落。"
-            )
-        if confidence and confidence < 0.5:
-            return (
-                f"{region_name}当前预测把握度一般，建议先维持分区抽样复核，不要一次性放大灌排动作；"
-                "先确认低墒或高墒是否持续，再决定是否升级到集中处置。"
-            )
-        if clearly_receded:
-            return (
-                f"{region_name}当前已经较前期高点回落，建议先维持监测和抽样复核，不要一次性加大灌排动作；"
-                "重点盯住此前异常最集中的地块，看是否再次抬头。"
-            )
-        return (
-            f"{region_name}当前仍有一定异常压力，建议先复核异常分布，再按地块类型做补灌或排水，"
-            "并持续复查，避免处置动作和实时墒情脱节。"
+        return build_data_grounded_advice(
+            plan_context=plan_context,
+            query_result=query_result,
+            forecast_result=forecast_result,
+            default_region_name=self._first_region_name(query_result),
         )
 
     def _answer_compare_request(
@@ -1144,147 +520,27 @@ class DocAIAgent:
             understanding,
             previous_context,
         )
-        if compare_request["kind"] == "region_compare":
-            domain = str(compare_request["domain"])
-            domain_label = self._comparison_domain_label(domain)
-            regions = list(compare_request["regions"])
-            base_query_type = str(compare_request["base_query_type"])
-            summaries: list[dict] = []
-            subqueries: list[dict] = []
-            for region in regions:
-                route = dict(route_seed)
-                route.update(
-                    {
-                        "query_type": base_query_type,
-                        "city": region,
-                        "county": None,
-                        "region_level": "city",
-                    }
-                )
-                result = self.query_engine.answer(question, plan=route)
-                summaries.append(self._comparison_summary(domain, region, list(result.data or [])))
-                subqueries.append(
-                    {
-                        "region_name": region,
-                        "query_type": base_query_type,
-                        "since": route.get("since"),
-                        "until": route.get("until"),
-                    }
-                )
-            title = "变化对比" if base_query_type.endswith("_trend") else "对比结果"
-            left, right = summaries[0], summaries[1]
-            answer = "\n".join(
-                [
-                    f"{self._window_summary(route_seed.get('window'))}{domain_label}{title}：",
-                    f"- {left['region_name']}：趋势{left['trend']}，均值{left['average']:.1f}，峰值{left['peak']:.1f}，最近值{left['latest']:.1f}",
-                    f"- {right['region_name']}：趋势{right['trend']}，均值{right['average']:.1f}，峰值{right['peak']:.1f}，最近值{right['latest']:.1f}",
-                    self._comparison_conclusion(left, right, left["region_name"], right["region_name"]),
-                ]
-            )
-            evidence = {
-                "query_type": compare_request["query_type"],
-                "sql": base_query_type,
-                "compare_kind": "region_compare",
-                "subqueries": subqueries,
-                "comparisons": summaries,
-                "analysis_context": {
-                    "domain": domain,
-                    "region_name": "",
-                    "region_level": "city",
-                    "query_type": compare_request["query_type"],
-                    "window": route_seed.get("window") or {},
-                },
-            }
-            return {
-                "mode": "data_query",
-                "answer": answer,
-                "data": summaries,
-                "evidence": evidence,
-            }
-
-        region = str(compare_request["region"])
-        base_mode = str(compare_request["base_query_type"])
-        pest_query_type = f"pest_{base_mode}" if base_mode in {"detail", "trend", "overview"} else "pest_overview"
-        soil_query_type = f"soil_{base_mode}" if base_mode in {"detail", "trend", "overview"} else "soil_overview"
-        pest_route = dict(route_seed)
-        pest_route.update({"query_type": pest_query_type, "city": region, "county": None, "region_level": "city"})
-        soil_route = dict(route_seed)
-        soil_route.update({"query_type": soil_query_type, "city": region, "county": None, "region_level": "city"})
-        pest_result = self.query_engine.answer(question, plan=pest_route)
-        soil_result = self.query_engine.answer(question, plan=soil_route)
-        pest_summary = self._comparison_summary("pest", region, list(pest_result.data or []))
-        soil_summary = self._comparison_summary("soil", region, list(soil_result.data or []))
-        answer = "\n".join(
-            [
-                f"{region}{self._window_summary(route_seed.get('window'))}问题对比：",
-                f"- 虫情：趋势{pest_summary['trend']}，均值{pest_summary['average']:.1f}，峰值{pest_summary['peak']:.1f}，最近值{pest_summary['latest']:.1f}",
-                f"- 墒情：趋势{soil_summary['trend']}，均值{soil_summary['average']:.1f}，峰值{soil_summary['peak']:.1f}，最近值{soil_summary['latest']:.1f}",
-                self._comparison_conclusion(pest_summary, soil_summary, "虫情", "墒情"),
-            ]
+        return execute_compare_request(
+            question=question,
+            compare_request=compare_request,
+            route_seed=route_seed,
+            query_engine=self.query_engine,
+            infer_region_level_from_name=self._infer_region_level_from_name,
         )
-        evidence = {
-            "query_type": compare_request["query_type"],
-            "sql": "cross_domain_compare",
-            "compare_kind": "cross_domain_compare",
-            "subqueries": [
-                {"domain": "pest", "query_type": pest_query_type, "region_name": region, "since": pest_route.get("since"), "until": pest_route.get("until")},
-                {"domain": "soil", "query_type": soil_query_type, "region_name": region, "since": soil_route.get("since"), "until": soil_route.get("until")},
-            ],
-            "comparisons": [pest_summary, soil_summary],
-            "analysis_context": {
-                "domain": "mixed",
-                "region_name": region,
-                "region_level": self._infer_region_level_from_name(region) or "city",
-                "query_type": compare_request["query_type"],
-                "window": route_seed.get("window") or {},
-            },
-        }
-        return {
-            "mode": "data_query",
-            "answer": answer,
-            "data": [pest_summary, soil_summary],
-            "evidence": evidence,
-        }
 
     def _advice_node(self, state: AgentState) -> dict:
-        plan = state.get("plan") or {}
-        runtime_context = self._build_runtime_context(
-            (state.get("understanding") or {}).get("normalized_question") or state.get("question", ""),
-            plan,
-            previous_context=state.get("memory_context"),
-            understanding=state.get("understanding"),
+        return build_advice_response(
+            question=state.get("question", ""),
+            plan=state.get("plan") or {},
+            understanding=state.get("understanding") or {},
+            memory_context=state.get("memory_context"),
+            build_runtime_context=self._build_runtime_context,
+            advice_engine=self.advice_engine,
+            execution_plan=self._execution_plan(state),
         )
-        result = self.advice_engine.answer(state.get("question", ""), context=runtime_context)
-        evidence = {
-            "sources": result.sources,
-            "generation_mode": result.generation_mode,
-            "analysis_context": runtime_context,
-            "execution_plan": self._execution_plan(state),
-        }
-        if result.model:
-            evidence["model"] = result.model
-        return {
-            "response": {
-                "mode": "advice",
-                "answer": result.answer,
-                "data": [],
-                "evidence": evidence,
-            }
-        }
 
     def _clarify_node(self, state: AgentState) -> dict:
-        plan = state.get("plan") or {}
-        return {
-            "response": {
-                "mode": "advice",
-                "answer": plan.get("clarification"),
-                "data": [],
-                "evidence": {
-                    "generation_mode": "clarification",
-                    "confidence": plan.get("confidence", 0.0),
-                },
-            }
-        }
+        return build_clarification_response(state.get("plan") or {})
 
     def _synthesize_node(self, state: AgentState) -> dict:
         understanding = dict(state.get("understanding") or {})
@@ -1319,278 +575,62 @@ class DocAIAgent:
                 }
             }
 
-        plan_context = self._build_runtime_context(
-            understanding.get("normalized_question") or state.get("question", ""),
-            plan,
-            previous_context=state.get("memory_context"),
+        plan_context = build_plan_context(
+            question=state.get("question", ""),
             understanding=understanding,
+            plan=plan,
+            memory_context=state.get("memory_context"),
+            query_result=query_result,
+            forecast_result=forecast_result,
+            build_runtime_context=self._build_runtime_context,
         )
-        if forecast_result.get("analysis_context", {}).get("region_name"):
-            plan_context["region_name"] = forecast_result["analysis_context"]["region_name"]
-        elif not plan_context.get("region_name") and self._first_region_name(query_result):
-            plan_context["region_name"] = self._first_region_name(query_result)
-        if forecast_result.get("forecast"):
-            plan_context["forecast"] = forecast_result["forecast"]
-
-        explanation_text = ""
-        explanation_sources = []
-        if understanding.get("needs_explanation"):
-            explanation_text = self._build_data_grounded_explanation(
-                plan_context=plan_context,
-                query_result=query_result,
-                forecast_result=forecast_result,
-                knowledge=knowledge,
-            )
-            if not explanation_text:
-                explanation_result = self.advice_engine.answer("为什么", context=plan_context)
-                explanation_text = explanation_result.answer
-                explanation_sources = explanation_result.sources
-            else:
-                explanation_sources = knowledge
-
-        advice_text = ""
-        advice_sources = []
-        if understanding.get("needs_advice"):
-            advice_text = self._build_data_grounded_advice(
-                plan_context=plan_context,
-                query_result=query_result,
-                forecast_result=forecast_result,
-            )
-            if not advice_text:
-                advice_result = self.advice_engine.answer("给建议", context=plan_context)
-                advice_text = advice_result.answer
-                advice_sources = advice_result.sources
-            else:
-                advice_sources = knowledge
-
-        sections: list[str] = []
-        if query_result.get("answer"):
-            sections.append(self._format_answer_section("结论", query_result["answer"]))
-        if explanation_text:
-            if explanation_text.startswith("原因：") or explanation_text.startswith("依据："):
-                sections.append(explanation_text)
-            else:
-                sections.append(self._format_answer_section("原因", explanation_text))
-        if forecast_result.get("answer"):
-            sections.append(self._format_answer_section("预测", forecast_result["answer"]))
-        if knowledge:
-            titles = "；".join(str(item.get("title") or "") for item in knowledge[:2] if item.get("title"))
-            if titles:
-                sections.append(self._format_answer_section("依据", f"参考 {titles}"))
-        if advice_text:
-            sections.append(self._format_answer_section("建议", advice_text))
-        answer = "\n".join(sections) if sections else (query_result.get("answer") or advice_text or "当前暂无可综合输出的结果。")
-
-        evidence = {
-            "execution_plan": self._execution_plan(state),
-            "request_understanding": understanding,
-            "analysis_context": plan_context,
-            "historical_query": query_result.get("evidence") or {},
-            "forecast": forecast_result.get("forecast") or {},
-            "knowledge": knowledge,
-            "knowledge_sources": advice_sources or explanation_sources or knowledge,
-            "generation_mode": "analysis_synthesis",
-        }
-        if plan.get("context_trace"):
-            evidence["context_trace"] = list(plan.get("context_trace") or [])
-
-        combined_data = {
-            "historical": query_result.get("data"),
-            "forecast": forecast_result.get("data"),
-        }
-        return {
-            "response": {
-                "mode": "analysis",
-                "answer": answer,
-                "data": combined_data,
-                "evidence": evidence,
-            }
-        }
+        explanation_text, explanation_sources = build_explanation_payload(
+            understanding=understanding,
+            plan_context=plan_context,
+            query_result=query_result,
+            forecast_result=forecast_result,
+            knowledge=knowledge,
+            build_data_grounded_explanation=self._build_data_grounded_explanation,
+            advice_engine=self.advice_engine,
+        )
+        advice_text, advice_sources = build_advice_payload(
+            understanding=understanding,
+            plan_context=plan_context,
+            query_result=query_result,
+            forecast_result=forecast_result,
+            knowledge=knowledge,
+            build_data_grounded_advice=self._build_data_grounded_advice,
+            advice_engine=self.advice_engine,
+        )
+        return synthesize_analysis_response(
+            execution_plan=self._execution_plan(state),
+            understanding=understanding,
+            plan=plan,
+            plan_context=plan_context,
+            query_result=query_result,
+            forecast_result=forecast_result,
+            knowledge=knowledge,
+            explanation_text=explanation_text,
+            explanation_sources=explanation_sources,
+            advice_text=advice_text,
+            advice_sources=advice_sources,
+        )
 
     @staticmethod
     def _first_region_name(response: dict) -> str:
-        data = response.get("data")
-        if isinstance(data, list) and data:
-            first = data[0]
-            if isinstance(first, dict):
-                return str(
-                    first.get("region_name")
-                    or first.get("county_name")
-                    or first.get("city_name")
-                    or first.get("name")
-                    or ""
-                )
-        return ""
-
-    @staticmethod
-    def _memory_time_range_value(window: dict | None) -> dict:
-        normalized_window = dict(window or {})
-        window_type = str(normalized_window.get("window_type") or "")
-        window_value = normalized_window.get("window_value")
-        if window_type in {"months", "weeks", "days"} and window_value not in {None, ""}:
-            return {"mode": "relative", "value": f"{window_value}_{window_type}"}
-        return {"mode": "none", "value": None}
-
-    @staticmethod
-    def _memory_slot_priority(source: str) -> int:
-        if source == "explicit":
-            return 100
-        if source == "carried":
-            return 90
-        if source == "system":
-            return 80
-        if source == "inferred":
-            return 60
-        if source == "legacy":
-            return 50
-        return 0
-
-    @staticmethod
-    def _memory_slot_ttl(source: str) -> int:
-        if source in {"explicit", "carried"}:
-            return 4
-        if source == "system":
-            return 2
-        if source in {"inferred", "legacy"}:
-            return 2
-        return 0
-
-    def _build_memory_slot(
-        self,
-        *,
-        value,
-        source: str,
-        turn_count: int,
-        previous_slot: dict | None = None,
-        preserve_previous: bool = False,
-    ) -> dict:
-        if preserve_previous and previous_slot:
-            return dict(previous_slot)
-
-        if previous_slot and previous_slot.get("value") == value and previous_slot.get("source") == source:
-            updated_at_turn = int(previous_slot.get("updated_at_turn") or turn_count)
-        else:
-            updated_at_turn = turn_count
-        return {
-            "value": value,
-            "source": source,
-            "priority": self._memory_slot_priority(source),
-            "ttl": self._memory_slot_ttl(source),
-            "updated_at_turn": updated_at_turn,
-        }
+        return first_region_name(response)
 
     def _build_memory_snapshot(self, state: AgentState) -> dict:
-        question = state.get("question", "")
-        plan = state.get("plan") or {}
-        response = state.get("response") or {}
-        previous_context = dict(state.get("memory_context") or {})
-        preserve_thread_scope = str(plan.get("reason") or "") in {"greeting_intro", "identity_self_intro"}
-        route = self._plan_route(plan) or dict(previous_context.get("route") or {})
-        evidence = dict(response.get("evidence") or {})
-        analysis_context = dict(evidence.get("analysis_context") or {})
-        forecast = dict(evidence.get("forecast") or previous_context.get("forecast") or {})
-        understanding = dict(state.get("understanding") or {})
-        previous_slots = dict(previous_context.get("slots") or {})
-        turn_count = int(previous_context.get("turn_count") or 0) + 1
-
-        if preserve_thread_scope and previous_context:
-            route = dict(previous_context.get("route") or route)
-            forecast = dict(previous_context.get("forecast") or forecast)
-
-        domain = (
-            analysis_context.get("domain")
-            or (previous_context.get("domain") if preserve_thread_scope else "")
-            or self._derive_domain(question, plan, previous_context)
+        return build_memory_snapshot(
+            question=state.get("question", ""),
+            plan=state.get("plan") or {},
+            response=state.get("response") or {},
+            previous_context=state.get("memory_context"),
+            understanding=state.get("understanding"),
+            plan_route=self._plan_route,
+            first_region_name=self._first_region_name,
+            derive_domain=lambda question, route, previous_context: derive_domain(question, route, previous_context),
         )
-        inherited_region = previous_context.get("region_name") if understanding.get("reuse_region_from_context", True) else ""
-        region_name = (
-            analysis_context.get("region_name")
-            or (previous_context.get("region_name") if preserve_thread_scope else "")
-            or route.get("county")
-            or route.get("city")
-            or self._first_region_name(response)
-            or inherited_region
-            or ""
-        )
-        window = route.get("window") or previous_context.get("window") or {}
-        query_plan = dict(plan.get("query_plan") or {})
-        query_plan_intent = str(query_plan.get("intent") or plan.get("intent") or "")
-
-        domain_source = "explicit" if understanding.get("domain") else ("carried" if preserve_thread_scope and previous_slots.get("domain") else ("inferred" if domain else "empty"))
-        region_source = (
-            "explicit"
-            if understanding.get("region_name") or route.get("county") or route.get("city")
-            else ("carried" if preserve_thread_scope and previous_slots.get("region") else ("inferred" if region_name else "empty"))
-        )
-        explicit_window = dict(understanding.get("window") or {})
-        window_source = (
-            "explicit"
-            if str(explicit_window.get("window_type") or "") in {"months", "weeks", "days"} and explicit_window.get("window_value") not in {None, ""}
-            else ("carried" if preserve_thread_scope and previous_slots.get("time_range") else ("inferred" if window else "empty"))
-        )
-        intent_source = "system" if query_plan_intent else "empty"
-
-        slots = {
-            "domain": self._build_memory_slot(
-                value=domain,
-                source=domain_source,
-                turn_count=turn_count,
-                previous_slot=previous_slots.get("domain"),
-                preserve_previous=preserve_thread_scope,
-            ),
-            "region": self._build_memory_slot(
-                value=region_name,
-                source=region_source,
-                turn_count=turn_count,
-                previous_slot=previous_slots.get("region"),
-                preserve_previous=preserve_thread_scope,
-            ),
-            "time_range": self._build_memory_slot(
-                value=self._memory_time_range_value(window),
-                source=window_source,
-                turn_count=turn_count,
-                previous_slot=previous_slots.get("time_range"),
-                preserve_previous=preserve_thread_scope,
-            ),
-            "intent": self._build_memory_slot(
-                value=query_plan_intent,
-                source=intent_source,
-                turn_count=turn_count,
-                previous_slot=previous_slots.get("intent"),
-            ),
-        }
-
-        pending_user_question = None
-        pending_clarification = None
-        if plan.get("reason") == "agri_domain_ambiguous":
-            pending_user_question = question
-            pending_clarification = "agri_domain"
-        elif plan.get("reason") in {"generic_ambiguous", "ambiguous", "low_signal"}:
-            pending_user_question = question
-            pending_clarification = "generic_intent"
-
-        return {
-            "memory_version": 2,
-            "turn_count": turn_count,
-            "domain": domain,
-            "region_name": region_name,
-            "query_type": analysis_context.get("query_type") or route.get("query_type") or previous_context.get("query_type") or "",
-            "window": window,
-            "route": route,
-            "forecast": forecast,
-            "last_question": question,
-            "last_answer": response.get("answer", ""),
-            "last_verified_answer": response.get("answer", "") if response.get("mode") != "advice" or not plan.get("needs_clarification") else "",
-            "pending_user_question": pending_user_question,
-            "pending_clarification": pending_clarification,
-            "user_preferences": dict(previous_context.get("user_preferences") or {}),
-            "conversation_state": {
-                "last_intent": str(plan.get("intent") or ""),
-                "last_answer_mode": str(response.get("mode") or ""),
-                "last_clarification_reason": str(plan.get("reason") or "") if plan.get("needs_clarification") else "",
-            },
-            "slots": slots,
-        }
 
     def _persist_node(self, state: AgentState) -> dict:
         thread_id = str(state.get("thread_id") or "default")
@@ -1613,15 +653,15 @@ class DocAIAgent:
                 "query_type": snapshot.get("query_type"),
             },
         )
-        if query_result.get("evidence"):
-            evidence.setdefault("historical_query", dict(query_result.get("evidence") or {}))
-        if plan.get("task_graph"):
-            evidence.setdefault("task_graph", dict(plan.get("task_graph") or {}))
-        evidence.setdefault("memory_state", snapshot)
-        if understanding:
-            evidence.setdefault("request_understanding", understanding)
-        if plan.get("context_trace"):
-            evidence["context_trace"] = list(plan.get("context_trace") or [])
+        evidence = FinalResponseEvidence(
+            base_evidence=evidence,
+            historical_query=dict(query_result.get("evidence") or {}) or None,
+            task_graph=dict(plan.get("task_graph") or {}) or None,
+            memory_state=snapshot,
+            request_understanding=understanding or None,
+            context_trace=list(plan.get("context_trace") or []),
+            response_meta={},
+        ).to_dict()
         evidence["response_meta"] = self._build_response_meta(state, response, evidence)
         response["evidence"] = evidence
         return {"memory_context": snapshot, "response": response}
