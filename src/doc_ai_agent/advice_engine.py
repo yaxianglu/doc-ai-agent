@@ -161,6 +161,31 @@ class AdviceEngine:
                 generation_mode="rule",
                 model="",
             )
+        if is_explanation_question and "未知区域" in q:
+            return AdviceResult(
+                answer=(
+                    "原因：出现“未知区域”通常不是单一业务异常，更像是原始记录缺少标准地区信息，"
+                    "或者设备点位、行政区映射链路没有命中。\n"
+                    "依据：当 region_code、县区字段或设备台账映射失败时，系统只能把记录归到“未知区域”。\n"
+                    "待核查：原始 region_code / county 字段、设备安装点台账、行政区映射表是否完整且为最新版本。"
+                ),
+                sources=sources or ["区域映射解释规则库（Phase 2）"],
+                generation_mode="rule",
+                model="",
+            )
+        if is_explanation_question and any(token in q for token in ["这次异常", "从数据看"]):
+            return AdviceResult(
+                answer=(
+                    "原因：这次异常更可能由近期监测值连续偏离阈值、局部点位集中抬升，"
+                    "以及现场处置或灌排调整不及时共同造成。\n"
+                    "依据：判断这类异常通常要看最近值、峰值、持续天数和异常点位是否集中，"
+                    "这些信号一起出现时，往往说明不是单点噪声。\n"
+                    "待核查：具体地区、时间窗口、原始监测点位、异常阈值口径，以及是否存在设备漂移或映射误差。"
+                ),
+                sources=sources or ["通用异常解释规则库（Phase 2）"],
+                generation_mode="rule",
+                model="",
+            )
         if "台风" in q and "小麦" in q:
             return AdviceResult(
                 answer=self._format_advice_answer(

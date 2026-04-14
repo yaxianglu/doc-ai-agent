@@ -102,6 +102,12 @@ class QueryPlanner:
         "下午好",
         "晚上好",
     }
+    AGRI_SIGNAL_PATTERN = re.compile(r"(虫情|虫害|墒情|预警|报警|农情|作物|农田|田块|小麦|水稻|玉米|病害|灌排|补灌|排水)")
+    WEATHER_SIGNAL_PATTERN = re.compile(r"(天气|下雨|降雨|气温|温度|天气预报)")
+    NEWS_SIGNAL_PATTERN = re.compile(r"新闻")
+    TICKET_SIGNAL_PATTERN = re.compile(r"(高铁票|火车票|车票|订票)")
+    TYPHOON_SIGNAL_PATTERN = re.compile(r"台风")
+    GENERIC_EXPLANATION_PATTERN = re.compile(r"(从数据看|这次异常|未知区域|为什么会这样|为何会这样)")
 
     def __init__(self, intent_router=None, playbook_router=None):
         """注入可选的意图路由器与 playbook 路由器。"""
@@ -196,6 +202,32 @@ class QueryPlanner:
 
     def _is_low_signal(self, question: str) -> bool:
         return is_low_signal(question, is_greeting_question=self._is_greeting_question)
+
+    @classmethod
+    def _out_of_scope_capability_reply(cls, question: str) -> str | None:
+        """识别明显超出当前农业能力边界的问题，并返回统一澄清文案。"""
+        normalized = str(question or "").strip()
+        if not normalized or cls.AGRI_SIGNAL_PATTERN.search(normalized):
+            return None
+        if cls.WEATHER_SIGNAL_PATTERN.search(normalized):
+            return "我目前主要支持农业虫情、墒情、预警数据分析，暂不直接提供天气查询。你如果要看农情，我可以继续帮你查某个地区、时间范围内的虫情或墒情情况。"
+        if cls.NEWS_SIGNAL_PATTERN.search(normalized):
+            return "我目前主要支持农业虫情、墒情、预警数据分析，暂不直接提供通用新闻检索。你如果要看农情，我可以继续帮你查相关地区的历史、趋势、预测或处置建议。"
+        if cls.TICKET_SIGNAL_PATTERN.search(normalized):
+            return "我目前主要支持农业虫情、墒情、预警数据分析，暂不直接提供购票或车次查询。你如果要看农情，我可以继续帮你查相关地区的监测数据和建议。"
+        if cls.TYPHOON_SIGNAL_PATTERN.search(normalized):
+            return "我目前主要支持农业虫情、墒情、预警数据分析，暂不直接提供通用台风动态查询。你如果想评估台风对农业的影响，可以直接告诉我地区、作物或风险场景。"
+        return None
+
+    @classmethod
+    def _is_generic_explanation_question(cls, question: str) -> bool:
+        """识别可直接进入原因解释的泛解释问法。"""
+        normalized = str(question or "").strip()
+        if len(normalized) < 8:
+            return False
+        if not needs_explanation(normalized):
+            return False
+        return bool(cls.GENERIC_EXPLANATION_PATTERN.search(normalized))
 
     def _needs_agri_domain_clarification(self, question: str) -> bool:
         return needs_agri_domain_clarification(question, build_route=self._build_route)
@@ -426,6 +458,26 @@ class QueryPlanner:
                 "needs_clarification": False,
                 "clarification": None,
                 "reason": "identity_self_intro",
+                "context_trace": [],
+            }, question, context=context, understanding=understanding)
+        if out_of_scope_reply := self._out_of_scope_capability_reply(question):
+            return self._finalize_plan({
+                "intent": "advice",
+                "confidence": 0.92,
+                "route": self._build_route(question, "count"),
+                "needs_clarification": True,
+                "clarification": out_of_scope_reply,
+                "reason": "out_of_scope_capability",
+                "context_trace": [],
+            }, question, context=context, understanding=understanding)
+        if self._is_generic_explanation_question(question):
+            return self._finalize_plan({
+                "intent": "advice",
+                "confidence": 0.78,
+                "route": self._build_route(question, "count"),
+                "needs_clarification": False,
+                "clarification": None,
+                "reason": "generic_explanation",
                 "context_trace": [],
             }, question, context=context, understanding=understanding)
         if self._is_low_signal(question):
