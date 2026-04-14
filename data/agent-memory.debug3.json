@@ -1,0 +1,146 @@
+{
+  "reason-thread": {
+    "memory_version": 2,
+    "turn_count": 2,
+    "domain": "pest",
+    "region_name": "",
+    "query_type": "pest_overview",
+    "window": {
+      "window_type": "all",
+      "window_value": null
+    },
+    "route": {
+      "query_type": "pest_overview",
+      "since": "1970-01-01 00:00:00",
+      "until": null,
+      "city": null,
+      "county": null,
+      "device_code": null,
+      "region_level": "city",
+      "window": {
+        "window_type": "all",
+        "window_value": null
+      },
+      "top_n": null,
+      "forecast_window": null,
+      "forecast_mode": ""
+    },
+    "forecast": {},
+    "last_question": "为什么这个县的墒情异常最多？",
+    "last_answer": "请补充具体对象，比如县名、区名或设备编码，我再继续分析。",
+    "last_verified_answer": "请补充具体对象，比如县名、区名或设备编码，我再继续分析。",
+    "pending_user_question": null,
+    "pending_clarification": null,
+    "user_preferences": {},
+    "conversation_state": {
+      "last_intent": "advice",
+      "last_answer_mode": "advice",
+      "last_clarification_reason": "context_placeholder_county_clarification"
+    },
+    "slots": {
+      "domain": {
+        "value": "pest",
+        "source": "explicit",
+        "priority": 100,
+        "ttl": 4,
+        "updated_at_turn": 1
+      },
+      "region": {
+        "value": "",
+        "source": "empty",
+        "priority": 0,
+        "ttl": 0,
+        "updated_at_turn": 1
+      },
+      "time_range": {
+        "value": {
+          "mode": "none",
+          "value": null
+        },
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 1
+      },
+      "intent": {
+        "value": "clarification",
+        "source": "system",
+        "priority": 80,
+        "ttl": 2,
+        "updated_at_turn": 2
+      }
+    }
+  },
+  "advice-thread": {
+    "memory_version": 2,
+    "turn_count": 1,
+    "domain": "pest",
+    "region_name": "新北区",
+    "query_type": "pest_top",
+    "window": {
+      "window_type": "all",
+      "window_value": null
+    },
+    "route": {
+      "query_type": "pest_top",
+      "since": "1970-01-01 00:00:00",
+      "until": null,
+      "city": null,
+      "county": null,
+      "device_code": null,
+      "region_level": "county",
+      "window": {
+        "window_type": "all",
+        "window_value": null
+      },
+      "top_n": 1,
+      "forecast_window": null,
+      "forecast_mode": ""
+    },
+    "forecast": {},
+    "last_question": "对当前虫情最严重的县有什么建议？",
+    "last_answer": "结论：当前判断，历史上，虫情严重度最高的Top1区县为：1.新北区（严重度576476.0，记录881条）。\n\n依据：参考 虫情监测与绿色防控技术；台风后小麦田间管理技术意见\n\n建议：建议优先新北区当前在排行中最突出，严重度576476、记录881条，建议先围绕该县复核高值点位和监测设备，再对连续异常地块做分区处置。",
+    "last_verified_answer": "结论：当前判断，历史上，虫情严重度最高的Top1区县为：1.新北区（严重度576476.0，记录881条）。\n\n依据：参考 虫情监测与绿色防控技术；台风后小麦田间管理技术意见\n\n建议：建议优先新北区当前在排行中最突出，严重度576476、记录881条，建议先围绕该县复核高值点位和监测设备，再对连续异常地块做分区处置。",
+    "pending_user_question": null,
+    "pending_clarification": null,
+    "user_preferences": {},
+    "conversation_state": {
+      "last_intent": "data_query",
+      "last_answer_mode": "analysis",
+      "last_clarification_reason": ""
+    },
+    "slots": {
+      "domain": {
+        "value": "pest",
+        "source": "explicit",
+        "priority": 100,
+        "ttl": 4,
+        "updated_at_turn": 1
+      },
+      "region": {
+        "value": "新北区",
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 1
+      },
+      "time_range": {
+        "value": {
+          "mode": "none",
+          "value": null
+        },
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 1
+      },
+      "intent": {
+        "value": "analysis",
+        "source": "system",
+        "priority": 80,
+        "ttl": 2,
+        "updated_at_turn": 1
+      }
+    }
+  }
+}
