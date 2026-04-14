@@ -59,6 +59,8 @@ from .query_intent_routing import (
     score_advice,
     score_data,
 )
+from .semantic_parse import SemanticParseResult
+from .semantic_parser import SemanticParser
 
 
 class QueryPlanner:
@@ -92,11 +94,29 @@ class QueryPlanner:
     PLAYBOOK_UPGRADEABLE_QUERY_TYPES = {"count", "top", "structured_agri"}
     GREETING_PATTERNS = SemanticJudger.GREETING_PATTERNS
 
-    def __init__(self, intent_router=None, playbook_router=None, semantic_judger: SemanticJudger | None = None):
+    def __init__(
+        self,
+        intent_router=None,
+        playbook_router=None,
+        semantic_judger: SemanticJudger | None = None,
+        semantic_parser: SemanticParser | None = None,
+    ):
         """注入可选的意图路由器与 playbook 路由器。"""
         self.intent_router = intent_router
         self.playbook_router = playbook_router
         self.semantic_judger = semantic_judger or SemanticJudger()
+        self.semantic_parser = semantic_parser or SemanticParser()
+
+    def _parse_semantics(self, question: str, context: dict | None = None) -> SemanticParseResult:
+        try:
+            raw = self.semantic_parser.parse(question, context=context)
+        except Exception:
+            return SemanticParseResult(normalized_query=str(question or "").strip())
+        if isinstance(raw, SemanticParseResult):
+            return raw
+        if isinstance(raw, dict):
+            return SemanticParseResult.from_dict(raw)
+        return SemanticParseResult(normalized_query=str(question or "").strip())
 
     @staticmethod
     def _is_agri_query_type(query_type: str) -> bool:
@@ -397,7 +417,25 @@ class QueryPlanner:
         """
         original_question = question
         question = self._resolve_follow_up_question(question, history, context=context)
+        parse_result = self._parse_semantics(question, context=context)
+        if parse_result.normalized_query:
+            question = parse_result.normalized_query
         semantic_decision = self.semantic_judger.judge(question)
+        if parse_result.is_out_of_scope:
+            clarification = (
+                semantic_decision.get("clarification")
+                or self._out_of_scope_capability_reply(question)
+                or "我目前主要支持农业虫情、墒情、预警数据分析。你可以告诉我地区和时间范围，我帮你查询虫情或墒情。"
+            )
+            return self._finalize_plan({
+                "intent": str(parse_result.intent or semantic_decision.get("intent") or "advice"),
+                "confidence": max(float(semantic_decision.get("confidence") or 0.0), 0.92),
+                "route": self._build_route(question, "count"),
+                "needs_clarification": True,
+                "clarification": clarification,
+                "reason": str(parse_result.fallback_reason or semantic_decision.get("reason") or "out_of_scope_capability"),
+                "context_trace": list(parse_result.trace or []),
+            }, question, context=context, understanding=understanding)
         if semantic_decision.get("reason") == "greeting_intro":
             return self._finalize_plan({
                 "intent": str(semantic_decision.get("intent") or "advice"),

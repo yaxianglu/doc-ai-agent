@@ -64,6 +64,7 @@ class DocAIAgent:
         source_provider=None,
         query_playbook_router=None,
         understanding_backend=None,
+        semantic_parser=None,
         memory_store_path: str = "./data/agent-memory.json",
         letta_base_url: str = "",
         letta_api_key: str = "",
@@ -85,7 +86,11 @@ class DocAIAgent:
         if llm_client and router_model:
             self.intent_router = IntentRouter(llm_client, router_model)
         self.query_playbook_router = query_playbook_router or create_query_playbook_router()
-        self.query_planner = QueryPlanner(self.intent_router, self.query_playbook_router)
+        self.query_planner = QueryPlanner(
+            self.intent_router,
+            self.query_playbook_router,
+            semantic_parser=semantic_parser,
+        )
         self.request_understanding = RequestUnderstanding(backend=understanding_backend)
         self.memory_store = self._build_memory_store(
             memory_store_path=memory_store_path,

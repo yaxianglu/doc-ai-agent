@@ -344,6 +344,43 @@ class AggressiveRouterLLM(FakeLLMClient):
 
 
 class AgentTests(unittest.TestCase):
+    def test_agent_planner_consumes_semantic_parse_result_for_ood(self):
+        class NeutralSemanticJudger:
+            def judge(self, _question: str):
+                return {
+                    "reason": "",
+                    "intent": "advice",
+                    "confidence": 0.0,
+                    "needs_clarification": False,
+                    "clarification": None,
+                }
+
+        class ForcedOutOfScopeSemanticParser:
+            def parse(self, question: str, context: dict | None = None):
+                del context
+                from doc_ai_agent.semantic_parse import SemanticParseResult
+
+                return SemanticParseResult(
+                    normalized_query=str(question or "").strip(),
+                    intent="advice",
+                    is_out_of_scope=True,
+                    fallback_reason="out_of_scope_capability",
+                    trace=["normalize", "ood"],
+                )
+
+        agent = DocAIAgent(
+            AlertRepository(self.db),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            semantic_parser=ForcedOutOfScopeSemanticParser(),
+        )
+        agent.query_planner.semantic_judger = NeutralSemanticJudger()
+
+        result = agent.answer("过去5个月虫情最严重的地方是哪里", thread_id="thread-semantic-ood")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], "out_of_scope_capability")
+        self.assertIn("虫情", result["answer"])
+
     def test_identity_question_returns_capability_intro(self):
         agent = DocAIAgent(
             AlertRepository(self.db),
