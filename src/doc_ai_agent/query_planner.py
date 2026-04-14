@@ -215,6 +215,31 @@ class QueryPlanner:
     def _is_generic_explanation_question(cls, question: str) -> bool:
         return SemanticJudger.is_generic_explanation_question(question)
 
+    @staticmethod
+    def _is_out_of_scope_reason(reason: str) -> bool:
+        return SemanticJudger.is_out_of_scope_reason(reason)
+
+    @classmethod
+    def _semantic_context_trace(cls, reason: str, parse_trace: list[str] | None = None) -> list[str]:
+        trace = list(parse_trace or [])
+        normalized_reason = str(reason or "")
+        if not normalized_reason:
+            return trace
+        if cls._is_out_of_scope_reason(normalized_reason):
+            if "ood" not in trace:
+                trace.append("ood")
+            ood_tag = f"ood:{normalized_reason}"
+            if ood_tag not in trace:
+                trace.append(ood_tag)
+            return trace
+        if normalized_reason in {SemanticJudger.REASON_GREETING, SemanticJudger.REASON_IDENTITY}:
+            if "edge" not in trace:
+                trace.append("edge")
+            edge_tag = f"edge:{normalized_reason}"
+            if edge_tag not in trace:
+                trace.append(edge_tag)
+        return trace
+
     def _needs_agri_domain_clarification(self, question: str) -> bool:
         return needs_agri_domain_clarification(question, build_route=self._build_route)
 
@@ -421,7 +446,9 @@ class QueryPlanner:
         if parse_result.normalized_query:
             question = parse_result.normalized_query
         semantic_decision = self.semantic_judger.judge(question)
+        semantic_reason = str(parse_result.fallback_reason or semantic_decision.get("fallback_reason") or semantic_decision.get("reason") or "")
         if parse_result.is_out_of_scope:
+            out_of_scope_reason = semantic_reason if self._is_out_of_scope_reason(semantic_reason) else "out_of_scope_capability"
             clarification = (
                 semantic_decision.get("clarification")
                 or self._out_of_scope_capability_reply(question)
@@ -433,50 +460,50 @@ class QueryPlanner:
                 "route": self._build_route(question, "count"),
                 "needs_clarification": True,
                 "clarification": clarification,
-                "reason": str(parse_result.fallback_reason or semantic_decision.get("reason") or "out_of_scope_capability"),
-                "context_trace": list(parse_result.trace or []),
+                "reason": out_of_scope_reason,
+                "context_trace": self._semantic_context_trace(out_of_scope_reason, parse_result.trace),
             }, question, context=context, understanding=understanding)
-        if semantic_decision.get("reason") == "greeting_intro":
+        if semantic_reason == SemanticJudger.REASON_GREETING:
             return self._finalize_plan({
                 "intent": str(semantic_decision.get("intent") or "advice"),
                 "confidence": float(semantic_decision.get("confidence") or 0.98),
                 "route": self._build_route(question, "count"),
                 "needs_clarification": bool(semantic_decision.get("needs_clarification")),
                 "clarification": semantic_decision.get("clarification"),
-                "reason": str(semantic_decision.get("reason") or "greeting_intro"),
-                "context_trace": [],
+                "reason": SemanticJudger.REASON_GREETING,
+                "context_trace": self._semantic_context_trace(SemanticJudger.REASON_GREETING, parse_result.trace),
             }, question, context=context, understanding=understanding)
         if context_follow_up := self._context_follow_up_plan(original_question, context):
             # 若识别为上下文追问，优先复用线程状态，避免重复抽取和重复提问。
             return self._finalize_plan(context_follow_up, question, context=context, understanding=understanding)
-        if semantic_decision.get("reason") == "identity_self_intro":
+        if semantic_reason == SemanticJudger.REASON_IDENTITY:
             return self._finalize_plan({
                 "intent": str(semantic_decision.get("intent") or "advice"),
                 "confidence": float(semantic_decision.get("confidence") or 0.95),
                 "route": self._build_route(question, "count"),
                 "needs_clarification": bool(semantic_decision.get("needs_clarification")),
                 "clarification": semantic_decision.get("clarification"),
-                "reason": str(semantic_decision.get("reason") or "identity_self_intro"),
-                "context_trace": [],
+                "reason": SemanticJudger.REASON_IDENTITY,
+                "context_trace": self._semantic_context_trace(SemanticJudger.REASON_IDENTITY, parse_result.trace),
             }, question, context=context, understanding=understanding)
-        if semantic_decision.get("reason") == "out_of_scope_capability":
+        if self._is_out_of_scope_reason(semantic_reason):
             return self._finalize_plan({
                 "intent": str(semantic_decision.get("intent") or "advice"),
                 "confidence": float(semantic_decision.get("confidence") or 0.92),
                 "route": self._build_route(question, "count"),
                 "needs_clarification": bool(semantic_decision.get("needs_clarification")),
                 "clarification": semantic_decision.get("clarification"),
-                "reason": str(semantic_decision.get("reason") or "out_of_scope_capability"),
-                "context_trace": [],
+                "reason": semantic_reason,
+                "context_trace": self._semantic_context_trace(semantic_reason, parse_result.trace),
             }, question, context=context, understanding=understanding)
-        if semantic_decision.get("reason") == "generic_explanation":
+        if semantic_reason == SemanticJudger.REASON_GENERIC_EXPLANATION:
             return self._finalize_plan({
                 "intent": str(semantic_decision.get("intent") or "advice"),
                 "confidence": float(semantic_decision.get("confidence") or 0.78),
                 "route": self._build_route(question, "count"),
                 "needs_clarification": bool(semantic_decision.get("needs_clarification")),
                 "clarification": semantic_decision.get("clarification"),
-                "reason": str(semantic_decision.get("reason") or "generic_explanation"),
+                "reason": SemanticJudger.REASON_GENERIC_EXPLANATION,
                 "context_trace": [],
             }, question, context=context, understanding=understanding)
         if self._is_low_signal(question):

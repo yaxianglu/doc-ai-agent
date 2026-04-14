@@ -57,8 +57,8 @@ class ForcedOutOfScopeSemanticParser:
             normalized_query=str(question or "").strip(),
             intent="advice",
             is_out_of_scope=True,
-            fallback_reason="out_of_scope_capability",
-            trace=["normalize", "ood"],
+            fallback_reason="out_of_scope_weather",
+            trace=["normalize", "ood", "ood:out_of_scope_weather"],
         )
 
 
@@ -72,9 +72,10 @@ class QueryPlannerTests(unittest.TestCase):
 
         plan = planner.plan("这个问题被语义解析层标记为越界")
 
-        self.assertEqual(plan["reason"], "out_of_scope_capability")
+        self.assertEqual(plan["reason"], "out_of_scope_weather")
         self.assertEqual(plan["route"]["query_type"], "count")
         self.assertEqual(plan["intent"], "advice")
+        self.assertIn("ood:out_of_scope_weather", plan["context_trace"])
 
     def test_planner_respects_semantic_judger_decision_for_generic_explanation(self):
         planner = QueryPlanner(None, semantic_judger=ForcedGenericExplanationJudger())
@@ -708,10 +709,29 @@ class QueryPlannerTests(unittest.TestCase):
 
         self.assertEqual(plan["intent"], "advice")
         self.assertTrue(plan["needs_clarification"])
-        self.assertEqual(plan["reason"], "out_of_scope_capability")
+        self.assertEqual(plan["reason"], "out_of_scope_weather")
+        self.assertIn("ood:out_of_scope_weather", plan["context_trace"])
         self.assertIn("天气", plan["clarification"])
         self.assertIn("虫情", plan["clarification"])
         self.assertIn("墒情", plan["clarification"])
+
+    def test_out_of_scope_news_question_returns_explicit_category(self):
+        planner = QueryPlanner(None)
+        plan = planner.plan("今天有什么新闻")
+
+        self.assertEqual(plan["intent"], "advice")
+        self.assertTrue(plan["needs_clarification"])
+        self.assertEqual(plan["reason"], "out_of_scope_news")
+        self.assertIn("ood:out_of_scope_news", plan["context_trace"])
+
+    def test_out_of_scope_transport_ticket_question_returns_explicit_category(self):
+        planner = QueryPlanner(None)
+        plan = planner.plan("帮我订高铁票")
+
+        self.assertEqual(plan["intent"], "advice")
+        self.assertTrue(plan["needs_clarification"])
+        self.assertEqual(plan["reason"], "out_of_scope_transport_ticket")
+        self.assertIn("ood:out_of_scope_transport_ticket", plan["context_trace"])
 
     def test_greeting_routes_to_intro_instead_of_clarification(self):
         planner = QueryPlanner(None)
@@ -720,6 +740,7 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["intent"], "advice")
         self.assertFalse(plan["needs_clarification"])
         self.assertEqual(plan["reason"], "greeting_intro")
+        self.assertIn("edge:greeting_intro", plan["context_trace"])
 
     def test_context_explanation_follow_up_bypasses_router_guess(self):
         planner = QueryPlanner(
@@ -760,6 +781,7 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["intent"], "advice")
         self.assertFalse(plan["needs_clarification"])
         self.assertEqual(plan["reason"], "identity_self_intro")
+        self.assertIn("edge:identity_self_intro", plan["context_trace"])
 
     def test_short_city_follow_up_preserves_forecast_intent(self):
         planner = QueryPlanner(None)

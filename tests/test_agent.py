@@ -364,8 +364,8 @@ class AgentTests(unittest.TestCase):
                     normalized_query=str(question or "").strip(),
                     intent="advice",
                     is_out_of_scope=True,
-                    fallback_reason="out_of_scope_capability",
-                    trace=["normalize", "ood"],
+                    fallback_reason="out_of_scope_weather",
+                    trace=["normalize", "ood", "ood:out_of_scope_weather"],
                 )
 
         agent = DocAIAgent(
@@ -378,7 +378,7 @@ class AgentTests(unittest.TestCase):
         result = agent.answer("过去5个月虫情最严重的地方是哪里", thread_id="thread-semantic-ood")
 
         self.assertEqual(result["mode"], "advice")
-        self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], "out_of_scope_capability")
+        self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], "out_of_scope_weather")
         self.assertIn("虫情", result["answer"])
 
     def test_identity_question_returns_capability_intro(self):
@@ -394,6 +394,8 @@ class AgentTests(unittest.TestCase):
         self.assertIn("虫情", result["answer"])
         self.assertEqual(result["evidence"]["generation_mode"], "rule")
         self.assertFalse(result["evidence"]["request_understanding"]["used_context"])
+        self.assertEqual(result["evidence"]["request_understanding"]["fallback_reason"], "identity_self_intro")
+        self.assertIn("edge:identity_self_intro", result["evidence"]["request_understanding"]["trace"])
 
     def test_greeting_does_not_answer_with_stale_agri_context(self):
         agent = DocAIAgent(
@@ -409,6 +411,8 @@ class AgentTests(unittest.TestCase):
         self.assertNotIn("常州市", follow_up["answer"])
         self.assertEqual(follow_up["evidence"]["generation_mode"], "rule")
         self.assertFalse(follow_up["evidence"]["request_understanding"]["used_context"])
+        self.assertEqual(follow_up["evidence"]["request_understanding"]["fallback_reason"], "greeting_intro")
+        self.assertIn("edge:greeting_intro", follow_up["evidence"]["request_understanding"]["trace"])
 
     def test_non_agri_topic_does_not_answer_with_stale_agri_context(self):
         agent = DocAIAgent(
@@ -426,9 +430,28 @@ class AgentTests(unittest.TestCase):
         self.assertNotIn("淮安", follow_up["answer"])
         self.assertNotIn("徐州", follow_up["answer"])
         self.assertGreaterEqual(follow_up["evidence"]["request_understanding"]["confidence"], 0.8)
-        self.assertEqual(follow_up["evidence"]["request_understanding"]["fallback_reason"], "out_of_scope_capability")
+        self.assertEqual(follow_up["evidence"]["request_understanding"]["fallback_reason"], "out_of_scope_weather")
         self.assertIn("ood", follow_up["evidence"]["request_understanding"]["trace"])
-        self.assertEqual(follow_up["evidence"]["response_meta"]["fallback_reason"], "out_of_scope_capability")
+        self.assertIn("ood:out_of_scope_weather", follow_up["evidence"]["request_understanding"]["trace"])
+        self.assertEqual(follow_up["evidence"]["response_meta"]["fallback_reason"], "out_of_scope_weather")
+
+    def test_non_agri_topic_news_and_ticket_use_explicit_fallback_categories(self):
+        agent = DocAIAgent(
+            AlertRepository(self.db),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        cases = [
+            ("今天有什么新闻", "out_of_scope_news"),
+            ("帮我订高铁票", "out_of_scope_transport_ticket"),
+        ]
+        for question, reason in cases:
+            with self.subTest(question=question):
+                result = agent.answer(question, thread_id=f"thread-ood-{reason}")
+                self.assertEqual(result["evidence"]["generation_mode"], "clarification")
+                self.assertEqual(result["evidence"]["request_understanding"]["fallback_reason"], reason)
+                self.assertIn(f"ood:{reason}", result["evidence"]["request_understanding"]["trace"])
+                self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], reason)
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()

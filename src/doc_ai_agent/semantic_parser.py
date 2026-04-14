@@ -23,6 +23,7 @@ from .request_context_resolution import (
 )
 from .request_understanding_reasoning import infer_task_type
 from .semantic_parse import SemanticParseResult
+from .semantic_judger import SemanticJudger
 
 
 class SemanticParser:
@@ -31,7 +32,6 @@ class SemanticParser:
     该类后续会逐步吸纳更多理解能力；当前先提供稳定的最小合同。
     """
 
-    OUT_OF_SCOPE_WEATHER_PATTERN = re.compile(r"(天气|下雨|降雨|气温|温度|天气预报)")
     CHINESE_NUMBER_MAP = {
         "一": 1,
         "二": 2,
@@ -105,16 +105,31 @@ class SemanticParser:
         if followup_type != "none":
             trace.append(f"followup:{followup_type}")
 
-        if self.OUT_OF_SCOPE_WEATHER_PATTERN.search(normalized):
-            trace.append("ood")
+        semantic_decision = SemanticJudger().judge(normalized)
+        semantic_reason = str(semantic_decision.get("fallback_reason") or semantic_decision.get("reason") or "")
+
+        if SemanticJudger.is_out_of_scope_reason(semantic_reason):
+            trace.extend(["ood", f"ood:{semantic_reason}"])
             return SemanticParseResult(
                 normalized_query=normalized,
-                intent="advice",
+                intent=str(semantic_decision.get("intent") or "advice"),
                 confidence=0.92,
                 is_out_of_scope=True,
-                fallback_reason="out_of_scope_capability",
+                fallback_reason=semantic_reason,
                 followup_type=followup_type,
                 needs_clarification=True,
+                trace=trace,
+            )
+        if semantic_reason in {SemanticJudger.REASON_GREETING, SemanticJudger.REASON_IDENTITY}:
+            trace.extend(["edge", f"edge:{semantic_reason}"])
+            return SemanticParseResult(
+                normalized_query=normalized,
+                intent=str(semantic_decision.get("intent") or "advice"),
+                confidence=float(semantic_decision.get("confidence") or 0.0),
+                is_out_of_scope=False,
+                fallback_reason=semantic_reason,
+                followup_type=followup_type,
+                needs_clarification=bool(semantic_decision.get("needs_clarification")),
                 trace=trace,
             )
 
