@@ -243,6 +243,53 @@ class AcceptanceEvalTests(unittest.TestCase):
         self.assertEqual(by_suite["ood"][0]["index"], 54)
         self.assertEqual(by_suite["forecast"][0]["index"], 24)
 
+    def test_score_run_penalizes_trend_missing_direction_and_county_scope_mismatch(self):
+        raw = [
+            {
+                "index": 6,
+                "category": "区域粒度",
+                "question": "我问的是县，不是市，过去5个月虫情最高的县有哪些？",
+                "ok": True,
+                "mode": "data_query",
+                "seconds": 0.9,
+                "answer": "过去5个月虫情最高的市为：徐州市、淮安市。",
+            },
+            {
+                "index": 19,
+                "category": "趋势分析",
+                "question": "最近30天预警数量是增加还是减少？",
+                "ok": True,
+                "mode": "data_query",
+                "seconds": 0.6,
+                "answer": "最近30天预警信息共 12 条。",
+            },
+        ]
+
+        scored = score_run(raw)
+        by_index = {item["index"]: item for item in scored["items"]}
+        self.assertIn("county_scope_mismatch", by_index[6]["checks_failed"])
+        self.assertLess(by_index[6]["score"], 7.5)
+        self.assertIn("trend_missing_direction", by_index[19]["checks_failed"])
+        self.assertLess(by_index[19]["score"], 7.5)
+
+    def test_score_run_penalizes_weak_forecast_overclaim(self):
+        raw = [
+            {
+                "index": 21,
+                "category": "预测能力",
+                "question": "未来两周虫情会怎样？",
+                "ok": True,
+                "mode": "data_query",
+                "seconds": 0.8,
+                "answer": "未来两周虫情风险预计为高（置信度0.62，样本覆盖 0 个观测日）。依据：最近值仍高于窗口均值。",
+            }
+        ]
+
+        scored = score_run(raw)
+        item = scored["items"][0]
+        self.assertIn("forecast_overclaims_weak_evidence", item["checks_failed"])
+        self.assertLess(item["score"], 7.5)
+
 
 if __name__ == "__main__":
     unittest.main()
