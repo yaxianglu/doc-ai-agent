@@ -1145,6 +1145,15 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["query_type"], "alerts_trend")
         self.assertEqual(plan["answer_mode"], "trend")
 
+    def test_alert_top_question_treats_baojing_as_data_query(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("最近10天报警最多的是哪里？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "top")
+        self.assertEqual(plan["answer_mode"], "data_query")
+
     def test_county_advice_question_keeps_county_scope(self):
         planner = QueryPlanner(None)
 

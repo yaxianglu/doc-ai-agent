@@ -471,7 +471,12 @@ class QueryEngine:
         until = plan.get("until") or None
         region_level = str(plan.get("region_level") or "city")
         top_n = max(1, int(plan.get("top_n") or 1))
-        anomaly_direction = "low" if "低墒" in question else ("high" if "高墒" in question else None)
+        if any(token in question for token in ["低墒", "偏低", "缺水", "干旱", "太干"]):
+            anomaly_direction = "low"
+        elif any(token in question for token in ["高墒", "偏高", "偏湿", "过湿", "涝渍"]):
+            anomaly_direction = "high"
+        else:
+            anomaly_direction = None
         city = plan.get("city")
         county = plan.get("county")
         data = self.repo.top_soil_regions(

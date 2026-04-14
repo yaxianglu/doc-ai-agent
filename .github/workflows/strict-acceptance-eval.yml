@@ -1,0 +1,50 @@
+name: strict-acceptance-eval
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/doc_ai_agent/**"
+      - "scripts/**"
+      - "tests/**"
+      - "evals/**"
+      - ".github/workflows/strict-acceptance-eval.yml"
+
+jobs:
+  eval-plumbing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run eval plumbing tests
+        run: |
+          PYTHONPATH=src python -m unittest \
+            tests.test_acceptance_eval \
+            tests.test_question_suite.QuestionSuiteTests.test_strict_acceptance_question_bank_is_stable
+
+  strict-live-eval:
+    runs-on: ubuntu-latest
+    needs: eval-plumbing
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      DOC_AGENT_DB_URL: ${{ secrets.DOC_AGENT_DB_URL }}
+      DOC_AGENT_SOURCE_PROVIDER: llamaindex
+      DOC_AGENT_QUERY_PLAYBOOK_BACKEND: llamaindex
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install runtime deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Run strict acceptance eval when secrets are available
+        run: |
+          if [ -z "$OPENAI_API_KEY" ] || [ -z "$DOC_AGENT_DB_URL" ]; then
+            echo "Skipping live strict eval because required secrets are not configured."
+            exit 0
+          fi
+          PYTHONPATH=src python scripts/run_strict_acceptance_eval.py --score --compare

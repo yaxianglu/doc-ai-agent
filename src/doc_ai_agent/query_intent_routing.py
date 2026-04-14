@@ -43,6 +43,7 @@ def score_data(question: str) -> float:
         ("变化", 0.25),
         ("以来", 0.2),
         ("预警", 0.2),
+        ("报警", 0.2),
         ("预警信息", 0.15),
         ("严重", 0.25),
         ("异常", 0.25),
@@ -154,7 +155,7 @@ def infer_query_type(
     if "占比" in question and "子类型" in question:
         return "subtype_ratio"
     if (
-        "预警" in question
+        any(token in question for token in ["预警", "报警"])
         and has_trend_intent(question)
         and any(token in question for token in ["数量", "条数", "多少", "增加", "减少", "上升", "下降"])
     ):
