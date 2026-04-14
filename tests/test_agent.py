@@ -147,6 +147,19 @@ class FakeStructuredRepo:
             {"region_name": "淮安市", "joint_score": 128, "pest_score": 75, "low_soil_score": 53},
         ][:top_n]
 
+    def alerts_trend(self, since, until=None, city=None):
+        if city == "徐州市":
+            return [
+                {"date": "2026-03-15", "alert_count": 2},
+                {"date": "2026-03-29", "alert_count": 5},
+                {"date": "2026-04-13", "alert_count": 8},
+            ]
+        return [
+            {"date": "2026-03-15", "alert_count": 4},
+            {"date": "2026-03-29", "alert_count": 9},
+            {"date": "2026-04-13", "alert_count": 12},
+        ]
+
 
 class CountyRankingRepo(FakeStructuredRepo):
     def __init__(self):
@@ -495,6 +508,32 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result["mode"], "data_query")
         self.assertIn("d1", result["answer"])
         self.assertTrue(any(row["device_code"] == "d1" for row in result["data"]))
+
+    def test_single_day_city_count_uses_exact_city_filter(self):
+        result = self.agent.answer("2026年1月3日徐州市发生了多少条预警？")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertIn("徐州市预警信息共 1 条", result["answer"])
+        self.assertEqual(result["evidence"]["city"], "徐州市")
+        self.assertEqual(result["evidence"]["since"], "2026-01-03 00:00:00")
+        self.assertEqual(result["evidence"]["until"], "2026-01-04 00:00:00")
+
+    def test_single_day_city_level_count_uses_exact_city_filter(self):
+        result = self.agent.answer("2026年1月3日徐州市涝渍等级预警有多少条？")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertIn("徐州市涝渍等级预警信息共 1 条", result["answer"])
+        self.assertEqual(result["evidence"]["city"], "徐州市")
+        self.assertEqual(result["evidence"]["alert_level"], "涝渍")
+
+    def test_threshold_summary_stays_data_only(self):
+        result = self.agent.answer("告警值超过20的预警主要在哪些城市？")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertIn("主要集中在", result["answer"])
+        self.assertNotIn("预测：", result["answer"])
+        self.assertNotIn("建议：", result["answer"])
+        self.assertNotIn("未来两周", result["answer"])
 
     def test_advice_query(self):
         result = self.agent.answer("台风过后，对于小麦种植需要注意哪些？")
@@ -982,6 +1021,20 @@ class AgentGraphTests(unittest.TestCase):
         )
         self.assertTrue(str(result["evidence"]["historical_query"]["since"]).startswith("2025-"))
 
+    def test_explanation_without_structured_evidence_reports_insufficient_evidence(self):
+        agent = DocAIAgent(
+            EmptyStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer("为什么过去5个月徐州虫情这么高", thread_id="thread-why-insufficient")
+
+        self.assertEqual(result["mode"], "analysis")
+        self.assertIn("证据不足", result["answer"])
+        self.assertNotIn("峰值0", result["answer"])
+        self.assertNotIn("最近值0", result["answer"])
+
     def test_mixed_reason_and_advice_emit_separate_sections(self):
         agent = DocAIAgent(
             FakeStructuredRepo(),
@@ -1373,6 +1426,83 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["request_understanding"]["task_type"], "region_overview")
         self.assertIn("徐州市", result["answer"])
         self.assertNotIn("Top5", result["answer"])
+
+    def test_global_pest_trend_question_no_longer_requires_region(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("过去5个月虫情总体是上升还是下降？", thread_id="thread-global-pest-trend")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertNotIn("请补充要看的地区", result["answer"])
+        self.assertIn("整体", result["answer"])
+        self.assertEqual(result["evidence"]["historical_query"]["query_type"], "pest_trend")
+
+    def test_global_soil_trend_question_no_longer_requires_region(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("近两个月墒情有没有缓解？", thread_id="thread-global-soil-trend")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertNotIn("请补充要看的地区", result["answer"])
+        self.assertIn("整体", result["answer"])
+        self.assertEqual(result["evidence"]["historical_query"]["query_type"], "soil_trend")
+
+    def test_alert_trend_question_returns_increase_or_decrease_without_region(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("最近30天预警数量是增加还是减少？", thread_id="thread-alert-trend")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertNotIn("请补充", result["answer"])
+        self.assertRegex(result["answer"], r"(增加|减少|上升|下降)")
+        self.assertEqual(result["evidence"]["historical_query"]["query_type"], "alerts_trend")
+
+    def test_county_advice_question_targets_county_not_city(self):
+        agent = DocAIAgent(
+            CountyRankingRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer("对当前虫情最严重的县有什么建议？", thread_id="thread-county-advice")
+
+        self.assertEqual(result["mode"], "analysis")
+        self.assertEqual(result["evidence"]["historical_query"]["region_level"], "county")
+        self.assertIn("铜山区", result["answer"])
+        self.assertNotIn("常州市当前", result["answer"])
+
+    def test_pronoun_county_question_without_context_asks_for_specific_object(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("为什么这个县的墒情异常最多？", thread_id="thread-pronoun-county")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("请补充具体对象", result["answer"])
+
+    def test_pronoun_county_follow_up_does_not_reuse_previous_city_context(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("为什么最近虫情变严重了？", thread_id="thread-pronoun-follow-up")
+        result = agent.answer("为什么这个县的墒情异常最多？", thread_id="thread-pronoun-follow-up")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("请补充具体对象", result["answer"])
+        self.assertNotIn("常州市", result["answer"])
 
 
 if __name__ == "__main__":

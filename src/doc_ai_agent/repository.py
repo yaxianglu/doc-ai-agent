@@ -234,6 +234,41 @@ class AlertRepository:
             cur = conn.execute(sql, params)
             return int(cur.fetchone()["c"])
 
+    def alerts_trend(
+        self,
+        since: str,
+        until: Optional[str] = None,
+        city: Optional[str] = None,
+    ) -> List[dict]:
+        where = ["alert_time >= ?"]
+        params: list[object] = [since]
+        if until:
+            where.append("alert_time < ?")
+            params.append(until)
+        if city:
+            where.append("city = ?")
+            params.append(city)
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT
+                    SUBSTR(alert_time, 1, 10) AS date,
+                    COUNT(*) AS alert_count
+                FROM alerts
+                WHERE {' AND '.join(where)}
+                GROUP BY SUBSTR(alert_time, 1, 10)
+                ORDER BY date ASC
+                """,
+                tuple(params),
+            )
+            return [
+                {
+                    "date": r["date"],
+                    "alert_count": int(r["alert_count"]),
+                }
+                for r in cur.fetchall()
+            ]
+
     def top_n_filtered(
         self,
         field: str,

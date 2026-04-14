@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 
 from .agri_semantics import (
     has_detail_intent,
@@ -273,7 +274,26 @@ class RequestUnderstanding:
         normalized = str(text or "")
         if not normalized:
             return True
-        if any(token in normalized for token in ["某设备", "某县", "某市", "某地区", "某区域", "某个设备", "某个县"]):
+        if any(
+            token in normalized
+            for token in [
+                "某设备",
+                "某县",
+                "某市",
+                "某地区",
+                "某区域",
+                "某个设备",
+                "某个县",
+                "这个县",
+                "该县",
+                "这个市",
+                "该市",
+                "这个地区",
+                "该地区",
+                "这个区域",
+                "该区域",
+            ]
+        ):
             return True
         deterministic_data_tokens = [
             "最近一次",
@@ -302,7 +322,7 @@ class RequestUnderstanding:
         if not isinstance(payload, dict):
             return None
         window_type = str(payload.get("window_type") or "")
-        if window_type not in {"all", "months", "weeks", "days"}:
+        if window_type not in {"all", "months", "weeks", "days", "year_since"}:
             return None
         normalized = {
             "window_type": window_type,
@@ -320,7 +340,7 @@ class RequestUnderstanding:
             if not isinstance(candidate, dict):
                 continue
             window_type = str(candidate.get("window_type") or "")
-            if window_type in {"months", "weeks", "days"}:
+            if window_type in {"months", "weeks", "days", "year_since"}:
                 return candidate
             if window_type == "all" and all_window is None:
                 all_window = candidate
@@ -476,6 +496,9 @@ class RequestUnderstanding:
 
     @staticmethod
     def _extract_past_window(text: str) -> dict:
+        if "今年以来" in text:
+            current_year = datetime.now().year
+            return {"window_type": "year_since", "window_value": current_year}
         if re.search(r"(?:过去|最近|近|这)半年", text):
             return {"window_type": "months", "window_value": 6}
         if "半年内" in text:

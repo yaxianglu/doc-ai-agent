@@ -104,6 +104,8 @@ def window_prefix(window: dict) -> str:
 def build_historical_query_text(domain: str, historical_window: dict, cleaned: str, task_type: str, region_name: str, region_level: str) -> str:
     if not domain:
         return cleaned
+    if any(token in cleaned for token in ["这个县", "该县", "这个市", "该市", "这个地区", "该地区", "这个区域", "该区域"]):
+        return cleaned
     if task_type in {"trend", "region_overview", "joint_risk", "compare", "cross_domain_compare"}:
         return cleaned
     if task_type == "ranking" and region_level == "county":

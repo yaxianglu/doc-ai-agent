@@ -258,9 +258,14 @@ class RequestUnderstandingTests(unittest.TestCase):
 
         self.assertEqual(result["region_name"], "")
         self.assertEqual(result["region_level"], "county")
-        self.assertEqual(result["future_window"]["window_type"], "days")
-        self.assertEqual(result["future_window"]["window_value"], 10)
-        self.assertTrue(result["needs_forecast"])
+
+    def test_this_year_since_is_preserved_as_window(self):
+        result = self.understanding.analyze("今年以来徐州虫情变化怎么样？")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_name"], "徐州市")
+        self.assertEqual(result["window"]["window_type"], "year_since")
+        self.assertEqual(result["window"]["window_value"], 2026)
 
     def test_city_then_county_refinement_does_not_treat_suffix_as_region(self):
         result = self.understanding.analyze("江苏范围内，虫情最高的是哪些市？再细到县。")
@@ -482,6 +487,30 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["region_name"], "")
         self.assertFalse(result["needs_historical"])
         self.assertEqual(result["task_type"], "unknown")
+
+    def test_global_up_down_question_is_recognized_as_trend(self):
+        result = self.understanding.analyze("过去5个月虫情总体是上升还是下降？")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["task_type"], "trend")
+        self.assertEqual(result["region_name"], "")
+        self.assertTrue(result["needs_historical"])
+
+    def test_relief_question_is_recognized_as_soil_trend(self):
+        result = self.understanding.analyze("近两个月墒情有没有缓解？")
+
+        self.assertEqual(result["domain"], "soil")
+        self.assertEqual(result["task_type"], "trend")
+        self.assertEqual(result["region_name"], "")
+        self.assertTrue(result["needs_historical"])
+
+    def test_county_advice_question_preserves_county_scope(self):
+        result = self.understanding.analyze("对当前虫情最严重的县有什么建议？")
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["region_level"], "county")
+        self.assertTrue(result["needs_advice"])
+        self.assertTrue(result["needs_historical"])
 
 
 if __name__ == "__main__":

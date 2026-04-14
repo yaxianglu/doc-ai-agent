@@ -239,6 +239,40 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["since"], "2025-12-24 00:00:00")
         self.assertEqual(plan["route"]["until"], "2025-12-25 00:00:00")
 
+    def test_direct_explanation_question_routes_to_structured_data_query(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("为什么过去5个月徐州虫情这么高")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertFalse(plan["needs_clarification"])
+        self.assertEqual(plan["route"]["query_type"], "pest_overview")
+        self.assertEqual(plan["route"]["city"], "徐州市")
+        self.assertEqual(plan["route"]["window"]["window_type"], "months")
+        self.assertEqual(plan["route"]["window"]["window_value"], 5)
+
+    def test_this_year_since_uses_current_year_start(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("今年以来哪些地方虫情最高？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_top")
+        self.assertEqual(plan["route"]["since"], "2026-01-01 00:00:00")
+        self.assertEqual(plan["route"]["window"]["window_type"], "year_since")
+        self.assertEqual(plan["route"]["window"]["window_value"], 2026)
+
+    def test_day_range_query_uses_closed_open_window(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("2025年12月23日到12月24日，徐州市发生了多少条预警？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "count")
+        self.assertEqual(plan["route"]["city"], "徐州市")
+        self.assertEqual(plan["route"]["since"], "2025-12-23 00:00:00")
+        self.assertEqual(plan["route"]["until"], "2025-12-25 00:00:00")
+
     def test_heuristic_advice_query(self):
         planner = QueryPlanner(None)
         plan = planner.plan("针对涝渍预警，给我24小时处置清单")
@@ -1101,6 +1135,57 @@ class QueryPlannerTests(unittest.TestCase):
         plan = planner.plan("给我前3个预警最多的地区，从2026年开始")
 
         self.assertIsNone(plan["route"]["county"])
+
+    def test_alert_count_trend_question_uses_alerts_trend_query_type(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("最近30天预警数量是增加还是减少？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "alerts_trend")
+        self.assertEqual(plan["answer_mode"], "trend")
+
+    def test_county_advice_question_keeps_county_scope(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("对当前虫情最严重的县有什么建议？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_top")
+        self.assertEqual(plan["route"]["region_level"], "county")
+
+    def test_pronoun_county_question_without_context_requests_clarification(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("为什么这个县的墒情异常最多？")
+
+        self.assertTrue(plan["needs_clarification"])
+        self.assertIn("请补充具体对象", plan["clarification"])
+
+    def test_router_advice_cannot_override_historical_county_query(self):
+        planner = QueryPlanner(
+            FakeRouter(
+                {
+                    "intent": "advice",
+                    "query_type": "pest_top",
+                    "region_level": "city",
+                }
+            )
+        )
+
+        understanding = {
+            "domain": "pest",
+            "needs_historical": True,
+            "needs_advice": True,
+            "needs_explanation": False,
+            "task_type": "ranking",
+            "region_level": "county",
+        }
+        plan = planner.plan("对当前虫情最严重的县有什么建议？", understanding=understanding)
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_top")
+        self.assertEqual(plan["route"]["region_level"], "county")
 
 
 if __name__ == "__main__":

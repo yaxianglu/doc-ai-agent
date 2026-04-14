@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 
+from .query_extractors import extract_city as shared_extract_city
+from .query_extractors import extract_day_range as shared_extract_day_range
+
 
 @dataclass
 class QueryResult:
@@ -223,6 +226,14 @@ class QueryEngine:
             return ""
         return f"从{since[:10]}起"
 
+    @staticmethod
+    def _scope_prefix(region_name: Optional[str], since_scope: str, overall_label: str = "整体") -> str:
+        if region_name:
+            return f"{region_name}{since_scope}"
+        if since_scope:
+            return f"{since_scope}{overall_label}"
+        return overall_label
+
     def _available_alert_range_suffix(self) -> str:
         if not hasattr(self.repo, "available_alert_time_range"):
             return ""
@@ -324,6 +335,8 @@ class QueryEngine:
         return None, region_level
 
     def _extract_since(self, question: str) -> str:
+        if "今年以来" in question:
+            return f"{datetime.now().year}-01-01 00:00:00"
         m = re.search(r"(20\d{2})年以?来", question)
         if m:
             year = m.group(1)
@@ -331,22 +344,10 @@ class QueryEngine:
         return "1970-01-01 00:00:00"
 
     def _extract_day_range(self, question: str) -> tuple[Optional[str], Optional[str]]:
-        m = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", question)
-        if not m:
-            return None, None
-        year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        start = datetime(year, month, day)
-        end = start + timedelta(days=1)
-        return start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")
+        return shared_extract_day_range(question)
 
     def _extract_city(self, question: str) -> Optional[str]:
-        m = re.search(r"([\u4e00-\u9fa5]{2,12}市)", question)
-        if m:
-            city = m.group(1)
-            if city == "城市" or city.endswith("城市"):
-                return None
-            return city
-        return None
+        return shared_extract_city(question)
 
     def _extract_level(self, question: str) -> Optional[str]:
         for level in ["涝渍", "重旱", "中旱", "轻旱"]:
@@ -378,6 +379,36 @@ class QueryEngine:
         top_n = max(1, int(plan.get("top_n") or 1))
         city = plan.get("city")
         county = plan.get("county")
+        wants_city_then_county = "市" in question and ("再细到县" in question or "细到县" in question or "再细到区县" in question)
+        if wants_city_then_county:
+            city_rows = self.repo.top_pest_regions(since, until, region_level="city", top_n=min(max(top_n, 3), 5), city=None, county=None)
+            county_rows = self.repo.top_pest_regions(since, until, region_level="county", top_n=max(top_n, 5), city=None, county=None)
+            since_scope = self._format_since_scope(since)
+            prefix = f"{since_scope}，" if since_scope else "历史上，"
+            city_text = "；".join(
+                f"{idx+1}.{row['region_name']}（严重度{row['severity_score']}，记录{row['record_count']}条）"
+                for idx, row in enumerate(city_rows)
+            ) if city_rows else "无"
+            county_text = "；".join(
+                f"{idx+1}.{row['region_name']}（严重度{row['severity_score']}，记录{row['record_count']}条）"
+                for idx, row in enumerate(county_rows)
+            ) if county_rows else "无"
+            return QueryResult(
+                answer=f"{prefix}虫情严重度最高的Top{len(city_rows) or min(max(top_n, 3), 5)}市为：{city_text}。再细到县，Top{len(county_rows) or max(top_n, 5)}区县为：{county_text}",
+                data={"top_cities": city_rows, "top_counties": county_rows},
+                evidence={
+                    "rule": "先按市级虫情严重度排行，再细到区县排行",
+                    "sql": "top_pest_regions(city+county)",
+                    "since": since,
+                    "until": until,
+                    "region_level": "city_then_county",
+                    "city": None,
+                    "county": None,
+                    "samples": self.repo.sample_pest_records(since, until, 3),
+                    "available_data_ranges": [],
+                    "no_data_reasons": [],
+                },
+            )
         data = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=top_n, city=city, county=county)
         scope_label = "区县" if region_level == "county" else "地区"
         if data:
@@ -514,12 +545,11 @@ class QueryEngine:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_name, region_level = self._extract_region(question, plan)
-        if not region_name:
-            return QueryResult(answer="请补充要看的地区，比如某个市或区县。", data=[], evidence={})
-        data = self.repo.pest_trend(since, until, region_name, region_level=region_level)
+        data = self.repo.pest_trend(since, until, region_name or None, region_level=region_level)
         since_scope = self._format_since_scope(since)
+        scope_prefix = self._scope_prefix(region_name, since_scope)
         if not data:
-            answer = f"{region_name}{since_scope}暂无可用虫情趋势数据。"
+            answer = f"{scope_prefix}暂无可用虫情趋势数据。"
             suffix = self._available_pest_range_suffix()
             if suffix:
                 answer = f"{answer}{suffix}"
@@ -561,7 +591,7 @@ class QueryEngine:
                 },
             )
         trend = self._trend_text(data, "severity_score")
-        answer = f"{region_name}{since_scope}的虫情趋势：{trend}。"
+        answer = f"{scope_prefix}虫情趋势：{trend}。"
         return QueryResult(
             answer=answer,
             data=data,
@@ -715,12 +745,11 @@ class QueryEngine:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_name, region_level = self._extract_region(question, plan)
-        if not region_name:
-            return QueryResult(answer="请补充要看的地区，比如某个市或区县。", data=[], evidence={})
-        data = self.repo.pest_trend(since, until, region_name, region_level=region_level)
+        data = self.repo.pest_trend(since, until, region_name or None, region_level=region_level)
         since_scope = self._format_since_scope(since)
+        scope_prefix = self._scope_prefix(region_name, since_scope)
         if not data:
-            answer = f"{region_name}{since_scope}暂无可用虫情概况数据。"
+            answer = f"{scope_prefix}暂无可用虫情概况数据。"
             suffix = self._available_pest_range_suffix()
             if suffix:
                 answer = f"{answer}{suffix}"
@@ -757,7 +786,7 @@ class QueryEngine:
         trend = self._trend_text(data, "severity_score")
         latest = self._latest_metric(data, "severity_score")
         peak = self._peak_metric(data, "severity_score")
-        answer = f"{region_name}{since_scope}虫情概况：{trend}，最近值{latest:g}，峰值{peak:g}，共覆盖{len(data)}个观测日。"
+        answer = f"{scope_prefix}虫情概况：{trend}，最近值{latest:g}，峰值{peak:g}，共覆盖{len(data)}个观测日。"
         return QueryResult(
             answer=answer,
             data=data,
@@ -778,12 +807,11 @@ class QueryEngine:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_name, region_level = self._extract_region(question, plan)
-        if not region_name:
-            return QueryResult(answer="请补充要看的地区，比如某个市或区县。", data=[], evidence={})
-        data = self.repo.soil_trend(since, until, region_name, region_level=region_level)
+        data = self.repo.soil_trend(since, until, region_name or None, region_level=region_level)
         since_scope = self._format_since_scope(since)
+        scope_prefix = self._scope_prefix(region_name, since_scope)
         if not data:
-            answer = f"{region_name}{since_scope}暂无可用墒情趋势数据。"
+            answer = f"{scope_prefix}暂无可用墒情趋势数据。"
             suffix = self._available_soil_range_suffix()
             if suffix:
                 answer = f"{answer}{suffix}"
@@ -825,7 +853,7 @@ class QueryEngine:
                 },
             )
         trend = self._trend_text(data, "avg_anomaly_score")
-        answer = f"{region_name}{since_scope}的墒情趋势：{trend}。"
+        answer = f"{scope_prefix}墒情趋势：{trend}。"
         return QueryResult(
             answer=answer,
             data=data,
@@ -845,12 +873,11 @@ class QueryEngine:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_name, region_level = self._extract_region(question, plan)
-        if not region_name:
-            return QueryResult(answer="请补充要看的地区，比如某个市或区县。", data=[], evidence={})
-        data = self.repo.soil_trend(since, until, region_name, region_level=region_level)
+        data = self.repo.soil_trend(since, until, region_name or None, region_level=region_level)
         since_scope = self._format_since_scope(since)
+        scope_prefix = self._scope_prefix(region_name, since_scope)
         if not data:
-            answer = f"{region_name}{since_scope}暂无可用墒情概况数据。"
+            answer = f"{scope_prefix}暂无可用墒情概况数据。"
             suffix = self._available_soil_range_suffix()
             if suffix:
                 answer = f"{answer}{suffix}"
@@ -887,7 +914,7 @@ class QueryEngine:
         trend = self._trend_text(data, "avg_anomaly_score")
         latest = self._latest_metric(data, "avg_anomaly_score")
         peak = self._peak_metric(data, "avg_anomaly_score")
-        answer = f"{region_name}{since_scope}墒情概况：{trend}，最近异常值{latest:g}，峰值{peak:g}，共覆盖{len(data)}个观测日。"
+        answer = f"{scope_prefix}墒情概况：{trend}，最近异常值{latest:g}，峰值{peak:g}，共覆盖{len(data)}个观测日。"
         return QueryResult(
             answer=answer,
             data=data,
@@ -1024,11 +1051,65 @@ class QueryEngine:
             },
         )
 
+    def _answer_alerts_trend(self, question: str, plan: dict) -> QueryResult:
+        since = str(plan.get("since") or "1970-01-01 00:00:00")
+        until = plan.get("until") or None
+        city = plan.get("city") or self._extract_city(question)
+        data = self.repo.alerts_trend(since, until, city=city) if hasattr(self.repo, "alerts_trend") else []
+        since_scope = self._format_since_scope(since)
+        scope_prefix = self._scope_prefix(city, since_scope)
+        if not data:
+            answer = f"{scope_prefix}暂无可用预警趋势数据。"
+            suffix = self._available_alert_range_suffix()
+            if suffix:
+                answer = f"{answer}{suffix}"
+            return QueryResult(
+                answer=answer,
+                data=data,
+                evidence={
+                    "sql": "alerts_trend",
+                    "query_type": "alerts_trend",
+                    "since": since,
+                    "until": until,
+                    "city": city,
+                    "available_data_ranges": self._available_alert_ranges(),
+                    "no_data_reasons": [
+                        self._build_no_data_reason(
+                            source="alerts",
+                            label="告警数据",
+                            since=since,
+                            until=until,
+                            time_range=self.repo.available_alert_time_range() if hasattr(self.repo, "available_alert_time_range") else None,
+                            region_name=city or "",
+                        )
+                    ],
+                },
+            )
+        trend = self._trend_text(data, "alert_count")
+        latest = int(self._latest_metric(data, "alert_count"))
+        first = int(float(data[0].get("alert_count") or 0))
+        answer = f"{scope_prefix}预警数量趋势：{trend}，起点{first}条，最近{latest}条，共覆盖{len(data)}个观测日。"
+        return QueryResult(
+            answer=answer,
+            data=data,
+            evidence={
+                "sql": "alerts_trend",
+                "query_type": "alerts_trend",
+                "since": since,
+                "until": until,
+                "city": city,
+                "available_data_ranges": [],
+                "no_data_reasons": [],
+            },
+        )
+
     def answer(self, question: str, plan: Optional[dict] = None) -> QueryResult:
         plan = plan or {}
         query_type = str(plan.get("query_type") or "count")
 
         if hasattr(self.repo, "top_pest_regions"):
+            if query_type == "alerts_trend":
+                return self._answer_alerts_trend(question, plan)
             if query_type == "pest_top":
                 return self._answer_pest_top(question, plan)
             if query_type == "soil_top":
@@ -1051,6 +1132,9 @@ class QueryEngine:
                 if "虫" in question:
                     return self._answer_pest_top(question, plan)
                 return self._answer_soil_top(question, plan)
+
+        if query_type == "alerts_trend":
+            return self._answer_alerts_trend(question, plan)
 
         # Legacy fallback path for the original SQLite alerts dataset.
         since = str(plan.get("since") or self._extract_since(question))

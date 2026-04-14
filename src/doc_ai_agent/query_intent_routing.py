@@ -153,6 +153,12 @@ def infer_query_type(
         return "sms_empty"
     if "占比" in question and "子类型" in question:
         return "subtype_ratio"
+    if (
+        "预警" in question
+        and has_trend_intent(question)
+        and any(token in question for token in ["数量", "条数", "多少", "增加", "减少", "上升", "下降"])
+    ):
+        return "alerts_trend"
     if "变化了多少" in question and "到" in question and "市" in question:
         return "city_day_change"
     if "最高" in question and "告警值" in question:

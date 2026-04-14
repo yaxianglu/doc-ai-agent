@@ -598,6 +598,37 @@ class MySQLRepository:
             where.append(f"alert_level = {self._quote(level)}")
         return self._fetch_int(f"SELECT COUNT(*) FROM alerts WHERE {' AND '.join(where)};")
 
+    def alerts_trend(
+        self,
+        since: str,
+        until: Optional[str] = None,
+        city: Optional[str] = None,
+    ) -> List[dict]:
+        where = [f"alert_time >= {self._quote(since)}"]
+        if until:
+            where.append(f"alert_time < {self._quote(until)}")
+        if city:
+            where.append(f"city = {self._quote(city)}")
+        sql = f"""
+        SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
+        FROM (
+          SELECT JSON_OBJECT(
+            'date', DATE_FORMAT(day_bucket, '%Y-%m-%d'),
+            'alert_count', alert_count
+          ) AS item
+          FROM (
+            SELECT
+              DATE(alert_time) AS day_bucket,
+              COUNT(*) AS alert_count
+            FROM alerts
+            WHERE {' AND '.join(where)}
+            GROUP BY DATE(alert_time)
+            ORDER BY day_bucket ASC
+          ) base
+        ) q;
+        """
+        return self._fetch_json(sql)
+
     def top_n_filtered(
         self,
         field: str,
@@ -1024,9 +1055,10 @@ class MySQLRepository:
         """
         return self._fetch_json(sql)
 
-    def pest_trend(self, since: str, until: Optional[str], region_name: str, region_level: str = "city"):
+    def pest_trend(self, since: str, until: Optional[str], region_name: str | None = None, region_level: str = "city"):
         region_col = "county_name" if region_level == "county" else "city_name"
         until_sql = f"AND monitor_time < {self._quote(until)}" if until else ""
+        region_sql = f"AND {region_col} = {self._quote(region_name)}" if region_name else ""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -1042,7 +1074,7 @@ class MySQLRepository:
               COUNT(*) AS record_count
             FROM fact_pest_monitor
             WHERE severity_usable = 1
-              AND {region_col} = {self._quote(region_name)}
+              {region_sql}
               AND monitor_time >= {self._quote(since)}
               {until_sql}
             GROUP BY DATE(monitor_time)
@@ -1052,9 +1084,10 @@ class MySQLRepository:
         """
         return self._fetch_json(sql)
 
-    def soil_trend(self, since: str, until: Optional[str], region_name: str, region_level: str = "city"):
+    def soil_trend(self, since: str, until: Optional[str], region_name: str | None = None, region_level: str = "city"):
         region_col = "county_name" if region_level == "county" else "city_name"
         until_sql = f"AND sample_time < {self._quote(until)}" if until else ""
+        region_sql = f"AND {region_col} = {self._quote(region_name)}" if region_name else ""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -1072,7 +1105,7 @@ class MySQLRepository:
               SUM(CASE WHEN soil_anomaly_type IN ('low','high') THEN 1 ELSE 0 END) AS abnormal_count
             FROM fact_soil_moisture
             WHERE water20cm_valid = 1
-              AND {region_col} = {self._quote(region_name)}
+              {region_sql}
               AND sample_time >= {self._quote(since)}
               {until_sql}
             GROUP BY DATE(sample_time)
