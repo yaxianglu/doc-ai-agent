@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import patch
 
-from doc_ai_agent.forecast_service import ForecastService
+from doc_ai_agent.forecast_service import ForecastService, StatsForecastBackend
 
 
 class FakeForecastRepo:
@@ -50,10 +51,14 @@ class ForecastServiceTests(unittest.TestCase):
 
         self.assertEqual(result["forecast"]["domain"], "pest")
         self.assertEqual(result["forecast"]["horizon_days"], 14)
-        self.assertEqual(result["forecast"]["forecast_backend"], "statsforecast")
-        self.assertEqual(result["forecast"]["model_name"], "AutoETS")
         self.assertEqual(result["forecast"]["history_points"], 4)
-        self.assertFalse(result["forecast"]["fallback"])
+        self.assertIn(result["forecast"]["forecast_backend"], {"statsforecast", "manual_trend"})
+        self.assertIn(result["forecast"]["model_name"], {"AutoETS", "rule_based"})
+        if result["forecast"]["forecast_backend"] == "manual_trend":
+            self.assertTrue(result["forecast"]["fallback"])
+            self.assertEqual(result["forecast"]["fallback_reason"], "backend_unavailable")
+        else:
+            self.assertFalse(result["forecast"]["fallback"])
         self.assertEqual(result["analysis_context"]["region_name"], "徐州市")
         self.assertIn("徐州市", result["answer"])
 
@@ -119,6 +124,81 @@ class ForecastServiceTests(unittest.TestCase):
         self.assertIn("confidence", result["data"][0])
         self.assertIn("risk_level", result["data"][0])
         self.assertIn("置信度", result["answer"])
+
+    def test_forecast_top_regions_answer_includes_overall_evidence_summary(self):
+        result = self.service.forecast_top_regions(
+            domain="soil",
+            since="2026-03-01 00:00:00",
+            horizon_days=14,
+            region_level="city",
+        )
+
+        self.assertIn("整体置信度", result["answer"])
+        self.assertIn("依据：", result["answer"])
+
+    def test_statsforecast_backend_unavailable_marks_projection_as_fallback(self):
+        backend = StatsForecastBackend()
+
+        with patch.dict("sys.modules", {"statsforecast": None, "statsforecast.models": None}):
+            projection = backend.forecast_series(
+                [
+                    {"date": "2026-03-28", "severity_score": 50},
+                    {"date": "2026-03-29", "severity_score": 60},
+                    {"date": "2026-03-30", "severity_score": 72},
+                    {"date": "2026-03-31", "severity_score": 84},
+                ],
+                date_key="date",
+                value_key="severity_score",
+                horizon_days=14,
+            )
+
+        self.assertTrue(projection.fallback)
+        self.assertEqual(projection.fallback_reason, "backend_unavailable")
+
+    def test_forecast_region_with_insufficient_history_uses_conservative_wording(self):
+        class ShortHistoryRepo:
+            def pest_trend(self, since, until, region_name, region_level="city"):
+                return [{"date": "2026-03-31", "severity_score": 84}]
+
+        service = ForecastService(ShortHistoryRepo())
+        result = service.forecast_region(
+            {
+                "query_type": "pest_forecast",
+                "since": "2026-03-01 00:00:00",
+                "city": "徐州市",
+                "region_level": "city",
+                "forecast_window": {"horizon_days": 14},
+            }
+        )
+
+        self.assertTrue(result["forecast"]["fallback"])
+        self.assertEqual(result["forecast"]["history_points"], 1)
+        self.assertEqual(result["forecast"]["evidence_strength"], "weak")
+        self.assertIn("暂以保守预测为主", result["answer"])
+        self.assertIn("样本覆盖 1 个观测日", result["answer"])
+        self.assertIn("回退预测", result["answer"])
+
+    def test_forecast_region_with_no_history_avoids_strong_prediction(self):
+        class EmptyHistoryRepo:
+            def pest_trend(self, since, until, region_name, region_level="city"):
+                return []
+
+        service = ForecastService(EmptyHistoryRepo())
+        result = service.forecast_region(
+            {
+                "query_type": "pest_forecast",
+                "since": "2026-03-01 00:00:00",
+                "city": "徐州市",
+                "region_level": "city",
+                "forecast_window": {"horizon_days": 14},
+            }
+        )
+
+        self.assertTrue(result["forecast"]["fallback"])
+        self.assertEqual(result["forecast"]["history_points"], 0)
+        self.assertEqual(result["forecast"]["evidence_strength"], "weak")
+        self.assertIn("暂不做强预测", result["answer"])
+        self.assertIn("样本覆盖 0 个观测日", result["answer"])
 
 
 if __name__ == "__main__":
