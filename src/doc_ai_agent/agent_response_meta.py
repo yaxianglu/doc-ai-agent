@@ -125,17 +125,19 @@ def response_confidence(plan: dict, response: dict, evidence: dict, source_types
         return normalized_confidence(plan.get("confidence"), 0.6)
 
     if mode == "advice":
+        plan_confidence = normalized_confidence(plan.get("confidence"), 0.55)
         if generation_mode == "llm":
-            return 0.84 if "rag" in source_types else 0.76
+            llm_baseline = 0.84 if "rag" in source_types else 0.76
+            return normalized_confidence((llm_baseline * 0.45) + (plan_confidence * 0.55), llm_baseline)
         if generation_mode == "rule":
             answer = str(response.get("answer") or "")
             if "AI农情工作台" in answer:
-                return 0.98
+                return normalized_confidence((0.98 * 0.6) + (plan_confidence * 0.4), 0.98)
             analysis_context = dict(evidence.get("analysis_context") or {})
             if analysis_context.get("domain"):
-                return 0.72
-            return 0.58
-        return normalized_confidence(plan.get("confidence"), 0.55)
+                return normalized_confidence((0.72 * 0.45) + (plan_confidence * 0.55), 0.72)
+            return normalized_confidence((0.58 * 0.35) + (plan_confidence * 0.65), 0.58)
+        return plan_confidence
 
     return normalized_confidence(plan.get("confidence"), 0.5)
 
