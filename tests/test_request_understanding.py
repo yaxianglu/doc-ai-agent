@@ -205,6 +205,21 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["window"]["window_type"], "months")
         self.assertEqual(result["window"]["window_value"], 6)
 
+    def test_non_agri_topic_does_not_reuse_agri_context(self):
+        result = self.understanding.analyze(
+            "浙江天气",
+            context={
+                "domain": "soil",
+                "region_name": "徐州市",
+            },
+        )
+
+        self.assertFalse(result["used_context"])
+        self.assertEqual(result["resolved_question"], "浙江天气")
+        self.assertEqual(result["normalized_question"], "浙江天气")
+        self.assertEqual(result["domain"], "")
+        self.assertEqual(result["region_name"], "")
+
     def test_preserves_trend_semantics_for_zoushi_wording(self):
         result = self.understanding.analyze("南京近三周虫害走势怎么样？")
 

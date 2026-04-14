@@ -359,6 +359,20 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(follow_up["evidence"]["generation_mode"], "rule")
         self.assertFalse(follow_up["evidence"]["request_understanding"]["used_context"])
 
+    def test_non_agri_topic_does_not_answer_with_stale_agri_context(self):
+        agent = DocAIAgent(
+            AlertRepository(self.db),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("过去5个月墒情最严重的地方是哪里", thread_id="thread-weather")
+        follow_up = agent.answer("浙江天气", thread_id="thread-weather")
+
+        self.assertEqual(follow_up["evidence"]["generation_mode"], "clarification")
+        self.assertFalse(follow_up["evidence"]["request_understanding"]["used_context"])
+        self.assertIn("信息不足", follow_up["answer"])
+        self.assertNotIn("墒情", follow_up["answer"])
+
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self.db = os.path.join(self.td.name, "alerts.db")
