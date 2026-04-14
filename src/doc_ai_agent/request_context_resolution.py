@@ -1,13 +1,23 @@
+"""请求上下文补全与纠错逻辑。
+
+主要解决多轮对话中的“省略表达”问题，例如：
+- “未来两周呢”“给建议”这类短句需要继承上一轮领域/地区；
+- “换成墒情”这类句子需要识别为切换，不应盲目继承；
+- 口语错别字（如“进两周”）要先规范化再解析。
+"""
+
 from __future__ import annotations
 
 import re
 
 
 def normalize_spaces(text: str) -> str:
+    """压缩多余空白并去掉首尾空格。"""
     return re.sub(r"\s+", " ", str(text or "").strip())
 
 
 def normalize_relative_window_typos(text: str) -> str:
+    """修正常见口语输入：把“进X周/月/天”规范为“近X周/月/天”。"""
     normalized = str(text or "")
     normalized = re.sub(
         r"(?<=[\u4e00-\u9fa5])进(?=(\d+|[一二两三四五六七八九十])个?(?:月|星期|周))",
@@ -23,6 +33,7 @@ def normalize_relative_window_typos(text: str) -> str:
 
 
 def normalize_city_mentions(text: str, city_aliases: dict[str, str]) -> str:
+    """把城市别名统一成标准城市名（如“南京”->“南京市”）。"""
     normalized = text
     for alias, canonical in city_aliases.items():
         normalized = re.sub(rf"{alias}(?!市)", canonical, normalized)
@@ -30,11 +41,13 @@ def normalize_city_mentions(text: str, city_aliases: dict[str, str]) -> str:
 
 
 def normalize_follow_up_question(text: str) -> str:
+    """追问场景下的轻量标准化：去标点、压空格。"""
     normalized = re.sub(r"[，。！？；、]+", "", text)
     return re.sub(r"\s+", " ", normalized).strip()
 
 
 def is_greeting(text: str, greeting_patterns: set[str]) -> bool:
+    """判断是否是问候语，避免被误判为业务追问。"""
     stripped = normalize_follow_up_question(text).lower()
     if not stripped:
         return False
@@ -44,6 +57,7 @@ def is_greeting(text: str, greeting_patterns: set[str]) -> bool:
 
 
 def is_invalid_region_candidate(candidate: str, invalid_region_phrases: set[str]) -> bool:
+    """过滤明显不是有效地区名的候选词。"""
     normalized = normalize_spaces(candidate)
     if not normalized:
         return True
@@ -65,6 +79,7 @@ def is_invalid_region_candidate(candidate: str, invalid_region_phrases: set[str]
 
 
 def coalesce_region_name(primary: str, secondary: str | None, city_aliases: dict[str, str], invalid_region_phrases: set[str]) -> str:
+    """从多个候选里挑选一个有效地区名。"""
     for candidate in [primary, secondary or ""]:
         if not candidate:
             continue
@@ -78,14 +93,17 @@ def coalesce_region_name(primary: str, secondary: str | None, city_aliases: dict
 
 
 def contains_pest(text: str) -> bool:
+    """判断文本是否显式提到虫情领域。"""
     return "虫情" in text or "虫害" in text or text.strip() == "虫"
 
 
 def contains_soil(text: str) -> bool:
+    """判断文本是否显式提到墒情领域。"""
     return "墒情" in text or text.strip() == "墒"
 
 
 def domain_label(domain: str) -> str:
+    """把内部领域枚举转换成中文标签。"""
     if domain == "pest":
         return "虫情"
     if domain == "soil":
@@ -94,6 +112,7 @@ def domain_label(domain: str) -> str:
 
 
 def inject_domain_into_question(question: str, domain: str) -> str:
+    """把继承得到的领域词补回用户问题，便于后续统一解析。"""
     label = domain_label(domain)
     if not label:
         return normalize_spaces(question)
@@ -111,6 +130,7 @@ def inject_domain_into_question(question: str, domain: str) -> str:
 
 
 def extract_region(text: str, city_aliases: dict[str, str], invalid_region_phrases: set[str]) -> str | None:
+    """从文本中抽取地区：城市优先，其次县区，再次市级。"""
     normalized = normalize_city_mentions(text, city_aliases)
     city_positions: list[tuple[int, str]] = []
     for canonical in city_aliases.values():
@@ -132,6 +152,7 @@ def extract_region(text: str, city_aliases: dict[str, str], invalid_region_phras
 
 
 def is_contextual_follow_up(text: str, greeting_patterns: set[str]) -> bool:
+    """判断是否属于依赖上下文的短追问。"""
     stripped = text.strip()
     if is_greeting(stripped, greeting_patterns):
         return False
@@ -143,6 +164,7 @@ def is_contextual_follow_up(text: str, greeting_patterns: set[str]) -> bool:
 
 
 def should_reuse_context_region(text: str, greeting_patterns: set[str]) -> bool:
+    """判断短追问是否应复用上一轮地区。"""
     stripped = text.strip()
     if is_greeting(stripped, greeting_patterns):
         return False
@@ -154,6 +176,7 @@ def should_reuse_context_region(text: str, greeting_patterns: set[str]) -> bool:
 
 
 def is_domain_switch_follow_up(text: str) -> bool:
+    """判断是否在“切换领域”（如换成墒情）。"""
     stripped = normalize_follow_up_question(text)
     if not stripped or stripped in {"虫情", "虫害", "墒情", "低墒", "高墒"}:
         return False
@@ -163,6 +186,7 @@ def is_domain_switch_follow_up(text: str) -> bool:
 
 
 def is_window_only_follow_up(text: str, *, extract_past_window, city_aliases: dict[str, str], invalid_region_phrases: set[str]) -> bool:
+    """判断是否只是补充时间窗，不包含领域或地区信息。"""
     stripped = normalize_follow_up_question(text)
     if not stripped:
         return False
@@ -180,6 +204,10 @@ def resolve_with_context(
     greeting_patterns: set[str],
     extract_past_window,
 ) -> tuple[str, list[str]]:
+    """根据上下文重写当前问题，并返回触发的解析动作。
+
+    返回值第二项是动作标签列表，便于上层记录“这次是如何被补全的”。
+    """
     context = dict(context or {})
     cleaned = normalize_city_mentions(normalize_relative_window_typos(normalize_spaces(text)), city_aliases)
     if not cleaned:
@@ -204,6 +232,7 @@ def resolve_with_context(
             city_aliases=city_aliases,
             invalid_region_phrases=invalid_region_phrases,
         ):
+            # 显式切换领域或仅补时间窗时，保留用户原句，不强行拼接旧上下文。
             return cleaned, []
         current_region = extract_region(cleaned, city_aliases, invalid_region_phrases)
         reuse_region = not current_region and should_reuse_context_region(cleaned, greeting_patterns)

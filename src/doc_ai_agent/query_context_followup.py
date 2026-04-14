@@ -1,3 +1,13 @@
+"""上下文追问规划。
+
+该模块处理“上一轮问题的延续提问”，例如：
+- “换成虫情看下”
+- “那这个县呢”
+- “未来两周会更糟吗”
+
+核心思想：优先复用线程上下文，最小化重复提问，同时保证安全边界。
+"""
+
 from __future__ import annotations
 
 from .followup_semantics import (
@@ -12,6 +22,7 @@ from .followup_semantics import (
 
 
 def _asks_region_ranking(planner, question: str) -> bool:
+    """判断问题是否在追问“地区排行”。"""
     helper = getattr(planner, "_asks_region_ranking", None)
     if callable(helper):
         return bool(helper(question))
@@ -20,6 +31,10 @@ def _asks_region_ranking(planner, question: str) -> bool:
 
 
 def build_context_follow_up_plan(planner, question: str, context: dict | None) -> dict | None:
+    """基于线程上下文构造追问计划。
+
+    返回 `None` 表示当前问题不适合走“上下文追问复用”链路。
+    """
     context = dict(context or {})
     if not context:
         return None
@@ -35,6 +50,7 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None) -
     previous_region_name = str(context.get("region_name") or "")
     previous_region_level = str(previous_route.get("region_level") or "")
     if any(token in question for token in ["这个县", "该县", "这个区", "该区"]) and previous_region_level != "county":
+        # 县/区指代对粒度要求更高，若上文不是县级上下文则先澄清，避免误用。
         return {
             "intent": "advice",
             "confidence": 0.3,
@@ -68,6 +84,7 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None) -
         route["city"] = city
         route["county"] = county
         if not city and not county:
+            # 用户只问“哪里最严重”这类问题时，主动清空地域，交由排名逻辑全域检索。
             route["city"] = None
             route["county"] = None
         return {
@@ -177,6 +194,7 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None) -
             route["city"] = city
             route["county"] = county
             if not city and not county:
+                # 预测排行追问但未给具体地区时，保留“全域排行”语义。
                 route["city"] = None
                 route["county"] = None
         elif not route.get("city") and not route.get("county") and context.get("region_name"):

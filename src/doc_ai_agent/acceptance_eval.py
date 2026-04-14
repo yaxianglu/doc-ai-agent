@@ -1,3 +1,5 @@
+"""验收评估工具：对批量问答结果打分并生成对比报告。"""
+
 from __future__ import annotations
 
 import json
@@ -7,6 +9,7 @@ from pathlib import Path
 
 
 def load_question_bank(path: Path) -> list[dict]:
+    """加载题库并规范化字段类型。"""
     payload = json.loads(path.read_text(encoding="utf-8"))
     return [
         {
@@ -19,22 +22,27 @@ def load_question_bank(path: Path) -> list[dict]:
 
 
 def _contains_any(text: str, tokens: list[str]) -> bool:
+    """判断文本是否命中任意关键词。"""
     return any(token in text for token in tokens)
 
 
 def _is_placeholder_question(question: str) -> bool:
+    """识别是否在问“某设备/某县”这类占位问题。"""
     return _contains_any(question, ["某设备", "某县", "这个县", "该县", "这个地区", "该地区", "这个区域", "该区域"])
 
 
 def _is_advice_or_explanation_question(question: str) -> bool:
+    """识别是否属于建议或原因解释类题目。"""
     return _contains_any(question, ["建议", "怎么办", "怎么做", "怎么处理", "该咋办", "巡查", "行动建议", "为什么", "原因"])
 
 
 def _is_domain_ambiguous_question(question: str) -> bool:
+    """识别是否缺少虫情/墒情领域限定。"""
     return "最严重的是哪里" in question and not _contains_any(question, ["虫情", "墒情", "预警", "设备"])
 
 
 def _score_item(item: dict) -> dict:
+    """按规则评估单条问答结果并输出分数与失败项。"""
     question = str(item.get("question") or "")
     answer = str(item.get("answer") or "")
     mode = str(item.get("mode") or "")
@@ -131,6 +139,7 @@ def _score_item(item: dict) -> dict:
 
 
 def score_run(raw_items: list[dict]) -> dict:
+    """对整批运行结果打分并汇总分类统计。"""
     items = [_score_item(item) for item in raw_items]
     by_category: dict[str, list[float]] = defaultdict(list)
     for item in items:
@@ -153,6 +162,7 @@ def score_run(raw_items: list[dict]) -> dict:
 
 
 def compare_scored_runs(*, current: dict, baseline: dict) -> dict:
+    """比较当前与基线评分，输出提升与回退条目。"""
     baseline_by_index = {int(item["index"]): item for item in list(baseline.get("items") or [])}
     current_by_index = {int(item["index"]): item for item in list(current.get("items") or [])}
     improved: list[dict] = []
@@ -191,6 +201,7 @@ def compare_scored_runs(*, current: dict, baseline: dict) -> dict:
 
 
 def render_score_report(scored: dict) -> str:
+    """将评分结果渲染为可读 Markdown 报告。"""
     lines = [
         "# Strict Acceptance Eval Report",
         "",
@@ -212,6 +223,7 @@ def render_score_report(scored: dict) -> str:
 
 
 def render_comparison_report(comparison: dict) -> str:
+    """把两次评分结果的差异渲染成 Markdown 对比报告。"""
     lines = [
         "# Strict Acceptance Eval Comparison",
         "",

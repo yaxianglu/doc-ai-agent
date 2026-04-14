@@ -1,3 +1,13 @@
+"""请求实体抽取服务。
+
+职责：
+- 从用户问题抽取领域（虫情/墒情）、地区、历史/未来时间窗；
+- 在可选启用 HanLP 时优先使用 NLP 结果；
+- 在 HanLP 不可用或失败时，使用确定性规则兜底。
+
+该模块只返回结构化语义，不负责问答生成。
+"""
+
 from __future__ import annotations
 
 import os
@@ -24,6 +34,10 @@ CITY_ALIASES = {
 
 @dataclass
 class EntityExtractionService:
+    """实体抽取入口。
+
+    `extract()` 的输出会被上层理解器与后端抽取结果合并。
+    """
     enable_hanlp: bool | None = None
     hanlp_pipeline: object | None = None
 
@@ -42,11 +56,13 @@ class EntityExtractionService:
     }
 
     def __post_init__(self) -> None:
+        """初始化 HanLP 开关与延迟加载状态。"""
         if self.enable_hanlp is None:
             self.enable_hanlp = str(os.getenv("DOC_AI_ENABLE_HANLP", "0")).strip() == "1"
         self._hanlp_attempted = self.hanlp_pipeline is not None
 
     def extract(self, text: str) -> dict:
+        """抽取核心实体信息。"""
         cleaned = self._normalize_city_mentions(self._normalize_spaces(text))
         if not cleaned:
             return {"engine": "fallback"}
@@ -65,6 +81,7 @@ class EntityExtractionService:
         }
 
     def _extract_with_hanlp(self, text: str) -> dict | None:
+        """使用 HanLP 进行抽取；失败时返回 None 交给规则兜底。"""
         pipeline = self._load_hanlp_pipeline()
         if pipeline is None:
             return None
@@ -90,6 +107,10 @@ class EntityExtractionService:
         }
 
     def _load_hanlp_pipeline(self):
+        """按需加载 HanLP pipeline，并缓存结果。
+
+        这里用 `_hanlp_attempted` 防止每次请求都重复导入与加载模型。
+        """
         if self._hanlp_attempted:
             return self.hanlp_pipeline
         self._hanlp_attempted = True
@@ -106,6 +127,7 @@ class EntityExtractionService:
 
     @classmethod
     def _region_from_hanlp(cls, tokens: object, ner: object, text: str) -> str:
+        """从 HanLP NER/分词结果中提取地区，失败则回退规则抽取。"""
         if isinstance(ner, list):
             for item in reversed(ner):
                 if not isinstance(item, (list, tuple)) or not item:
@@ -123,6 +145,7 @@ class EntityExtractionService:
 
     @classmethod
     def _canonicalize_region(cls, text: str) -> str:
+        """把候选地区统一成标准写法。"""
         candidate = cls._normalize_spaces(text)
         if not candidate:
             return ""
@@ -149,6 +172,7 @@ class EntityExtractionService:
 
     @staticmethod
     def _infer_domain(text: str) -> str:
+        """从文本关键词推断领域。"""
         has_pest = "虫情" in text or "虫害" in text
         has_soil = any(token in text for token in ["墒情", "低墒", "高墒", "缺水", "干旱", "土壤", "含水"])
         if has_pest and has_soil:
@@ -170,6 +194,7 @@ class EntityExtractionService:
 
     @classmethod
     def _extract_past_window(cls, text: str) -> dict:
+        """抽取历史时间窗。未命中则返回 all，表示不限制历史范围。"""
         if "今年以来" in text:
             current_year = datetime.now().year
             return {"window_type": "year_since", "window_value": current_year}
@@ -186,6 +211,7 @@ class EntityExtractionService:
 
     @classmethod
     def _extract_future_window(cls, text: str) -> dict | None:
+        """抽取未来时间窗。未命中返回 None。"""
         if "未来两周" in text:
             return {"window_type": "weeks", "window_value": 2, "horizon_days": 14}
         if m := re.search(r"未来(\d+|[一二两三四五六七八九十])个?(?:星期|周)", text):
@@ -201,6 +227,10 @@ class EntityExtractionService:
 
     @classmethod
     def _extract_region(cls, text: str) -> str:
+        """抽取地区名称。
+
+        优先城市别名命中，再尝试县/区与市级规则，最后返回空字符串。
+        """
         normalized = cls._normalize_city_mentions(text)
         city_positions: list[tuple[int, str]] = []
         for canonical in CITY_ALIASES.values():

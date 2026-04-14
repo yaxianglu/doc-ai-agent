@@ -1,3 +1,5 @@
+"""Agent 领域契约：集中定义规划、执行和响应的数据结构。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -5,6 +7,7 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class AnalysisSynthesisPayload:
+    """分析模式响应的证据载体。"""
     execution_plan: list[str]
     request_understanding: dict
     analysis_context: dict
@@ -16,6 +19,7 @@ class AnalysisSynthesisPayload:
     context_trace: list[str] = field(default_factory=list)
 
     def to_evidence(self) -> dict:
+        """转换为可直接写入响应 evidence 的字典。"""
         evidence = {
             "execution_plan": list(self.execution_plan),
             "request_understanding": dict(self.request_understanding),
@@ -33,6 +37,7 @@ class AnalysisSynthesisPayload:
 
 @dataclass(frozen=True)
 class RequestUnderstandingPayload:
+    """请求理解结果的强类型包装。"""
     original_question: str
     resolved_question: str
     normalized_question: str
@@ -53,6 +58,7 @@ class RequestUnderstandingPayload:
 
     @classmethod
     def from_dict(cls, payload: dict | None) -> "RequestUnderstandingPayload":
+        """从松散字典恢复为理解载体对象。"""
         raw = dict(payload or {})
         future_window = raw.get("future_window")
         return cls(
@@ -98,6 +104,7 @@ class RequestUnderstandingPayload:
         )
 
     def to_dict(self) -> dict:
+        """导出为可序列化字典，并保留额外字段。"""
         payload = {
             "original_question": self.original_question,
             "resolved_question": self.resolved_question,
@@ -122,6 +129,7 @@ class RequestUnderstandingPayload:
 
 @dataclass(frozen=True)
 class PlanPayload:
+    """规划器输出的强类型包装。"""
     intent: str
     confidence: float
     route: dict
@@ -135,6 +143,7 @@ class PlanPayload:
 
     @classmethod
     def from_dict(cls, payload: dict | None) -> "PlanPayload":
+        """从原始计划字典恢复为结构化对象。"""
         raw = dict(payload or {})
         return cls(
             intent=str(raw.get("intent") or ""),
@@ -165,6 +174,7 @@ class PlanPayload:
         )
 
     def to_dict(self) -> dict:
+        """导出为响应与状态节点可复用的字典。"""
         payload = {
             "intent": self.intent,
             "confidence": self.confidence,
@@ -182,12 +192,14 @@ class PlanPayload:
 
 @dataclass(frozen=True)
 class AnalysisResponseEnvelope:
+    """analysis 模式响应外壳。"""
     answer: str
     historical_data: object
     forecast_data: object
     payload: AnalysisSynthesisPayload
 
     def to_response(self) -> dict:
+        """组装前端消费的统一响应结构。"""
         return {
             "response": {
                 "mode": "analysis",
@@ -203,16 +215,19 @@ class AnalysisResponseEnvelope:
 
 @dataclass(frozen=True)
 class ForecastExecutionContext:
+    """预测节点执行时需要的最小上下文。"""
     route: dict | None
     runtime_context: dict
 
     @property
     def enabled(self) -> bool:
+        """判断当前计划是否真的启用了预测分支。"""
         return bool(self.route)
 
 
 @dataclass(frozen=True)
 class FinalResponseEvidence:
+    """最终响应 evidence 的聚合包装器。"""
     base_evidence: dict
     historical_query: dict | None
     task_graph: dict | None
@@ -222,6 +237,7 @@ class FinalResponseEvidence:
     response_meta: dict
 
     def to_dict(self) -> dict:
+        """合并各阶段 evidence，得到最终可序列化结果。"""
         evidence = dict(self.base_evidence or {})
         if self.historical_query:
             evidence.setdefault("historical_query", dict(self.historical_query))

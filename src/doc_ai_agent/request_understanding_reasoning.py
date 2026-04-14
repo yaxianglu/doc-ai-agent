@@ -1,3 +1,11 @@
+"""请求理解推理层（规则组合）。
+
+该模块在“基础意图信号”之上做更高阶判断，例如：
+- 最终 task_type 判定；
+- 是否需要查询历史数据；
+- 如何拼装标准化问题文本。
+"""
+
 from __future__ import annotations
 
 import re
@@ -7,6 +15,7 @@ from .request_context_resolution import contains_pest, contains_soil
 
 
 def extract_all_regions(text: str, city_aliases: dict[str, str], normalize_city_mentions) -> list[str]:
+    """提取文本中出现的所有标准地区名（去重且保序）。"""
     normalized = normalize_city_mentions(text, city_aliases)
     city_positions: list[tuple[int, str]] = []
     for canonical in city_aliases.values():
@@ -21,10 +30,12 @@ def extract_all_regions(text: str, city_aliases: dict[str, str], normalize_city_
 
 
 def has_negated_trend(text: str) -> bool:
+    """判断是否显式否定趋势分析（如“不要趋势”）。"""
     return any(token in text for token in ["不是趋势", "别看趋势", "不要趋势", "不看趋势"])
 
 
 def infer_task_type(text: str, domain: str, region_name: str, needs_explanation: bool, needs_advice: bool, compare_hints: list[str], city_aliases: dict[str, str], normalize_city_mentions) -> str:
+    """综合多种信号推断任务类型。"""
     if any(token in text for token in compare_hints):
         if domain == "mixed" or (contains_pest(text) and contains_soil(text)):
             return "cross_domain_compare"
@@ -66,8 +77,10 @@ def infer_task_type(text: str, domain: str, region_name: str, needs_explanation:
 
 
 def needs_historical_data(text: str, historical_window: dict, future_window: dict | None, domain: str, task_type: str, region_name: str) -> bool:
+    """判断是否需要进入历史数据检索。"""
     if future_window and historical_window.get("window_type") == "all":
         if not any(token in text for token in ["过去", "最近", "近", "历史", "此前", "之前"]):
+            # 当用户只谈未来且没提历史时，不强制查历史，避免无关检索。
             return False
     if (
         historical_window.get("window_type") == "all"
@@ -92,6 +105,7 @@ def needs_historical_data(text: str, historical_window: dict, future_window: dic
 
 
 def window_prefix(window: dict) -> str:
+    """把时间窗转换为查询语句前缀。"""
     if window.get("window_type") == "months":
         return f"过去{window['window_value']}个月"
     if window.get("window_type") == "weeks":
@@ -102,6 +116,7 @@ def window_prefix(window: dict) -> str:
 
 
 def build_historical_query_text(domain: str, historical_window: dict, cleaned: str, task_type: str, region_name: str, region_level: str) -> str:
+    """构建历史检索问题文本。"""
     if not domain:
         return cleaned
     if any(token in cleaned for token in ["这个县", "该县", "这个市", "该市", "这个地区", "该地区", "这个区域", "该区域"]):
@@ -121,6 +136,7 @@ def build_historical_query_text(domain: str, historical_window: dict, cleaned: s
 
 
 def future_window_phrase(future_window: dict) -> str:
+    """把未来时间窗转成人类可读短语。"""
     window_type = str(future_window.get("window_type") or "")
     window_value = future_window.get("window_value")
     if window_type == "weeks" and window_value == 2:
@@ -149,6 +165,7 @@ def build_normalized_question(
     region_name: str,
     region_level: str,
 ) -> str:
+    """拼接标准化问题文本，供后续检索与回答流程使用。"""
     parts: list[str] = []
     if needs_historical_data(cleaned, historical_window, future_window, domain, task_type, region_name):
         parts.append(build_historical_query_text(domain, historical_window, cleaned, task_type, region_name, region_level))

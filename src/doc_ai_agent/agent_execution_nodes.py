@@ -1,9 +1,12 @@
+"""Agent 执行节点工具：封装查询、预测、知识与澄清节点行为。"""
+
 from __future__ import annotations
 
 from .agent_contracts import ForecastExecutionContext
 
 
 def build_query_result_payload(result, route: dict) -> dict:
+    """把 QueryEngine 结果适配为节点间通用 payload。"""
     evidence = dict(getattr(result, "evidence", {}) or {})
     evidence.setdefault("query_type", route.get("query_type") or "")
     evidence.setdefault("city", route.get("city"))
@@ -29,6 +32,7 @@ def run_query_node(
     plan_route,
     query_engine,
 ) -> dict:
+    """执行查询节点：调用查询引擎并补齐证据字段。"""
     compare_request = detect_compare_request(question, understanding, plan, memory_context)
     if compare_request:
         return {"query_result": answer_compare_request(question, compare_request, understanding, plan, memory_context)}
@@ -56,6 +60,7 @@ def build_forecast_execution_context(
     asks_region_ranking,
     first_region_name,
 ) -> ForecastExecutionContext:
+    """根据计划和理解结果，决定预测节点是否应该执行。"""
     if not understanding.get("needs_forecast"):
         return ForecastExecutionContext(route=None, runtime_context={})
 
@@ -117,6 +122,7 @@ def run_knowledge_node(
     build_runtime_context,
     first_region_name,
 ) -> dict:
+    """执行知识检索节点，统一处理异常并返回可选知识列表。"""
     if not (understanding.get("needs_explanation") or understanding.get("needs_advice")):
         return {"knowledge": []}
     if source_provider is None:
@@ -152,6 +158,7 @@ def build_advice_response(
     advice_engine,
     execution_plan: list[str],
 ) -> dict:
+    """生成 advice 模式响应，并附带执行计划证据。"""
     runtime_context = build_runtime_context(
         understanding.get("normalized_question") or question,
         plan,
@@ -178,6 +185,7 @@ def build_advice_response(
 
 
 def build_clarification_response(plan: dict) -> dict:
+    """生成澄清响应，提示用户补充关键槽位信息。"""
     return {
         "response": {
             "mode": "advice",

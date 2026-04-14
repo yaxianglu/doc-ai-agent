@@ -1,7 +1,10 @@
+"""会话记忆快照工具：负责槽位标准化与持久化结构构建。"""
+
 from __future__ import annotations
 
 
 def memory_time_range_value(window: dict | None) -> dict:
+    """把 window 结构转换为标准化 time_range 槽位值。"""
     normalized_window = dict(window or {})
     window_type = str(normalized_window.get("window_type") or "")
     window_value = normalized_window.get("window_value")
@@ -11,6 +14,7 @@ def memory_time_range_value(window: dict | None) -> dict:
 
 
 def memory_slot_priority(source: str) -> int:
+    """按来源类型给记忆槽位分配优先级。"""
     if source == "explicit":
         return 100
     if source == "carried":
@@ -25,6 +29,7 @@ def memory_slot_priority(source: str) -> int:
 
 
 def memory_slot_ttl(source: str) -> int:
+    """按来源类型给记忆槽位设置有效轮次。"""
     if source in {"explicit", "carried"}:
         return 4
     if source == "system":
@@ -42,6 +47,7 @@ def build_memory_slot(
     previous_slot: dict | None = None,
     preserve_previous: bool = False,
 ) -> dict:
+    """构建单个记忆槽位，附带来源优先级与有效轮次信息。"""
     if preserve_previous and previous_slot:
         return dict(previous_slot)
 
@@ -69,6 +75,7 @@ def build_memory_snapshot(
     first_region_name,
     derive_domain,
 ) -> dict:
+    """生成标准化记忆快照，供持久化层写入。"""
     previous_context = dict(previous_context or {})
     plan = dict(plan or {})
     response = dict(response or {})

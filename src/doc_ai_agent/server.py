@@ -1,3 +1,5 @@
+"""服务接入层：初始化仓储与 Agent，并提供 HTTP 接口。"""
+
 from __future__ import annotations
 
 import glob
@@ -21,6 +23,7 @@ from .xlsx_loader import load_alerts_from_xlsx
 
 
 class AgentApp:
+    """应用容器：负责资源初始化、数据刷新与聊天调用。"""
     def __init__(self, config: AppConfig):
         self.config = config
         self.auth_repo = AuthRepository(config.auth_db_path)
@@ -80,8 +83,10 @@ class AgentApp:
         )
 
     def _refresh_mysql(self) -> dict:
+        """将数据目录中的 Excel 批量导入 MySQL。"""
         inserted = {"pest": 0, "soil": 0, "device_mapping": 0, "alerts": 0}
         if hasattr(self.repo, "structured_data_ready") and self.repo.structured_data_ready():
+            # 已完成结构化导入时直接跳过，避免重复写入。
             inserted["skipped"] = True
             return inserted
         data_files = sorted(glob.glob(os.path.join(self.config.data_dir, "*.xlsx")))
@@ -144,6 +149,7 @@ class AgentApp:
         return inserted
 
     def refresh(self):
+        """按当前仓储类型刷新底层数据。"""
         if isinstance(self.repo, MySQLRepository):
             return self._refresh_mysql()
 
@@ -154,21 +160,26 @@ class AgentApp:
         return inserted
 
     def chat(self, question: str, history: object = None, thread_id: str | None = None) -> dict:
+        """调用 Agent 主入口处理一次对话请求。"""
         if not question:
             raise ValueError("question is required")
         return self.agent.answer(question, history=history, thread_id=thread_id)
 
     def login(self, username: str, password: str) -> dict | None:
+        """执行用户名密码登录。"""
         return self.auth.login(username, password)
 
     def current_user(self, token: str) -> dict | None:
+        """根据 token 获取当前登录用户。"""
         return self.auth.authenticate(token)
 
     def logout(self, token: str) -> None:
+        """注销当前 token 对应的会话。"""
         self.auth.logout(token)
 
 
 def build_http_server(config: AppConfig) -> HTTPServer:
+    """构建 HTTPServer，并挂载健康检查/登录/聊天接口。"""
     app = AgentApp(config)
 
     class Handler(BaseHTTPRequestHandler):
@@ -259,4 +270,5 @@ def build_http_server(config: AppConfig) -> HTTPServer:
 
 
 def build_app(config: AppConfig) -> AgentApp:
+    """创建 AgentApp 实例，供脚本或测试复用。"""
     return AgentApp(config)

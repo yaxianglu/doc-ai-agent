@@ -1,3 +1,14 @@
+"""MySQL 仓储实现。
+
+该模块负责 doc-ai-agent 的结构化数据落库与分析查询，核心职责：
+- 建表与默认规则初始化
+- 批量 Upsert（设备、区域、虫情、墒情、告警）
+- 提供面向上层问答/分析的聚合查询接口
+
+说明：本文件包含较多 SQL 模板，注释重点放在“为什么这么做”，
+帮助对 Python/SQL 还不熟悉的同学快速理解数据流。
+"""
+
 from __future__ import annotations
 
 import json
@@ -185,6 +196,8 @@ DEFAULT_RULES = [
 
 @dataclass
 class MySQLConnectionInfo:
+    """MySQL 连接参数对象（由连接串解析得到）。"""
+
     host: str
     port: int
     user: str
@@ -194,12 +207,20 @@ class MySQLConnectionInfo:
 
 
 class MySQLRepository:
+    """MySQL 数据仓储。
+
+    该类通过命令行 `mysql` 客户端执行 SQL，而不是直接使用驱动连接。
+    这样可在部署环境中复用现有客户端配置，同时减少 Python 依赖。
+    """
+
     def __init__(self, db_url: str):
+        """初始化仓储并解析连接串。"""
         self.db_url = db_url
         self.conn = self._parse_url(db_url)
 
     @staticmethod
     def _parse_url(db_url: str) -> MySQLConnectionInfo:
+        """解析 `mysql://` 连接串，返回结构化连接信息。"""
         parsed = urlparse(db_url)
         if parsed.scheme not in {"mysql"}:
             raise ValueError("DOC_AGENT_DB_URL 必须是 mysql:// 连接串")
@@ -216,6 +237,7 @@ class MySQLRepository:
         )
 
     def _write_defaults_file(self) -> str:
+        """生成临时 MySQL defaults 文件，避免密码出现在命令行参数中。"""
         fd, path = tempfile.mkstemp(prefix="doc-ai-agent-mysql-", suffix=".cnf")
         content = (
             "[client]\n"
@@ -233,6 +255,11 @@ class MySQLRepository:
         return path
 
     def _run_sql(self, sql: str, *, expect_output: bool = False) -> str:
+        """执行 SQL 并返回输出（可选）。
+
+        `expect_output=False` 适合 DDL/DML；
+        `expect_output=True` 适合 `SELECT` 查询。
+        """
         defaults_file = self._write_defaults_file()
         try:
             command = [
@@ -256,6 +283,7 @@ class MySQLRepository:
 
     @staticmethod
     def _quote(value) -> str:
+        """将 Python 值安全转成 SQL 字面量。"""
         if value is None:
             return "NULL"
         if isinstance(value, bool):
@@ -267,6 +295,7 @@ class MySQLRepository:
         return f"'{text}'"
 
     def _insert_many(self, table: str, columns: List[str], rows: Iterable[dict], update_columns: List[str], batch_size: int = 500) -> int:
+        """按批次执行 `INSERT ... ON DUPLICATE KEY UPDATE`。"""
         batch = []
         inserted = 0
         rows = list(rows)
@@ -283,6 +312,7 @@ class MySQLRepository:
         return inserted
 
     def _flush_insert(self, table: str, columns: List[str], values_sql: List[str], update_columns: List[str]) -> int:
+        """把单个批次的 SQL 真正落库。"""
         updates = ", ".join(f"{col}=VALUES({col})" for col in update_columns)
         sql = (
             f"INSERT INTO {table} ({', '.join(columns)}) VALUES\n"
@@ -293,10 +323,12 @@ class MySQLRepository:
         return len(values_sql)
 
     def create_tables(self) -> None:
+        """创建所有业务表，并初始化默认分析规则。"""
         self._run_sql(SCHEMA_SQL)
         self._seed_rules()
 
     def structured_data_ready(self) -> bool:
+        """检查结构化数据是否已经准备完成。"""
         try:
             pest_count = self._fetch_int("SELECT COUNT(*) FROM fact_pest_monitor;")
             soil_count = self._fetch_int("SELECT COUNT(*) FROM fact_soil_moisture;")
@@ -307,11 +339,13 @@ class MySQLRepository:
         return pest_count > 0 and soil_count > 0 and region_count > 0 and device_count > 0
 
     def _seed_rules(self) -> None:
+        """写入默认指标规则（幂等更新）。"""
         columns = ["rule_code", "rule_name", "rule_scope", "rule_definition_json", "enabled"]
         rows = [{**rule, "enabled": 1} for rule in DEFAULT_RULES]
         self._insert_many("metric_rule", columns, rows, ["rule_name", "rule_scope", "rule_definition_json", "enabled"])
 
     def begin_batch(self, source_name: str, source_file: str, note: str = "") -> str:
+        """开始一次 ETL 导入批次，返回批次 ID。"""
         batch_id = str(uuid.uuid4())
         sql = f"""
         INSERT INTO etl_import_batch (
@@ -324,6 +358,7 @@ class MySQLRepository:
         return batch_id
 
     def finish_batch(self, batch_id: str, raw_row_count: int, loaded_row_count: int, status: str = "done", note: str = "") -> None:
+        """结束导入批次并记录统计信息。"""
         sql = f"""
         UPDATE etl_import_batch
         SET finished_at = NOW(), status = {self._quote(status)}, raw_row_count = {int(raw_row_count)}, loaded_row_count = {int(loaded_row_count)}, note = {self._quote(note)}
@@ -332,10 +367,12 @@ class MySQLRepository:
         self._run_sql(sql)
 
     def upsert_regions(self, rows: Iterable[dict]) -> int:
+        """区域维度去重并 Upsert。"""
         dedup = {}
         for row in rows:
             key = f"江苏省|{row.get('city_name') or ''}|{row.get('county_name') or ''}|{row.get('town_name') or ''}"
             if key == "江苏省|||":
+                # 全空地区没有分析价值，直接跳过。
                 continue
             dedup[key] = {
                 "province_name": "江苏省",
@@ -348,6 +385,7 @@ class MySQLRepository:
         return self._insert_many("dim_region", columns, dedup.values(), ["city_name", "county_name", "town_name"])
 
     def upsert_devices(self, rows: Iterable[dict]) -> int:
+        """设备维度 Upsert，仅保留具备 device_sn 的记录。"""
         columns = [
             "device_sn", "device_name", "device_type", "city_name", "county_name", "town_name",
             "longitude", "latitude", "mapping_source", "mapping_confidence", "first_seen_at", "last_seen_at"
@@ -365,6 +403,7 @@ class MySQLRepository:
         )
 
     def bulk_upsert_pest(self, rows: Iterable[dict]) -> int:
+        """批量写入虫情事实表。"""
         columns = [
             "record_id", "batch_id", "device_sn", "device_name", "device_type", "device_status", "city_name", "county_name",
             "longitude", "latitude", "pest_name_raw", "pest_num_raw", "normalized_pest_names", "normalized_pest_count",
@@ -378,6 +417,7 @@ class MySQLRepository:
         )
 
     def bulk_upsert_soil(self, rows: Iterable[dict]) -> int:
+        """批量写入墒情事实表。"""
         columns = [
             "record_id", "batch_id", "device_sn", "gateway_id", "sensor_id", "unit_id", "city_name", "county_name", "town_name", "device_name",
             "longitude", "latitude", "sample_time", "create_time", "water20cm", "water40cm", "water60cm", "water80cm",
@@ -393,6 +433,7 @@ class MySQLRepository:
         )
 
     def enrich_soil_dimensions(self) -> None:
+        """使用设备维表补齐墒情记录中缺失的维度信息。"""
         sql = """
         UPDATE fact_soil_moisture s
         JOIN dim_device d ON d.device_sn = s.device_sn
@@ -408,6 +449,7 @@ class MySQLRepository:
         self._run_sql(sql)
 
     def _fetch_json(self, sql: str):
+        """执行查询并解析为 JSON 数组，异常时兜底为空列表。"""
         output = self._run_sql(sql, expect_output=True)
         if not output:
             return []
@@ -417,6 +459,7 @@ class MySQLRepository:
             return []
 
     def _fetch_json_object(self, sql: str):
+        """执行查询并解析为 JSON 对象，异常时返回 `None`。"""
         output = self._run_sql(sql, expect_output=True)
         if not output:
             return None
@@ -426,10 +469,12 @@ class MySQLRepository:
             return None
 
     def _fetch_int(self, sql: str) -> int:
+        """执行整型聚合查询。"""
         output = self._run_sql(sql, expect_output=True)
         return int(output or 0)
 
     def insert_alerts(self, rows: Iterable[dict]) -> int:
+        """批量写入告警事实表，过滤掉缺少来源主键的脏数据。"""
         columns = [
             "alert_content",
             "alert_type",
@@ -484,9 +529,11 @@ class MySQLRepository:
         )
 
     def top_n(self, field: str, n: int, since: str) -> List[dict]:
+        """兼容旧调用：按字段统计 TopN。"""
         return self.top_n_filtered(field, n, since)
 
     def sample_alerts(self, since: str, limit: int = 3) -> List[dict]:
+        """获取告警样本，用于摘要展示。"""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -510,6 +557,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def available_alert_time_range(self) -> Optional[dict]:
+        """查询告警时间覆盖范围。"""
         sql = """
         SELECT JSON_OBJECT(
           'min_time', DATE_FORMAT(MIN(alert_time), '%Y-%m-%d %H:%i:%s'),
@@ -527,6 +575,7 @@ class MySQLRepository:
         }
 
     def avg_alert_value_by_level(self, since: str) -> List[dict]:
+        """按告警等级统计平均告警值。"""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -552,6 +601,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def devices_triggered_on_multiple_days(self, since: str, min_days: int = 2, limit: int = 50) -> List[dict]:
+        """统计在多个自然日触发告警的设备。"""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -589,6 +639,7 @@ class MySQLRepository:
         city: Optional[str] = None,
         level: Optional[str] = None,
     ) -> int:
+        """按时间与维度条件统计告警数量。"""
         where = [f"alert_time >= {self._quote(since)}"]
         if until:
             where.append(f"alert_time < {self._quote(until)}")
@@ -604,6 +655,7 @@ class MySQLRepository:
         until: Optional[str] = None,
         city: Optional[str] = None,
     ) -> List[dict]:
+        """按天聚合告警趋势。"""
         where = [f"alert_time >= {self._quote(since)}"]
         if until:
             where.append(f"alert_time < {self._quote(until)}")
@@ -637,6 +689,7 @@ class MySQLRepository:
         until: Optional[str] = None,
         min_alert_value: Optional[float] = None,
     ) -> List[dict]:
+        """支持时间窗与阈值过滤的 TopN 统计。"""
         allowed = {"city", "county", "alert_type", "alert_level"}
         if field not in allowed:
             raise ValueError("unsupported field")
@@ -668,6 +721,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def highest_alert_values(self, limit: int = 10, since: Optional[str] = None) -> List[dict]:
+        """查询告警值最高的记录。"""
         where = ["alert_value IS NOT NULL", "TRIM(alert_value) != ''"]
         if since:
             where.append(f"alert_time >= {self._quote(since)}")
@@ -691,6 +745,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def latest_by_device(self, device_code: str) -> Optional[dict]:
+        """按设备编码查询最新一条告警。"""
         sql = f"""
         SELECT JSON_OBJECT(
           'alert_time', DATE_FORMAT(alert_time, '%Y-%m-%d %H:%i:%s'),
@@ -709,6 +764,7 @@ class MySQLRepository:
         return self._fetch_json_object(sql)
 
     def latest_by_region_keyword(self, city_or_county_keyword: str, region_keyword: str) -> Optional[dict]:
+        """按地区+区域关键词查询最新告警。"""
         sql = f"""
         SELECT JSON_OBJECT(
           'alert_time', DATE_FORMAT(alert_time, '%Y-%m-%d %H:%i:%s'),
@@ -728,6 +784,7 @@ class MySQLRepository:
         return self._fetch_json_object(sql)
 
     def sms_empty_records(self, county_keyword: str, limit: int = 20) -> List[dict]:
+        """查询短信内容为空的告警记录。"""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -748,6 +805,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def top_active_devices(self, since: str, until: Optional[str] = None, limit: int = 10) -> List[dict]:
+        """统计时间窗内最活跃的告警设备。"""
         until_sql = f"AND alert_time < {self._quote(until)}" if until else ""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
@@ -780,6 +838,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def unknown_region_devices(self, limit: int = 20) -> List[dict]:
+        """查询地区信息缺失或未知的设备。"""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -812,6 +871,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def empty_county_records(self, limit: int = 20) -> List[dict]:
+        """查询区县字段为空的告警明细。"""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -833,6 +893,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def unmatched_region_records(self, limit: int = 20) -> List[dict]:
+        """查询城市/区县/区域名任一缺失的记录。"""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -856,6 +917,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def subtype_ratio(self, alert_type: str, alert_subtype: str, since: str) -> dict:
+        """计算某主类型下子类型占比。"""
         total = self._fetch_int(
             f"SELECT COUNT(*) FROM alerts WHERE alert_time >= {self._quote(since)} AND alert_type = {self._quote(alert_type)};"
         )
@@ -866,6 +928,7 @@ class MySQLRepository:
         return {"type_count": total, "subtype_count": sub_count, "ratio_percent": ratio}
 
     def count_alert_value_above(self, threshold: float, since: str, until: Optional[str] = None) -> int:
+        """统计告警值超过阈值的记录数。"""
         where = [
             f"alert_time >= {self._quote(since)}",
             "alert_value IS NOT NULL",
@@ -877,6 +940,7 @@ class MySQLRepository:
         return self._fetch_int(f"SELECT COUNT(*) FROM alerts WHERE {' AND '.join(where)};")
 
     def sample_pest_records(self, since: str, until: Optional[str], limit: int = 3) -> List[dict]:
+        """获取虫情样本记录。"""
         until_sql = f"AND monitor_time < {self._quote(until)}" if until else ""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
@@ -899,6 +963,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def sample_soil_records(self, since: str, until: Optional[str], limit: int = 3) -> List[dict]:
+        """获取墒情样本记录。"""
         until_sql = f"AND sample_time < {self._quote(until)}" if until else ""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
@@ -921,6 +986,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def available_pest_time_range(self) -> Optional[dict]:
+        """查询可用虫情时间范围。"""
         sql = """
         SELECT JSON_OBJECT(
           'min_time', DATE_FORMAT(MIN(monitor_time), '%Y-%m-%d %H:%i:%s'),
@@ -939,6 +1005,7 @@ class MySQLRepository:
         }
 
     def available_soil_time_range(self, anomaly_direction: Optional[str] = None) -> Optional[dict]:
+        """查询可用墒情时间范围，可按异常方向过滤。"""
         where = ["water20cm_valid = 1", "sample_time IS NOT NULL"]
         if anomaly_direction in {"low", "high"}:
             where.append(f"soil_anomaly_type = {self._quote(anomaly_direction)}")
@@ -967,6 +1034,7 @@ class MySQLRepository:
         city: Optional[str] = None,
         county: Optional[str] = None,
     ):
+        """按区域统计虫情严重度 TopN。"""
         region_col = "county_name" if region_level == "county" else "city_name"
         until_sql = f"AND monitor_time < {self._quote(until)}" if until else ""
         filter_sql = ""
@@ -1014,6 +1082,7 @@ class MySQLRepository:
         city: Optional[str] = None,
         county: Optional[str] = None,
     ):
+        """按区域统计墒情异常 TopN。"""
         region_col = "county_name" if region_level == "county" else "city_name"
         until_sql = f"AND sample_time < {self._quote(until)}" if until else ""
         direction_sql = f"AND soil_anomaly_type = {self._quote(anomaly_direction)}" if anomaly_direction in {"low", "high"} else "AND soil_anomaly_type IN (\'low\', \'high\')"
@@ -1056,6 +1125,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def pest_trend(self, since: str, until: Optional[str], region_name: str | None = None, region_level: str = "city"):
+        """按天统计虫情趋势。"""
         region_col = "county_name" if region_level == "county" else "city_name"
         until_sql = f"AND monitor_time < {self._quote(until)}" if until else ""
         region_sql = f"AND {region_col} = {self._quote(region_name)}" if region_name else ""
@@ -1085,6 +1155,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def soil_trend(self, since: str, until: Optional[str], region_name: str | None = None, region_level: str = "city"):
+        """按天统计墒情趋势。"""
         region_col = "county_name" if region_level == "county" else "city_name"
         until_sql = f"AND sample_time < {self._quote(until)}" if until else ""
         region_sql = f"AND {region_col} = {self._quote(region_name)}" if region_name else ""
@@ -1116,6 +1187,7 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def joint_risk_regions(self, since: str, until: Optional[str], region_level: str = "city", top_n: int = 5):
+        """计算虫情与低墒情的联合风险区域。"""
         region_col = "county_name" if region_level == "county" else "city_name"
         until_pest = f"AND monitor_time < {self._quote(until)}" if until else ""
         until_soil = f"AND sample_time < {self._quote(until)}" if until else ""
@@ -1159,4 +1231,5 @@ class MySQLRepository:
         return self._fetch_json(sql)
 
     def count_since(self, since: str) -> int:
+        """兼容接口：统计某时间点后的告警总数。"""
         return self._fetch_int(f"SELECT COUNT(*) FROM alerts WHERE alert_time >= {self._quote(since)};")

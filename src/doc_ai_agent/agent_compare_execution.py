@@ -1,3 +1,5 @@
+"""对比请求执行层：负责双地区查询与对比结果组装。"""
+
 from __future__ import annotations
 
 from .agent_comparison import comparison_conclusion, comparison_domain_label, comparison_summary, window_summary
@@ -11,6 +13,7 @@ def execute_compare_request(
     query_engine,
     infer_region_level_from_name,
 ) -> dict:
+    """执行双地区对比查询，并返回统一 analysis 响应结构。"""
     if compare_request["kind"] == "region_compare":
         domain = str(compare_request["domain"])
         domain_label = comparison_domain_label(domain)

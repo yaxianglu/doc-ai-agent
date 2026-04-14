@@ -1,3 +1,5 @@
+"""轻量预测引擎：基于历史序列估计未来风险趋势。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5,12 +7,14 @@ from dataclasses import dataclass
 
 @dataclass
 class ForecastResult:
+    """预测执行结果：回答文本、序列数据与预测证据。"""
     answer: str
     data: list
     evidence: dict
 
 
 class ForecastEngine:
+    """基础预测引擎：对虫情/墒情序列做简化趋势外推。"""
     def __init__(self, repo):
         self.repo = repo
 
@@ -37,6 +41,7 @@ class ForecastEngine:
         return round(projected, 2), round(slope, 2)
 
     def forecast(self, question: str, plan: dict, context: dict | None = None) -> ForecastResult:
+        """根据计划类型执行预测，并返回统一证据结构。"""
         route = dict(plan or {})
         context = dict(context or {})
         query_type = str(route.get("query_type") or "")

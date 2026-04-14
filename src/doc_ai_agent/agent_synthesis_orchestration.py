@@ -1,3 +1,5 @@
+"""回复合成编排：拼装解释、建议和最终分析回答。"""
+
 from __future__ import annotations
 
 from .agent_contracts import AnalysisResponseEnvelope, AnalysisSynthesisPayload
@@ -11,6 +13,7 @@ from .answer_style import (
 
 
 def first_region_name(response: dict) -> str:
+    """从查询结果里提取最适合作为回答主语的地区名。"""
     data = response.get("data")
     if isinstance(data, list) and data:
         first = data[0]
@@ -35,6 +38,7 @@ def build_plan_context(
     forecast_result: dict,
     build_runtime_context,
 ) -> dict:
+    """构建解释/建议共享的上下文，统一字段口径。"""
     plan_context = build_runtime_context(
         understanding.get("normalized_question") or question,
         plan,
@@ -60,6 +64,7 @@ def build_explanation_payload(
     build_data_grounded_explanation,
     advice_engine,
 ) -> tuple[str, list]:
+    """优先使用数据驱动解释，必要时回退到 advice 引擎。"""
     if not understanding.get("needs_explanation"):
         return "", []
     historical_evidence = dict(query_result.get("evidence") or {})
@@ -93,6 +98,7 @@ def build_advice_payload(
     build_data_grounded_advice,
     advice_engine,
 ) -> tuple[str, list]:
+    """优先使用数据驱动建议，必要时回退到 advice 引擎。"""
     if not understanding.get("needs_advice"):
         return "", []
     advice_text = build_data_grounded_advice(
@@ -114,6 +120,7 @@ def build_analysis_answer(
     knowledge: list[dict],
     advice_text: str,
 ) -> str:
+    """把结论、原因、预测、依据、建议拼成完整分析回答。"""
     sections: list[str] = []
     if query_result.get("answer"):
         sections.append(format_answer_section("结论", polish_conclusion_text(query_result["answer"])))
@@ -148,6 +155,7 @@ def synthesize_analysis_response(
     advice_text: str,
     advice_sources: list,
 ) -> dict:
+    """合成 analysis 模式响应，并拼接统一 evidence。"""
     answer = build_analysis_answer(
         query_result=query_result,
         explanation_text=explanation_text,

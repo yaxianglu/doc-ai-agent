@@ -1,1 +1,1 @@
-"""doc_ai_agent package."""
+"""doc_ai_agent 包：聚合文档智能问答代理的执行、服务与接入能力。"""
