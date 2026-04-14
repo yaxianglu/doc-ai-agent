@@ -48,6 +48,7 @@ from .request_understanding_reasoning import (
     infer_task_type,
     needs_historical_data,
 )
+from .semantic_parser import SemanticParser
 
 CITY_ALIASES = {
     "南京": "南京市",
@@ -139,6 +140,7 @@ class RequestUnderstanding:
         """初始化可选后端抽取器与本地实体抽取服务。"""
         self.backend = backend
         self.extractor = extractor or EntityExtractionService()
+        self.semantic_parser = SemanticParser(backend=backend, extractor=self.extractor)
 
     def analyze(self, question: str, history: object = None, context: dict | None = None) -> dict:
         """把用户问题解析成结构化语义结果。
@@ -146,6 +148,7 @@ class RequestUnderstanding:
         注意：`history` 当前保留为接口兼容参数，本函数核心使用的是 `context`。
         """
         text = (question or "").strip()
+        semantic_parse = self.semantic_parser.parse(text, context=context)
         resolved_question, context_resolution = self._resolve_with_context(text, context)
         cleaned, ignored = self._strip_noise(resolved_question)
         used_context = bool(context_resolution)
@@ -239,6 +242,7 @@ class RequestUnderstanding:
             "needs_explanation": needs_explanation_flag,
             "needs_advice": needs_advice_flag,
             "execution_plan": execution_plan,
+            "semantic_parse": semantic_parse.to_dict(),
         }
 
     def _extract_with_entity_service(self, cleaned: str) -> dict:
