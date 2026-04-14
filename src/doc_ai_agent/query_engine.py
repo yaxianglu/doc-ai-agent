@@ -377,6 +377,82 @@ class QueryEngine:
             return "整体下降"
         return "整体波动平稳"
 
+    @staticmethod
+    def _first_metric(series: list[dict], key: str) -> float:
+        if not series:
+            return 0.0
+        return float(series[0].get(key) or 0)
+
+    @staticmethod
+    def _format_recovery_text(recovery_suggestions: list[dict]) -> str:
+        if not recovery_suggestions:
+            return ""
+        suggestion = dict(recovery_suggestions[0] or {})
+        message = str(suggestion.get("message") or "").strip()
+        suggested_question = str(suggestion.get("suggested_question") or "").strip()
+        suggested_questions = suggestion.get("suggested_questions") or []
+        if suggested_questions and not suggested_question:
+            first_question = next((str(item).strip() for item in suggested_questions if str(item).strip()), "")
+            suggested_question = first_question
+        if message and suggested_question:
+            return f"{message} 可尝试：{suggested_question}"
+        return message or suggested_question
+
+    def _compose_no_data_answer(
+        self,
+        *,
+        base_answer: str,
+        no_data_reason: dict,
+        range_suffix: str,
+        recovery_suggestions: list[dict],
+    ) -> str:
+        answer = base_answer
+        reason_message = str(no_data_reason.get("message") or "").strip().rstrip("。")
+        if reason_message:
+            answer = f"{answer}原因：{reason_message}。"
+        if range_suffix:
+            answer = f"{answer}{range_suffix}"
+        recovery_text = self._format_recovery_text(recovery_suggestions).strip().rstrip("。")
+        if recovery_text:
+            answer = f"{answer}建议：{recovery_text}。"
+        return answer
+
+    @staticmethod
+    def _trend_extra_judgment(question: str, *, trend: str, domain: str) -> str:
+        normalized_question = str(question or "")
+        if domain == "soil" and any(token in normalized_question for token in ["缓解", "好转"]):
+            if trend == "整体下降":
+                return "有缓解迹象"
+            if trend == "整体上升":
+                return "暂未缓解，异常还有加重迹象"
+            if trend == "整体波动平稳":
+                return "暂无明显缓解"
+            return "暂无法判断是否缓解"
+        return ""
+
+    def _build_trend_answer(
+        self,
+        *,
+        question: str,
+        scope_prefix: str,
+        topic_label: str,
+        trend: str,
+        first: float,
+        latest: float,
+        peak: float,
+        coverage_days: int,
+        domain: str,
+    ) -> str:
+        answer = (
+            f"{scope_prefix}{topic_label}趋势：{trend}，"
+            f"起点{self._format_metric_value(first)}，最近{self._format_metric_value(latest)}，"
+            f"峰值{self._format_metric_value(peak)}，共覆盖{coverage_days}个观测日。"
+        )
+        extra_judgment = self._trend_extra_judgment(question, trend=trend, domain=domain)
+        if extra_judgment:
+            answer = f"{answer}{extra_judgment}。"
+        return answer
+
     def _answer_pest_top(self, question: str, plan: dict) -> QueryResult:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
@@ -558,11 +634,28 @@ class QueryEngine:
         data = self.repo.pest_trend(since, until, region_name or None, region_level=region_level)
         since_scope = self._format_since_scope(since)
         scope_prefix = self._scope_prefix(region_name, since_scope)
+        no_data_reason = self._build_no_data_reason(
+            source="pest",
+            label="虫情监测数据",
+            since=since,
+            until=until,
+            time_range=self._available_pest_time_range(),
+            region_name=region_name,
+        )
+        recovery_suggestions = self._build_recovery_suggestions(
+            question=question,
+            query_type="pest_trend",
+            no_data_reason=no_data_reason,
+            time_ranges=self._available_pest_ranges(),
+            region_name=region_name,
+        )
         if not data:
-            answer = f"{scope_prefix}暂无可用虫情趋势数据。"
-            suffix = self._available_pest_range_suffix()
-            if suffix:
-                answer = f"{answer}{suffix}"
+            answer = self._compose_no_data_answer(
+                base_answer=f"{scope_prefix}暂无可用虫情趋势数据。",
+                no_data_reason=no_data_reason,
+                range_suffix=self._available_pest_range_suffix(),
+                recovery_suggestions=recovery_suggestions,
+            )
             return QueryResult(
                 answer=answer,
                 data=data,
@@ -574,34 +667,22 @@ class QueryEngine:
                     "since": since,
                     "until": until,
                     "available_data_ranges": self._available_pest_ranges(),
-                    "no_data_reasons": [
-                        self._build_no_data_reason(
-                            source="pest",
-                            label="虫情监测数据",
-                            since=since,
-                            until=until,
-                            time_range=self._available_pest_time_range(),
-                            region_name=region_name,
-                        )
-                    ],
-                    "recovery_suggestions": self._build_recovery_suggestions(
-                        question=question,
-                        query_type="pest_trend",
-                        no_data_reason=self._build_no_data_reason(
-                            source="pest",
-                            label="虫情监测数据",
-                            since=since,
-                            until=until,
-                            time_range=self._available_pest_time_range(),
-                            region_name=region_name,
-                        ),
-                        time_ranges=self._available_pest_ranges(),
-                        region_name=region_name,
-                    ),
+                    "no_data_reasons": [no_data_reason],
+                    "recovery_suggestions": recovery_suggestions,
                 },
             )
         trend = self._trend_text(data, "severity_score")
-        answer = f"{scope_prefix}虫情趋势：{trend}。"
+        answer = self._build_trend_answer(
+            question=question,
+            scope_prefix=scope_prefix,
+            topic_label="虫情",
+            trend=trend,
+            first=self._first_metric(data, "severity_score"),
+            latest=self._latest_metric(data, "severity_score"),
+            peak=self._peak_metric(data, "severity_score"),
+            coverage_days=len(data),
+            domain="pest",
+        )
         return QueryResult(
             answer=answer,
             data=data,
@@ -820,11 +901,28 @@ class QueryEngine:
         data = self.repo.soil_trend(since, until, region_name or None, region_level=region_level)
         since_scope = self._format_since_scope(since)
         scope_prefix = self._scope_prefix(region_name, since_scope)
+        no_data_reason = self._build_no_data_reason(
+            source="soil",
+            label="墒情监测数据",
+            since=since,
+            until=until,
+            time_range=self._available_soil_time_range(),
+            region_name=region_name,
+        )
+        recovery_suggestions = self._build_recovery_suggestions(
+            question=question,
+            query_type="soil_trend",
+            no_data_reason=no_data_reason,
+            time_ranges=self._available_soil_ranges(),
+            region_name=region_name,
+        )
         if not data:
-            answer = f"{scope_prefix}暂无可用墒情趋势数据。"
-            suffix = self._available_soil_range_suffix()
-            if suffix:
-                answer = f"{answer}{suffix}"
+            answer = self._compose_no_data_answer(
+                base_answer=f"{scope_prefix}暂无可用墒情趋势数据。",
+                no_data_reason=no_data_reason,
+                range_suffix=self._available_soil_range_suffix(),
+                recovery_suggestions=recovery_suggestions,
+            )
             return QueryResult(
                 answer=answer,
                 data=data,
@@ -836,34 +934,22 @@ class QueryEngine:
                     "since": since,
                     "until": until,
                     "available_data_ranges": self._available_soil_ranges(),
-                    "no_data_reasons": [
-                        self._build_no_data_reason(
-                            source="soil",
-                            label="墒情监测数据",
-                            since=since,
-                            until=until,
-                            time_range=self._available_soil_time_range(),
-                            region_name=region_name,
-                        )
-                    ],
-                    "recovery_suggestions": self._build_recovery_suggestions(
-                        question=question,
-                        query_type="soil_trend",
-                        no_data_reason=self._build_no_data_reason(
-                            source="soil",
-                            label="墒情监测数据",
-                            since=since,
-                            until=until,
-                            time_range=self._available_soil_time_range(),
-                            region_name=region_name,
-                        ),
-                        time_ranges=self._available_soil_ranges(),
-                        region_name=region_name,
-                    ),
+                    "no_data_reasons": [no_data_reason],
+                    "recovery_suggestions": recovery_suggestions,
                 },
             )
         trend = self._trend_text(data, "avg_anomaly_score")
-        answer = f"{scope_prefix}墒情趋势：{trend}。"
+        answer = self._build_trend_answer(
+            question=question,
+            scope_prefix=scope_prefix,
+            topic_label="墒情",
+            trend=trend,
+            first=self._first_metric(data, "avg_anomaly_score"),
+            latest=self._latest_metric(data, "avg_anomaly_score"),
+            peak=self._peak_metric(data, "avg_anomaly_score"),
+            coverage_days=len(data),
+            domain="soil",
+        )
         return QueryResult(
             answer=answer,
             data=data,

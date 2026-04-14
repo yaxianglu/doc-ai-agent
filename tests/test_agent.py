@@ -1579,7 +1579,9 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["mode"], "data_query")
         self.assertIn("南京市", result["answer"])
         self.assertIn("暂无可用虫情趋势数据", result["answer"])
+        self.assertIn("原因：南京市在当前时间窗内暂无虫情监测数据样本", result["answer"])
         self.assertIn("当前可用虫情监测数据范围为 2026-01-05 至 2026-04-08", result["answer"])
+        self.assertIn("建议：先去掉南京市", result["answer"])
         self.assertNotIn("1970-01-01", result["answer"])
         self.assertEqual(
             result["evidence"]["available_data_ranges"],
@@ -1607,7 +1609,9 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["mode"], "data_query")
         self.assertIn("南京市", result["answer"])
         self.assertIn("暂无可用墒情趋势数据", result["answer"])
+        self.assertIn("原因：南京市在当前时间窗内暂无墒情监测数据样本", result["answer"])
         self.assertIn("当前可用墒情监测数据范围为 2026-01-07 至 2026-04-09", result["answer"])
+        self.assertIn("建议：先去掉南京市", result["answer"])
         self.assertNotIn("1970-01-01", result["answer"])
         self.assertEqual(
             result["evidence"]["available_data_ranges"],
@@ -1682,6 +1686,8 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["mode"], "data_query")
         self.assertNotIn("请补充要看的地区", result["answer"])
         self.assertIn("整体", result["answer"])
+        self.assertIn("起点", result["answer"])
+        self.assertIn("最近", result["answer"])
         self.assertEqual(result["evidence"]["historical_query"]["query_type"], "pest_trend")
 
     def test_global_soil_trend_question_no_longer_requires_region(self):
@@ -1695,6 +1701,7 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["mode"], "data_query")
         self.assertNotIn("请补充要看的地区", result["answer"])
         self.assertIn("整体", result["answer"])
+        self.assertRegex(result["answer"], r"(暂未缓解|有缓解迹象|暂无明显缓解|暂无法判断是否缓解)")
         self.assertEqual(result["evidence"]["historical_query"]["query_type"], "soil_trend")
 
     def test_alert_trend_question_returns_increase_or_decrease_without_region(self):
