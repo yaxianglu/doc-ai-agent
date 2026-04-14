@@ -3,6 +3,7 @@ import os
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -82,6 +83,56 @@ class HttpAuthTests(unittest.TestCase):
                 with self.assertRaises(HTTPError) as me_error:
                     http_json(f"{base_url}/auth/me", token=token)
                 self.assertEqual(me_error.exception.code, 401)
+            finally:
+                server.shutdown()
+                server.server_close()
+                worker.join(timeout=1)
+
+    def test_chat_returns_json_500_when_handler_raises(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = os.path.dirname(os.path.dirname(__file__))
+            credentials_path = os.path.join(td, "auth-initial-credentials.txt")
+            with open(credentials_path, "w", encoding="utf-8") as handle:
+                handle.write("gago-1:StrongPass!123\n")
+            cfg = AppConfig(
+                data_dir=repo_root,
+                db_path=os.path.join(td, "alerts.db"),
+                refresh_interval_minutes=5,
+                port=0,
+                auth_db_path=os.path.join(td, "auth.db"),
+                auth_bootstrap_path=credentials_path,
+                openai_api_key="",
+                openai_base_url="https://api.openai.com/v1",
+                openai_router_model="gpt-4.1-mini",
+                openai_advice_model="gpt-4.1",
+                openai_timeout_seconds=30,
+            )
+
+            server = build_http_server(cfg)
+            host, port = server.server_address
+            base_url = f"http://{host}:{port}"
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                _, login_payload = http_json(
+                    f"{base_url}/auth/login",
+                    method="POST",
+                    payload={"username": "gago-1", "password": "StrongPass!123"},
+                )
+                token = login_payload["token"]
+
+                with patch.object(server.app, "chat", side_effect=RuntimeError("boom")):
+                    with self.assertRaises(HTTPError) as chat_error:
+                        http_json(
+                            f"{base_url}/chat",
+                            method="POST",
+                            payload={"question": "最近30天预警数量是增加还是减少？"},
+                            token=token,
+                        )
+
+                self.assertEqual(chat_error.exception.code, 500)
+                error_payload = json.loads(chat_error.exception.read().decode("utf-8"))
+                self.assertEqual(error_payload["error"], "internal server error")
             finally:
                 server.shutdown()
                 server.server_close()

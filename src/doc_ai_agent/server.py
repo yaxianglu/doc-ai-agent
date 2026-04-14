@@ -5,6 +5,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict, Iterable, Optional
 
@@ -209,57 +210,71 @@ def build_http_server(config: AppConfig) -> HTTPServer:
                 return None
             return user
 
+        def _handle_internal_error(self) -> None:
+            """把未捕获异常统一收口为 JSON 500，避免客户端收到空响应。"""
+            traceback.print_exc()
+            try:
+                self._json(500, {"error": "internal server error"})
+            except BrokenPipeError:
+                return
+
         def do_GET(self):
-            if self.path == "/health":
-                self._json(200, {"status": "ok"})
-                return
-            if self.path == "/auth/me":
-                user = self._require_user()
-                if user is None:
+            try:
+                if self.path == "/health":
+                    self._json(200, {"status": "ok"})
                     return
-                self._json(200, {"user": user})
-                return
-            self._json(404, {"error": "not found"})
+                if self.path == "/auth/me":
+                    user = self._require_user()
+                    if user is None:
+                        return
+                    self._json(200, {"user": user})
+                    return
+                self._json(404, {"error": "not found"})
+            except Exception:
+                self._handle_internal_error()
 
         def do_POST(self):
-            payload = self._read_json()
+            try:
+                payload = self._read_json()
 
-            if self.path == "/auth/login":
-                username = str(payload.get("username", "")).strip()
-                password = str(payload.get("password", ""))
-                result = app.login(username, password)
-                if result is None:
-                    self._json(401, {"error": "用户名或密码错误"})
+                if self.path == "/auth/login":
+                    username = str(payload.get("username", "")).strip()
+                    password = str(payload.get("password", ""))
+                    result = app.login(username, password)
+                    if result is None:
+                        self._json(401, {"error": "用户名或密码错误"})
+                        return
+                    self._json(200, result)
                     return
-                self._json(200, result)
-                return
 
-            if self.path == "/auth/logout":
-                user = self._require_user()
-                if user is None:
+                if self.path == "/auth/logout":
+                    user = self._require_user()
+                    if user is None:
+                        return
+                    app.logout(self._bearer_token())
+                    self._json(200, {"ok": True, "user": user})
                     return
-                app.logout(self._bearer_token())
-                self._json(200, {"ok": True, "user": user})
-                return
 
-            if self.path == "/refresh":
-                if self._require_user() is None:
+                if self.path == "/refresh":
+                    if self._require_user() is None:
+                        return
+                    inserted = app.refresh()
+                    self._json(200, {"inserted": inserted})
                     return
-                inserted = app.refresh()
-                self._json(200, {"inserted": inserted})
-                return
 
-            if self.path == "/chat":
-                if self._require_user() is None:
+                if self.path == "/chat":
+                    if self._require_user() is None:
+                        return
+                    question = payload.get("question", "")
+                    if not question:
+                        self._json(400, {"error": "question is required"})
+                        return
+                    self._json(200, app.chat(question, history=payload.get("history"), thread_id=payload.get("thread_id")))
                     return
-                question = payload.get("question", "")
-                if not question:
-                    self._json(400, {"error": "question is required"})
-                    return
-                self._json(200, app.chat(question, history=payload.get("history"), thread_id=payload.get("thread_id")))
-                return
 
-            self._json(404, {"error": "not found"})
+                self._json(404, {"error": "not found"})
+            except Exception:
+                self._handle_internal_error()
 
         def log_message(self, format: str, *args):
             return
