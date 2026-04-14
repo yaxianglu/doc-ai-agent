@@ -1,7 +1,14 @@
+"""回答文案轻量润色工具。
+
+用于统一结论、解释、建议等段落的语气和格式，
+不改变业务语义，仅做可读性增强。
+"""
+
 from __future__ import annotations
 
 
 def _ensure_terminal_punctuation(text: str) -> str:
+    """确保文本以中文句末标点结尾。"""
     stripped = str(text or "").strip()
     if not stripped:
         return ""
@@ -11,6 +18,7 @@ def _ensure_terminal_punctuation(text: str) -> str:
 
 
 def polish_conclusion_text(content: str) -> str:
+    """统一结论段的开头话术与句末标点。"""
     text = str(content or "").strip()
     if not text:
         return ""
@@ -20,6 +28,7 @@ def polish_conclusion_text(content: str) -> str:
 
 
 def polish_explanation_text(content: str) -> str:
+    """统一解释段的引导语。"""
     text = str(content or "").strip()
     if not text:
         return ""
@@ -31,6 +40,7 @@ def polish_explanation_text(content: str) -> str:
 
 
 def polish_advice_text(content: str) -> str:
+    """统一建议段语气，默认采用“建议优先…”表达。"""
     text = str(content or "").strip()
     if not text:
         return ""
@@ -42,6 +52,7 @@ def polish_advice_text(content: str) -> str:
 
 
 def format_answer_section(title: str, content: str) -> str:
+    """为段落补齐“标题：内容”格式。"""
     text = str(content or "").strip()
     if not text:
         return ""
@@ -50,6 +61,7 @@ def format_answer_section(title: str, content: str) -> str:
 
 
 def compose_analysis_answer(sections: list[str]) -> str:
+    """拼接多段回答，自动去重并保留原有顺序。"""
     normalized: list[str] = []
     for section in sections:
         text = str(section or "").strip()

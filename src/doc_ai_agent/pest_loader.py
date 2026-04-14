@@ -1,3 +1,8 @@
+"""虫情 Excel 加载与标准化模块。
+
+主要负责把原始字段转成事实表可直接入库的结构，并附带基础数据质量标记。
+"""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -9,6 +14,7 @@ from .xlsx_utils import iter_xlsx_rows
 
 
 def excel_serial_to_datetime(serial_text: Optional[str]) -> Optional[str]:
+    """将 Excel 序列时间或原始文本统一为时间字符串。"""
     if serial_text in (None, ""):
         return None
     try:
@@ -21,12 +27,14 @@ def excel_serial_to_datetime(serial_text: Optional[str]) -> Optional[str]:
 
 
 def split_csv_text(value: Optional[str]) -> List[str]:
+    """把逗号分隔文本拆成去空格后的列表。"""
     if value in (None, ""):
         return []
     return [part.strip() for part in str(value).split(",") if part and part.strip()]
 
 
 def normalize_pest_names(value: Optional[str]) -> tuple[Optional[str], bool]:
+    """标准化虫种名称；全数字内容视为无效名称。"""
     parts = split_csv_text(value)
     if not parts:
         return None, False
@@ -36,6 +44,7 @@ def normalize_pest_names(value: Optional[str]) -> tuple[Optional[str], bool]:
 
 
 def normalize_pest_count(value: Optional[str]) -> tuple[Optional[float], str]:
+    """标准化虫口数量，并返回数据质量状态码。"""
     parts = split_csv_text(value)
     if not parts:
         return None, "missing_pest_num"
@@ -58,6 +67,7 @@ def normalize_pest_count(value: Optional[str]) -> tuple[Optional[float], str]:
 
 
 def build_pest_row(raw: dict, source_file: str, source_sheet: str, source_row: int, batch_id: str) -> dict:
+    """将单行原始数据转换为虫情事实表记录。"""
     normalized_names, names_usable = normalize_pest_names(raw.get("pest_name"))
     normalized_count, count_flag = normalize_pest_count(raw.get("pest_num"))
     severity_usable = 1 if normalized_count is not None else 0
@@ -95,9 +105,11 @@ def build_pest_row(raw: dict, source_file: str, source_sheet: str, source_row: i
 
 
 def iter_rows(path: str, batch_id: str) -> Iterator[dict]:
+    """逐行产出可入库虫情记录。"""
     source_file = os.path.basename(path)
     for row in iter_xlsx_rows(path):
         payload = build_pest_row(row.values, source_file, row.sheet_name, row.row_index, batch_id)
         if not payload.get("record_id"):
+            # 没有主键 ID 的记录无法安全去重，直接丢弃。
             continue
         yield payload

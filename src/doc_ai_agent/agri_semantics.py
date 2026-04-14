@@ -1,3 +1,13 @@
+"""农业语义规则层。
+
+本模块只做“轻量规则判断”，用于把自然语言问题映射成可执行语义信号：
+- 是否在问排行、趋势、概览、明细；
+- 是否需要原因解释、处置建议、未来预测；
+- 问题更偏虫情、墒情还是两者混合。
+
+这些函数都保持无副作用，便于在理解流程中反复组合调用。
+"""
+
 from __future__ import annotations
 
 import re
@@ -27,6 +37,10 @@ FORECAST_SEVERITY_HINTS = [
 
 
 def has_negated_advice(text: str) -> bool:
+    """判断用户是否明确表达“不要建议/处置”。
+
+    例如“先不要给建议”“别说处置方案”等都应视为否定建议意图。
+    """
     normalized = str(text or "")
     return bool(re.search(r"(不要|别|不用|不需要|先不要|先别)(?:再)?(?:给)?(?:我)?建议", normalized)) or bool(
         re.search(r"(不要|别|不用|不需要|先不要|先别)(?:给)?(?:我)?(?:处置|防治)", normalized)
@@ -34,16 +48,25 @@ def has_negated_advice(text: str) -> bool:
 
 
 def needs_explanation(text: str) -> bool:
+    """判断是否需要“原因解释”类回答。"""
     normalized = str(text or "")
     return any(token in normalized for token in EXPLANATION_HINTS)
 
 
 def needs_advice(text: str) -> bool:
+    """判断是否需要“处置建议”类回答。"""
     normalized = str(text or "")
     return not has_negated_advice(normalized) and any(token in normalized for token in ADVICE_HINTS)
 
 
 def needs_forecast(text: str, future_window: dict | None, needs_advice: bool = False) -> bool:
+    """判断是否需要未来预测。
+
+    规则优先级：
+    1) 只要识别到未来时间窗，直接需要预测；
+    2) 命中“会不会恶化”等强提示，也需要预测；
+    3) 单独要建议时默认不自动开启预测，避免答非所问。
+    """
     normalized = str(text or "")
     if future_window is not None:
         return True
@@ -57,10 +80,12 @@ def needs_forecast(text: str, future_window: dict | None, needs_advice: bool = F
 
 
 def infer_region_scope(text: str) -> str:
+    """推断默认地区粒度：县级优先，否则回到市级。"""
     return "county" if asks_county_scope(text) else "city"
 
 
 def asks_county_scope(text: str) -> bool:
+    """判断用户是否在要求县/区粒度。"""
     normalized = str(text or "")
     if not normalized:
         return False
@@ -78,6 +103,7 @@ def asks_county_scope(text: str) -> bool:
 
 
 def has_ranking_intent(text: str) -> bool:
+    """判断是否为排行/Top 类问题。"""
     normalized = str(text or "")
     lowered = normalized.lower()
     if any(token in lowered for token in [token.lower() for token in RANKING_HINTS]):
@@ -86,6 +112,7 @@ def has_ranking_intent(text: str) -> bool:
 
 
 def has_trend_intent(text: str) -> bool:
+    """判断是否为趋势/变化类问题。"""
     normalized = str(text or "")
     if any(token in normalized for token in TREND_HINTS):
         return True
@@ -100,11 +127,13 @@ def has_trend_intent(text: str) -> bool:
 
 
 def has_overview_intent(text: str) -> bool:
+    """判断是否为概览类问题（整体情况）。"""
     normalized = str(text or "")
     return any(token in normalized for token in OVERVIEW_HINTS)
 
 
 def has_detail_intent(text: str) -> bool:
+    """判断是否为明细数据诉求。"""
     normalized = str(text or "")
     if any(token in normalized for token in DETAIL_HINTS):
         return True
@@ -112,6 +141,10 @@ def has_detail_intent(text: str) -> bool:
 
 
 def infer_domain_from_text(text: str, context_domain: str = "") -> str:
+    """根据文本推断领域：虫情 / 墒情 / 混合。
+
+    当文本里没有明显领域词时，允许回退到上下文领域，保持多轮对话连贯。
+    """
     normalized = str(text or "")
     has_pest = "虫情" in normalized or "虫害" in normalized
     has_soil = any(token in normalized for token in SOIL_HINTS)

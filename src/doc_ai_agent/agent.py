@@ -1,3 +1,5 @@
+"""Doc AI Agent 主流程：负责记忆、理解、规划、执行与回复编排。"""
+
 from __future__ import annotations
 
 import re
@@ -38,6 +40,7 @@ from .repository import AlertRepository
 
 
 class AgentState(TypedDict, total=False):
+    """LangGraph 状态载体：在各节点间传递执行上下文。"""
     question: str
     history: list[dict[str, str]]
     thread_id: str
@@ -51,6 +54,7 @@ class AgentState(TypedDict, total=False):
 
 
 class DocAIAgent:
+    """文档智能代理入口：编排查询、预测、知识与回答合成流程。"""
     def __init__(
         self,
         repo: AlertRepository,
@@ -106,6 +110,7 @@ class DocAIAgent:
             return ResilientMemoryStore(None, fallback)
 
     def _build_graph(self):
+        """构建 LangGraph 工作流，定义节点与路由边。"""
         workflow = StateGraph(AgentState)
         workflow.add_node("load_memory", self._load_memory_node)
         workflow.add_node("understand_request", self._understand_request_node)
@@ -120,6 +125,7 @@ class DocAIAgent:
         workflow.add_edge(START, "load_memory")
         workflow.add_edge("load_memory", "understand_request")
         workflow.add_edge("understand_request", "plan")
+        # 规划节点决定主路径：分析、建议或澄清。
         workflow.add_conditional_edges(
             "plan",
             self._route_from_plan,
@@ -347,6 +353,7 @@ class DocAIAgent:
         }
 
     def _plan_node(self, state: AgentState) -> dict:
+        """生成执行计划，并在必要时补齐预测直连计划。"""
         understanding = dict(state.get("understanding") or {})
         question_for_planning = resolve_planning_question(state.get("question", ""), understanding)
         if should_build_direct_forecast_plan(understanding):
@@ -555,6 +562,7 @@ class DocAIAgent:
         return build_clarification_response(state.get("plan") or {})
 
     def _synthesize_node(self, state: AgentState) -> dict:
+        """合并查询、预测与知识证据，生成最终分析响应。"""
         understanding = dict(state.get("understanding") or {})
         plan = dict(state.get("plan") or {})
         query_result = dict(state.get("query_result") or {})
@@ -587,6 +595,7 @@ class DocAIAgent:
                 }
             }
 
+        # 统一上下文后再合成，可避免解释与建议使用不同口径。
         plan_context = build_plan_context(
             question=state.get("question", ""),
             understanding=understanding,
@@ -679,6 +688,7 @@ class DocAIAgent:
         return {"memory_context": snapshot, "response": response}
 
     def answer(self, question: str, history: object = None, thread_id: str | None = None) -> dict:
+        """对外主入口：驱动状态图执行并返回最终响应。"""
         effective_thread_id = thread_id or f"__stateless__:{uuid4()}"
         state = self.graph.invoke(
             {

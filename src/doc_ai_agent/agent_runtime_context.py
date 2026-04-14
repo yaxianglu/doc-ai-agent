@@ -1,7 +1,10 @@
+"""运行时上下文工具：融合问题、计划与历史上下文形成执行语境。"""
+
 from __future__ import annotations
 
 
 def derive_domain(question: str, route: dict, previous_context: dict | None = None) -> str:
+    """推断当前问题所属领域（虫情/墒情/通用）。"""
     previous_context = dict(previous_context or {})
     query_type = str(route.get("query_type") or "")
     if query_type.startswith("pest"):
@@ -26,6 +29,7 @@ def normalize_historical_route(
     build_route,
     infer_region_level_from_name,
 ) -> dict:
+    """将历史查询参数整理为规范路由结构，便于复用。"""
     normalized = dict(route or {})
     understanding = dict(understanding or {})
     previous_context = dict(previous_context or {})
@@ -99,6 +103,7 @@ def build_runtime_context(
     infer_region_level_from_name,
     is_greeting_question,
 ) -> dict:
+    """融合问题、路由与历史上下文，构造执行时上下文。"""
     previous_context = dict(previous_context or {})
     understanding = dict(understanding or {})
     route = normalize_historical_route(

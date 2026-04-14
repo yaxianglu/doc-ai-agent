@@ -1,31 +1,39 @@
+"""分析合成工具：把历史/预测证据整理成可读的解释与建议文本。"""
+
 from __future__ import annotations
 
 
 def _reasoning_metric_key(domain: str, series: list[dict]) -> tuple[str, str, str]:
+    """根据领域和序列结构选择分析指标键与中文标签。"""
     if domain == "soil" or any("avg_anomaly_score" in item for item in series):
         return "avg_anomaly_score", "异常值", "墒情"
     return "severity_score", "严重度", "虫情"
 
 
 def _is_time_series(series: list[dict]) -> bool:
+    """判断查询结果是否为时间序列。"""
     return bool(series) and isinstance(series[0], dict) and any(key in series[0] for key in ["date", "bucket"])
 
 
 def _is_ranking_rows(series: list[dict]) -> bool:
+    """判断查询结果是否为地区排行列表。"""
     return bool(series) and isinstance(series[0], dict) and "region_name" in series[0] and not _is_time_series(series)
 
 
 def _reasoning_point_date(point: dict) -> str:
+    """提取单个观测点的日期字段。"""
     return str(point.get("date") or point.get("bucket") or "")
 
 
 def _reasoning_format_metric(value: float) -> str:
+    """把数值格式化成适合中文回答的展示字符串。"""
     if float(value).is_integer():
         return f"{value:.0f}"
     return f"{value:.1f}"
 
 
 def _comparison_trend(series: list[dict], key: str) -> str:
+    """根据首尾值粗略判断序列趋势。"""
     if len(series) < 2:
         return "样本不足"
     first = float(series[0].get(key) or 0)
@@ -38,12 +46,14 @@ def _comparison_trend(series: list[dict], key: str) -> str:
 
 
 def _comparison_average(series: list[dict], key: str) -> float:
+    """计算序列指定指标的平均值。"""
     if not series:
         return 0.0
     return sum(float(item.get(key) or 0) for item in series) / len(series)
 
 
 def _reasoning_series_summary(domain: str, series: list[dict]) -> dict:
+    """把原始序列归纳成解释与建议共用的摘要指标。"""
     metric_key, metric_label, domain_label = _reasoning_metric_key(domain, series)
     if not series:
         return {
@@ -84,6 +94,7 @@ def build_data_grounded_explanation(
     knowledge: list[dict],
     default_region_name: str = "",
 ) -> str:
+    """基于结构化数据证据生成可追溯的“原因解释”文本。"""
     domain = str(plan_context.get("domain") or "")
     region_name = str(plan_context.get("region_name") or default_region_name or "当前地区")
     series = list(query_result.get("data") or [])
@@ -160,6 +171,7 @@ def build_data_grounded_advice(
     forecast_result: dict,
     default_region_name: str = "",
 ) -> str:
+    """基于数据与预测信号生成分步骤行动建议。"""
     domain = str(plan_context.get("domain") or "")
     region_name = str(plan_context.get("region_name") or default_region_name or "当前地区")
     series = list(query_result.get("data") or [])

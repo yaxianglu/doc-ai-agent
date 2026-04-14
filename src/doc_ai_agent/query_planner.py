@@ -1,3 +1,14 @@
+"""查询规划器主入口。
+
+`QueryPlanner` 会综合：
+- 规则抽取（时间、地区、设备等）
+- 上下文追问识别
+- playbook 路由
+- 意图路由器输出
+
+最终产出统一的计划对象（含 query_plan、任务分解和执行 route）。
+"""
+
 from __future__ import annotations
 
 import re
@@ -50,6 +61,13 @@ from .query_intent_routing import (
 
 
 class QueryPlanner:
+    """面向生产的查询规划器。
+
+    设计目标是“多来源信号融合 + 稳健兜底”：
+    - 能利用外部路由时尽量利用
+    - 外部失败时保持可用
+    - 对低信息输入优先澄清，避免误查
+    """
     CHINESE_NUMBER_MAP = CHINESE_NUMBER_MAP
     DETERMINISTIC_QUERY_TYPES = {
         "avg_by_level",
@@ -86,6 +104,7 @@ class QueryPlanner:
     }
 
     def __init__(self, intent_router=None, playbook_router=None):
+        """注入可选的意图路由器与 playbook 路由器。"""
         self.intent_router = intent_router
         self.playbook_router = playbook_router
 
@@ -268,6 +287,7 @@ class QueryPlanner:
         return query_type_for_window_follow_up(previous_query_type, domain)
 
     def _playbook_route(self, question: str, context: dict | None = None) -> dict | None:
+        """尝试走 playbook 路由，并确保结果是农业数据查询类型。"""
         if self.playbook_router is None:
             return None
         try:
@@ -283,6 +303,7 @@ class QueryPlanner:
         return route
 
     def _should_use_playbook_route(self, question: str, heuristic_query_type: str, playbook_route: dict | None, context: dict | None = None) -> bool:
+        """判断当前问题是否应由 playbook 结果覆盖基础启发式结果。"""
         return should_use_playbook_route(
             question=question,
             heuristic_query_type=heuristic_query_type,
@@ -297,6 +318,7 @@ class QueryPlanner:
         return playbook_context_trace(playbook_route)
 
     def _resolve_follow_up_question(self, question: str, history: object, context: dict | None = None) -> str:
+        """将“短追问”与历史主问题合并成完整问题文本。"""
         return resolve_follow_up_question(question, history=history, context=context)
 
     @staticmethod
@@ -343,6 +365,11 @@ class QueryPlanner:
 
     @staticmethod
     def _refine_structured_agri_route(route: dict, understanding: dict | None) -> dict:
+        """把 `structured_agri` 细化成更具体 query_type。
+
+        当上游理解层已给出领域/任务类型时，这里做一次定向细化，
+        降低后续执行层的分支复杂度。
+        """
         refined = dict(route or {})
         understanding = dict(understanding or {})
         if str(refined.get("query_type") or "") != "structured_agri":
@@ -367,6 +394,15 @@ class QueryPlanner:
         return refined
 
     def plan(self, question: str, history: object = None, context: dict | None = None, understanding: dict | None = None) -> dict:
+        """生成最终查询计划。
+
+        主要决策顺序：
+        1) 问候/身份问题快速返回
+        2) 上下文追问复用
+        3) 低信号与歧义澄清
+        4) playbook/外部路由优先
+        5) 本地启发式兜底
+        """
         original_question = question
         question = self._resolve_follow_up_question(question, history, context=context)
         if self._is_greeting_question(question):
@@ -380,6 +416,7 @@ class QueryPlanner:
                 "context_trace": [],
             }, question, context=context, understanding=understanding)
         if context_follow_up := self._context_follow_up_plan(original_question, context):
+            # 若识别为上下文追问，优先复用线程状态，避免重复抽取和重复提问。
             return self._finalize_plan(context_follow_up, question, context=context, understanding=understanding)
         if self._is_identity_question(question):
             return self._finalize_plan({
@@ -470,6 +507,7 @@ class QueryPlanner:
                         "context_trace": [],
                     }, question, context=context, understanding=understanding)
             except Exception:
+                # 路由器异常不应中断主链路，继续走本地启发式兜底。
                 pass
 
         route = self._refine_structured_agri_route(self._build_route(question, heuristic_query_type), understanding)
@@ -506,6 +544,7 @@ class QueryPlanner:
             and not future_window
             and not has_ranking_intent(question)
         ):
+            # “解释型问题 + 已有历史范围”优先落到 overview 数据查询，再由回答层解释。
             explanation_route = self._build_route(question, f"{inferred_domain}_overview")
             return self._finalize_plan({
                 "intent": "data_query",

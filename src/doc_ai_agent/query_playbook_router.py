@@ -1,3 +1,12 @@
+"""查询 playbook 路由实现。
+
+模块提供两层能力：
+- 静态规则路由（可离线、稳定兜底）
+- 向量检索路由（LlamaIndex）+ 守卫规则
+
+目标是把用户问题快速映射到更具体的农业查询类型。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -93,16 +102,22 @@ DEFAULT_QUERY_PLAYBOOKS: list[dict] = [
 
 
 class QueryPlaybookBackend(Protocol):
+    """可插拔检索后端协议。"""
+
     def search(self, question: str, limit: int = 1, context: dict | None = None) -> List[dict]:
+        """按问题和上下文返回最相关的 playbook 列表。"""
         ...
 
 
 @dataclass
 class StaticQueryPlaybookRouter:
+    """基于关键词与意图特征打分的静态路由器。"""
+
     playbooks: List[dict] = field(default_factory=lambda: [dict(item) for item in DEFAULT_QUERY_PLAYBOOKS])
     minimum_score: float = 4.0
 
     def search(self, question: str, limit: int = 1, context: dict | None = None) -> List[dict]:
+        """返回得分最高的 playbook 结果列表。"""
         scored: list[tuple[float, dict]] = []
         for playbook in self.playbooks:
             score, matched_terms = self._score_playbook(question, playbook, context=context)
@@ -119,10 +134,12 @@ class StaticQueryPlaybookRouter:
         return [result for _, result in scored[:limit]]
 
     def route(self, question: str, context: dict | None = None) -> dict:
+        """便捷接口：仅返回最佳单条结果。"""
         results = self.search(question, limit=1, context=context)
         return results[0] if results else {}
 
     def _score_playbook(self, question: str, playbook: dict, context: dict | None = None) -> tuple[float, list[str]]:
+        """计算单个 playbook 与问题的匹配得分。"""
         q = (question or "").strip()
         context = dict(context or {})
         matched_terms = self._matched_terms_for_question(q, playbook)
@@ -131,6 +148,7 @@ class StaticQueryPlaybookRouter:
         overview_tokens = ["情况", "概况", "整体", "总体", "表现", "怎么样", "如何"]
 
         if not self._has_domain_signal(q, playbook, context=context, matched_terms=matched_terms):
+            # 先做领域门控，避免“趋势词命中”把问题误路由到错误领域。
             return 0.0, []
 
         for cue in matched_terms:
@@ -166,6 +184,7 @@ class StaticQueryPlaybookRouter:
 
     @staticmethod
     def _matched_terms_for_question(question: str, playbook: dict) -> list[str]:
+        """提取问题中命中的 cue 词。"""
         q = question or ""
         matched: list[str] = []
         for cue in playbook.get("cues", []):
@@ -175,6 +194,7 @@ class StaticQueryPlaybookRouter:
 
     @staticmethod
     def _has_domain_signal(question: str, playbook: dict, context: dict | None = None, matched_terms: list[str] | None = None) -> bool:
+        """判断问题与 playbook 领域是否一致。"""
         q = question or ""
         context = dict(context or {})
         matched_terms = list(matched_terms or [])
@@ -199,6 +219,7 @@ class StaticQueryPlaybookRouter:
 
     @staticmethod
     def _intent_tokens(playbook: dict) -> list[str]:
+        """从 playbook 文本中抽取可辅助打分的意图词。"""
         tokens: list[str] = []
         for text in [playbook.get("title"), playbook.get("description"), *(playbook.get("examples") or [])]:
             if not isinstance(text, str):
@@ -226,10 +247,13 @@ class StaticQueryPlaybookRouter:
 
 @dataclass
 class LlamaIndexQueryPlaybookRouter:
+    """向量检索优先、静态路由兜底的混合路由器。"""
+
     backend: QueryPlaybookBackend | None = None
     fallback: StaticQueryPlaybookRouter = field(default_factory=StaticQueryPlaybookRouter)
 
     def search(self, question: str, limit: int = 1, context: dict | None = None) -> List[dict]:
+        """优先尝试后端检索，失败时回退到静态路由。"""
         fallback_results = self._fallback_results(question, limit=limit, context=context)
         if self.backend is None:
             return fallback_results
@@ -246,10 +270,12 @@ class LlamaIndexQueryPlaybookRouter:
         return fallback_results
 
     def route(self, question: str, context: dict | None = None) -> dict:
+        """便捷接口：仅返回最佳单条结果。"""
         results = self.search(question, limit=1, context=context)
         return results[0] if results else {}
 
     def _fallback_results(self, question: str, limit: int, context: dict | None) -> List[dict]:
+        """给静态兜底结果打上来源标记。"""
         results = self.fallback.search(question, limit=limit, context=context)
         return [self._mark_fallback(item) for item in results]
 
@@ -260,6 +286,7 @@ class LlamaIndexQueryPlaybookRouter:
         fallback_results: List[dict],
         context: dict | None = None,
     ) -> List[dict]:
+        """对向量检索结果做安全校正，必要时回退静态结果。"""
         if not backend_results:
             return fallback_results
 
@@ -272,6 +299,7 @@ class LlamaIndexQueryPlaybookRouter:
             context=context,
             matched_terms=best_backend.get("matched_terms"),
         ):
+            # 若领域不一致，优先选择保守的静态结果。
             return fallback_results
 
         if self._is_mixed_domain_question(question):
@@ -287,6 +315,7 @@ class LlamaIndexQueryPlaybookRouter:
 
     @staticmethod
     def _is_mixed_domain_question(question: str) -> bool:
+        """识别“虫情+墒情”联合问题。"""
         q = question or ""
         has_pest = any(token in q for token in ["虫情", "虫害", "害虫", "虫子"])
         has_soil = any(token in q for token in ["墒情", "低墒", "高墒", "缺水", "干旱", "土壤", "含水"])
@@ -294,6 +323,7 @@ class LlamaIndexQueryPlaybookRouter:
 
     @staticmethod
     def _query_specificity(query_type: str) -> int:
+        """估计 query_type 粒度，数值越大越具体。"""
         if query_type == "joint_risk":
             return 4
         if query_type.endswith("_trend"):
@@ -308,12 +338,15 @@ class LlamaIndexQueryPlaybookRouter:
 
     @staticmethod
     def _mark_fallback(item: dict) -> dict:
+        """标记结果来自静态回退链路。"""
         enriched = dict(item)
         enriched["retrieval_engine"] = "static-fallback"
         return enriched
 
 
 class LlamaIndexQueryPlaybookBackend:
+    """LlamaIndex 向量检索后端。"""
+
     def __init__(
         self,
         playbooks: List[dict],
@@ -349,6 +382,7 @@ class LlamaIndexQueryPlaybookBackend:
         self._index = VectorStoreIndex(nodes, embed_model=embed_model)
 
     def search(self, question: str, limit: int = 1, context: dict | None = None) -> List[dict]:
+        """执行向量检索并组装标准化结果。"""
         query = self._build_query(question, context=context)
         retriever = self._index.as_retriever(similarity_top_k=max(limit, 1))
         nodes = retriever.retrieve(query)
@@ -368,10 +402,12 @@ class LlamaIndexQueryPlaybookBackend:
 
     @staticmethod
     def _node_id_for(index: int, playbook: dict) -> str:
+        """构造稳定节点 ID，方便检索结果回查。"""
         return f"playbook::{index}::{playbook.get('query_type', f'unknown-{index}')}"
 
     @staticmethod
     def _node_text(playbook: dict) -> str:
+        """把 playbook 拼成向量化文本。"""
         cues = " ".join(playbook.get("cues", []) or [])
         examples = "\n".join(playbook.get("examples", []) or [])
         return "\n".join(
@@ -387,6 +423,7 @@ class LlamaIndexQueryPlaybookBackend:
 
     @staticmethod
     def _build_query(question: str, context: dict | None = None) -> str:
+        """构造检索 query，附带领域与地区上下文。"""
         context = dict(context or {})
         domain = str(context.get("domain") or "")
         region = str(context.get("region_name") or "")
@@ -404,6 +441,7 @@ def create_query_playbook_router(
     openai_api_key: str = "",
     embedding_model: str = "text-embedding-3-small",
 ) -> StaticQueryPlaybookRouter | LlamaIndexQueryPlaybookRouter:
+    """按配置创建 playbook 路由器实例。"""
     normalized_backend = str(backend or "llamaindex").strip().lower()
     if normalized_backend != "llamaindex":
         return StaticQueryPlaybookRouter()

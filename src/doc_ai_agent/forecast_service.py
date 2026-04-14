@@ -1,3 +1,5 @@
+"""预测服务编排层：封装预测后端并统一生成可解释输出。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,6 +9,7 @@ from .forecast_engine import ForecastEngine
 
 @dataclass
 class ForecastProjection:
+    """预测投影结果：统一承载后端模型输出与回退状态。"""
     projected_score: float
     forecast_backend: str
     model_name: str
@@ -16,7 +19,9 @@ class ForecastProjection:
 
 
 class StatsForecastBackend:
+    """StatsForecast 后端封装：失败时回退到手工趋势外推。"""
     def forecast_series(self, series: list[dict], *, date_key: str, value_key: str, horizon_days: int) -> ForecastProjection:
+        """对单条时间序列执行预测并返回标准化投影结果。"""
         history_points = len(series)
         if history_points < 3:
             return self._fallback_projection(series, value_key=value_key, horizon_days=horizon_days, reason="insufficient_history")
@@ -77,6 +82,7 @@ class StatsForecastBackend:
 
 
 class ForecastService:
+    """预测服务：聚合预测值、风险指数、置信度和解释因子。"""
     def __init__(self, repo, backend: StatsForecastBackend | None = None):
         self.repo = repo
         self.engine = ForecastEngine(repo)
@@ -215,6 +221,7 @@ class ForecastService:
         ]
 
     def forecast_region(self, route: dict, context: dict | None = None) -> dict:
+        """面向单地区生成预测回答与结构化 forecast 证据。"""
         domain = str((context or {}).get("domain") or route.get("query_type", "")).replace("_forecast", "")
         if domain == "pest" and not hasattr(self.repo, "pest_trend"):
             return self._fallback_region_forecast(route, domain="pest")
@@ -242,6 +249,7 @@ class ForecastService:
             projection = self.backend.forecast_series(series, date_key="date", value_key="avg_anomaly_score", horizon_days=horizon_days)
             stats = self._series_stats(series, "avg_anomaly_score")
 
+        # 将预测值与历史峰值/均值/最近值结合，得到更稳定的风险指数。
         risk_index = self._risk_index_from_series(
             projection.projected_score,
             latest=float(stats["latest"]),
@@ -342,6 +350,7 @@ class ForecastService:
         city: str | None = None,
         county: str | None = None,
     ) -> dict:
+        """面向区域排行场景输出批量预测与排序结果。"""
         if domain == "pest" and hasattr(self.repo, "top_pest_regions"):
             raw = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=top_n, city=city, county=county)
             ranked = [

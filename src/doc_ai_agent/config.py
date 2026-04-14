@@ -1,3 +1,11 @@
+"""应用配置模块。
+
+该模块负责把环境变量解析成 `AppConfig`，并统一处理路径类配置：
+- 支持相对路径（相对于项目根目录）
+- 支持 `~` 用户目录展开
+- 支持部分字段允许空字符串（表示“未启用”）
+"""
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -7,17 +15,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _resolve_path(raw_value: str | None, default: str, *, allow_empty: bool = False) -> str:
+    """把环境变量中的路径值规范化为可直接使用的绝对路径字符串。"""
     candidate = raw_value if raw_value not in (None, "") else default
     if allow_empty and candidate == "":
+        # 某些配置允许显式空值，例如可选的 Excel 增强文件路径。
         return ""
     path = Path(candidate).expanduser()
     if not path.is_absolute():
+        # 相对路径统一挂到项目根目录，避免运行目录变化带来的路径歧义。
         path = (PROJECT_ROOT / path).resolve()
     return str(path)
 
 
 @dataclass(frozen=True)
 class AppConfig:
+    """应用运行时配置对象。"""
     data_dir: str
     db_path: str
     refresh_interval_minutes: int
@@ -47,6 +59,7 @@ class AppConfig:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "AppConfig":
+        """从环境变量映射中创建配置实例。"""
         return cls(
             data_dir=_resolve_path(env.get("DOC_AGENT_DATA_DIR"), "."),
             db_path=_resolve_path(env.get("DOC_AGENT_DB_PATH"), "./data/alerts.db"),

@@ -1,3 +1,14 @@
+"""查询语句信息抽取工具集。
+
+本模块负责把用户自然语言问题解析成结构化查询线索，例如：
+- 时间范围（具体日期、相对时间、未来时间窗）
+- 地区范围（市、县/区）
+- 设备编码、TopN 数量等参数
+
+这些函数只做“轻量规则抽取”，不直接决定最终业务意图，
+后续由规划与路由层再综合上下文做决策。
+"""
+
 from __future__ import annotations
 
 import re
@@ -52,6 +63,11 @@ INVALID_REGION_PHRASES = {
 
 
 def is_invalid_region_candidate(candidate: str) -> bool:
+    """判断一个地区候选词是否应被过滤。
+
+    这里主要拦截“泛词、疑问词、口语修正词”等非真实地名，
+    例如“哪些地区”“我问的是县”等，避免误识别为地区实体。
+    """
     normalized = str(candidate or "").strip()
     if not normalized:
         return True
@@ -73,6 +89,7 @@ def is_invalid_region_candidate(candidate: str) -> bool:
 
 
 def parse_number_token(token: str) -> int:
+    """将阿拉伯数字或常见中文数字转成整数。"""
     value = str(token or "").strip()
     if value.isdigit():
         return int(value)
@@ -80,6 +97,11 @@ def parse_number_token(token: str) -> int:
 
 
 def extract_day_range(question: str) -> tuple[Optional[str], Optional[str]]:
+    """抽取问题中的绝对日期范围。
+
+    返回 `(since, until)`，其中 `until` 使用“次日零点”的右开区间表达，
+    便于后续 SQL 使用 `>= since and < until`。
+    """
     range_match = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日到(?:(20\d{2})年)?(\d{1,2})月(\d{1,2})日", question)
     if range_match:
         start_year = int(range_match.group(1))
@@ -102,6 +124,7 @@ def extract_day_range(question: str) -> tuple[Optional[str], Optional[str]]:
 
 
 def extract_city(question: str) -> Optional[str]:
+    """优先按别名表抽取城市，其次回退到“XX市”通配规则。"""
     normalized = question or ""
     city_positions: list[tuple[int, str]] = []
     for alias, canonical in CITY_ALIASES.items():
@@ -129,6 +152,7 @@ def extract_city(question: str) -> Optional[str]:
 
 
 def extract_county(question: str) -> Optional[str]:
+    """抽取县/区名称，并过滤疑问词触发的伪匹配。"""
     match = re.search(r"(?<!哪些)(?<!哪个)(?<!什么)([\u4e00-\u9fa5]{1,12}(?:县|区))", question)
     if not match:
         return None
@@ -139,10 +163,12 @@ def extract_county(question: str) -> Optional[str]:
 
 
 def asks_for_county_scope(question: str) -> bool:
+    """判断问题是否明确要求下钻到县/区粒度。"""
     return infer_region_scope(question) == "county"
 
 
 def extract_device_code(question: str) -> Optional[str]:
+    """抽取设备编码（例如 `SNS12345`）。"""
     match = re.search(r"(SNS\d+)", question)
     if match:
         return match.group(1)
@@ -150,6 +176,7 @@ def extract_device_code(question: str) -> Optional[str]:
 
 
 def extract_top_n(question: str) -> Optional[int]:
+    """抽取 TopN 参数（支持 `top 5`、`前五` 等表达）。"""
     lowered = str(question or "").lower()
     if match := re.search(r"top\s*(\d+)", lowered):
         return max(1, int(match.group(1)))
@@ -165,11 +192,16 @@ def extract_top_n(question: str) -> Optional[int]:
 
 
 def asks_for_multiple_ranked_results(question: str) -> bool:
+    """判断是否在询问多个排行结果（而不是单一对象）。"""
     q = question or ""
     return any(token in q for token in ["哪些", "哪几个", "前列", "排行", "排名"]) or "top" in q.lower()
 
 
 def default_top_n(question: str, query_type: str) -> Optional[int]:
+    """为不同查询类型给出默认 TopN。
+
+    设计原则：先尊重用户显式输入；未指定时再按业务类型兜底。
+    """
     explicit_top_n = extract_top_n(question)
     if explicit_top_n is not None:
         return explicit_top_n
@@ -183,6 +215,7 @@ def default_top_n(question: str, query_type: str) -> Optional[int]:
 
 
 def extract_relative_window(question: str) -> tuple[Optional[str], Optional[str], dict]:
+    """抽取“近 X 天/周/月、今年以来”等相对历史窗口。"""
     now = datetime.now()
     if "今年以来" in question:
         return f"{now.year}-01-01 00:00:00", None, {"window_type": "year_since", "window_value": now.year}
@@ -205,6 +238,7 @@ def extract_relative_window(question: str) -> tuple[Optional[str], Optional[str]
 
 
 def extract_future_window(question: str) -> dict | None:
+    """抽取未来预测窗口（未来 X 天/周/月）。"""
     if "下个月" in question or "下月" in question:
         return {"window_type": "months", "window_value": 1, "horizon_days": 30}
     if "未来半个月" in question:
@@ -226,6 +260,12 @@ def extract_future_window(question: str) -> dict | None:
 
 
 def build_route(question: str, query_type: str) -> dict:
+    """组装基础 route 字典，供上层规划器继续修正。
+
+    本函数只负责“稳健兜底”：
+    - 时间无命中时回退到全量时间窗
+    - 地区粒度优先遵循县级信息
+    """
     since, until = extract_day_range(question)
     forecast_window = extract_future_window(question)
     if since is None:
@@ -239,6 +279,7 @@ def build_route(question: str, query_type: str) -> dict:
             since = f"{match.group(1)}-01-01 00:00:00"
             window = {"window_type": "year_since", "window_value": int(match.group(1))}
     if since is None:
+        # 最终兜底为全量时间范围，保证后续执行层始终有稳定的 since。
         since = "1970-01-01 00:00:00"
         window = {"window_type": "all", "window_value": None}
     county = extract_county(question)

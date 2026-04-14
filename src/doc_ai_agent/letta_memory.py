@@ -1,3 +1,5 @@
+"""Letta/本地双存储记忆层：规范化快照并提供弹性读写。"""
+
 from __future__ import annotations
 
 import json
@@ -6,6 +8,7 @@ from typing import Protocol
 
 
 def _time_range_slot_value_from_window(window: dict | None) -> dict:
+    """把 window 结构压缩成 time_range 槽位值。"""
     payload = dict(window or {})
     window_type = str(payload.get("window_type") or "")
     window_value = payload.get("window_value")
@@ -15,6 +18,7 @@ def _time_range_slot_value_from_window(window: dict | None) -> dict:
 
 
 def _window_from_time_range_slot(value: object) -> dict:
+    """把 time_range 槽位值还原为 window 结构。"""
     if not isinstance(value, dict):
         return {}
     if str(value.get("mode") or "") != "relative":
@@ -33,6 +37,7 @@ def _window_from_time_range_slot(value: object) -> dict:
 
 
 def _slot_priority(source: str) -> int:
+    """根据槽位来源计算优先级。"""
     if source == "explicit":
         return 100
     if source == "carried":
@@ -47,6 +52,7 @@ def _slot_priority(source: str) -> int:
 
 
 def _slot_ttl(source: str) -> int:
+    """根据槽位来源计算保留轮次。"""
     if source in {"explicit", "carried"}:
         return 4
     if source == "system":
@@ -57,6 +63,7 @@ def _slot_ttl(source: str) -> int:
 
 
 def _slot_has_value(value: object) -> bool:
+    """判断槽位值是否真的携带了有效信息。"""
     if value == "" or value is None:
         return False
     if isinstance(value, dict):
@@ -69,6 +76,7 @@ def _slot_has_value(value: object) -> bool:
 
 
 def _normalize_slot(slot_name: str, slot_payload: object, fallback_value: object, turn_count: int) -> dict:
+    """把任意形态的槽位规整成统一内部结构。"""
     payload = dict(slot_payload or {})
     if slot_name == "time_range":
         raw_value = payload.get("value") if "value" in payload else fallback_value
@@ -102,6 +110,7 @@ def _normalize_slot(slot_name: str, slot_payload: object, fallback_value: object
 
 
 def _build_slots(payload: dict, turn_count: int) -> dict:
+    """从旧快照和当前字段构建标准化槽位集合。"""
     existing_slots = dict(payload.get("slots") or {})
     intent_value = (
         (existing_slots.get("intent") or {}).get("value")
@@ -118,6 +127,7 @@ def _build_slots(payload: dict, turn_count: int) -> dict:
 
 
 def normalize_memory_snapshot(snapshot: dict | None) -> dict:
+    """把任意版本的记忆快照规整到统一结构。"""
     payload = dict(snapshot or {})
     existing_slots = dict(payload.get("slots") or {})
     existing_turns = [
@@ -153,17 +163,22 @@ def normalize_memory_snapshot(snapshot: dict | None) -> dict:
 
 
 class MemoryStore(Protocol):
+    """记忆存储协议：约束 load/remember/backend_label 三个核心能力。"""
     def load(self, thread_id: str) -> dict:
+        """读取指定线程的记忆快照。"""
         ...
 
     def remember(self, thread_id: str, snapshot: dict) -> None:
+        """持久化指定线程的记忆快照。"""
         ...
 
     def backend_label(self) -> str:
+        """返回当前存储后端名称。"""
         ...
 
 
 class LocalMemoryStore:
+    """本地 JSON 记忆存储实现。"""
     def __init__(self, path: str):
         self.path = path
 
@@ -185,11 +200,13 @@ class LocalMemoryStore:
             json.dump(data, handle, ensure_ascii=False, indent=2)
 
     def load(self, thread_id: str) -> dict:
+        """从本地 JSON 文件读取线程记忆。"""
         if not thread_id:
             return normalize_memory_snapshot({})
         return normalize_memory_snapshot(self._load_all().get(thread_id) or {})
 
     def remember(self, thread_id: str, snapshot: dict) -> None:
+        """把线程记忆写回本地 JSON 文件。"""
         if not thread_id:
             return
         data = self._load_all()
@@ -197,10 +214,12 @@ class LocalMemoryStore:
         self._write_all(data)
 
     def backend_label(self) -> str:
+        """返回本地记忆后端名称。"""
         return "LocalMemory"
 
 
 class LettaMemoryStore:
+    """Letta 远端记忆存储实现。"""
     def __init__(self, client, block_prefix: str = "doc-cloud-thread"):
         self.client = client
         self.block_prefix = block_prefix
@@ -215,6 +234,7 @@ class LettaMemoryStore:
         return list(blocks)[0]
 
     def load(self, thread_id: str) -> dict:
+        """从 Letta block 中读取线程记忆。"""
         if not thread_id:
             return normalize_memory_snapshot({})
         block = self._find_block(thread_id)
@@ -227,6 +247,7 @@ class LettaMemoryStore:
         return normalize_memory_snapshot(payload)
 
     def remember(self, thread_id: str, snapshot: dict) -> None:
+        """把线程记忆写入或更新到 Letta block。"""
         if not thread_id:
             return
         normalized = normalize_memory_snapshot(snapshot)
@@ -242,17 +263,21 @@ class LettaMemoryStore:
         self.client.blocks.update(block.id, value=payload)
 
     def backend_label(self) -> str:
+        """返回 Letta 记忆后端名称。"""
         return "Letta"
 
 
 class ResilientMemoryStore:
+    """弹性记忆存储：优先主存储，失败自动回退本地存储。"""
     def __init__(self, primary: MemoryStore | None, fallback: MemoryStore):
         self.primary = primary
         self.fallback = fallback
         self._last_backend = fallback.backend_label()
 
     def load(self, thread_id: str) -> dict:
+        """优先从主存储读取，失败时回退到本地存储。"""
         if self.primary is not None:
+            # 先尝试主存储（通常是 Letta），失败再平滑回退。
             try:
                 snapshot = self.primary.load(thread_id)
                 if snapshot:
@@ -264,6 +289,7 @@ class ResilientMemoryStore:
         return normalize_memory_snapshot(self.fallback.load(thread_id))
 
     def remember(self, thread_id: str, snapshot: dict) -> None:
+        """同时写入主/备存储，并记录本轮实际可用后端。"""
         normalized = normalize_memory_snapshot(snapshot)
         primary_ok = False
         if self.primary is not None:
@@ -276,4 +302,5 @@ class ResilientMemoryStore:
         self._last_backend = self.primary.backend_label() if primary_ok and self.primary is not None else self.fallback.backend_label()
 
     def backend_label(self) -> str:
+        """返回最近一次成功使用的记忆后端名称。"""
         return self._last_backend

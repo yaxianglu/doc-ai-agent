@@ -1,3 +1,8 @@
+"""墒情 Excel 加载与标准化模块。
+
+负责把原始墒情行数据转换为事实表结构，并给出基础异常分类与质量标记。
+"""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -8,6 +13,7 @@ from .xlsx_utils import iter_xlsx_rows
 
 
 def excel_serial_to_datetime(serial_text: Optional[str]) -> Optional[str]:
+    """将 Excel 序列时间转换为标准时间字符串。"""
     if serial_text in (None, ""):
         return None
     try:
@@ -20,6 +26,7 @@ def excel_serial_to_datetime(serial_text: Optional[str]) -> Optional[str]:
 
 
 def to_float(value: Optional[str]) -> Optional[float]:
+    """尽力把输入转成浮点数；失败时返回 `None`。"""
     if value in (None, ""):
         return None
     try:
@@ -29,6 +36,7 @@ def to_float(value: Optional[str]) -> Optional[float]:
 
 
 def classify_soil_anomaly(water20cm: Optional[float]) -> tuple[str, float]:
+    """按 20cm 含水量阈值判断墒情异常类型与评分。"""
     if water20cm is None:
         return "unknown", 0.0
     if water20cm < 50:
@@ -39,6 +47,7 @@ def classify_soil_anomaly(water20cm: Optional[float]) -> tuple[str, float]:
 
 
 def data_quality_flag(water20cm: Optional[float], t20cm: Optional[float]) -> str:
+    """生成墒情记录质量标记。"""
     flags = []
     if water20cm is None:
         flags.append("missing_water20cm")
@@ -52,6 +61,7 @@ def data_quality_flag(water20cm: Optional[float], t20cm: Optional[float]) -> str
 
 
 def build_soil_row(raw: dict, source_file: str, source_sheet: str, source_row: int, batch_id: str) -> dict:
+    """将单行原始数据转换为墒情事实表记录。"""
     water20cm = to_float(raw.get("water20cm"))
     t20cm = to_float(raw.get("t20cm"))
     anomaly_type, anomaly_score = classify_soil_anomaly(water20cm)
@@ -96,6 +106,7 @@ def build_soil_row(raw: dict, source_file: str, source_sheet: str, source_row: i
 
 
 def iter_rows(path: str, batch_id: str) -> Iterator[dict]:
+    """逐行产出可入库墒情记录。"""
     source_file = os.path.basename(path)
     for row in iter_xlsx_rows(path):
         payload = build_soil_row(row.values, source_file, row.sheet_name, row.row_index, batch_id)
@@ -105,6 +116,7 @@ def iter_rows(path: str, batch_id: str) -> Iterator[dict]:
 
 
 def iter_device_mappings_from_alert_xlsx(path: str) -> Iterator[dict]:
+    """从历史告警表中提取墒情设备映射信息。"""
     for row in iter_xlsx_rows(path):
         values = row.values
         if values.get("告警类型(预警信号,虫情,土壤)") != "土壤墒情仪":

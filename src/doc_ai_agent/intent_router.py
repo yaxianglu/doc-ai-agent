@@ -1,7 +1,15 @@
+"""LLM 意图路由封装。
+
+该模块负责把大模型返回的 JSON 路由结果做白名单校验与类型纠正，
+确保进入规划层的数据结构稳定、可控。
+"""
+
 from __future__ import annotations
 
 
 class IntentRouter:
+    """意图路由器：调用 LLM 并输出受限字段的路由结果。"""
+
     ALLOWED_QUERY_TYPES = {
         "count",
         "active_devices",
@@ -31,10 +39,15 @@ class IntentRouter:
     ALLOWED_REGION_LEVELS = {"city", "county"}
 
     def __init__(self, llm_client, model: str):
+        """初始化路由器。"""
         self.llm_client = llm_client
         self.model = model
 
     def route(self, question: str) -> dict:
+        """根据问题返回路由结果。
+
+        即使模型输出异常，也会通过白名单和类型兜底返回安全结构。
+        """
         system_prompt = (
             "你是意图路由器。请仅输出JSON，字段包含: intent(data_query|advice),"
             "query_type(count|active_devices|top|avg_by_level|consecutive_devices|empty_county_records|pest_top|pest_overview|soil_top|soil_overview|pest_trend|soil_trend|joint_risk|structured_agri|latest_device|region_disposal|sms_empty|subtype_ratio|city_day_change|highest_values|threshold_summary|unknown_region_devices|unmatched_region_records), "
@@ -63,6 +76,7 @@ class IntentRouter:
             since = data.get("since") or "1970-01-01 00:00:00"
             query_type = str(data.get("query_type", "count"))
             if query_type not in self.ALLOWED_QUERY_TYPES:
+                # 不在白名单内的 query_type 一律降级为 count，避免越权字段影响执行层。
                 query_type = "count"
             field = str(data.get("field", "city"))
             if field not in self.ALLOWED_FIELDS:

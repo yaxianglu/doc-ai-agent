@@ -1,3 +1,5 @@
+"""规划编排工具：决定是否直连预测以及后续路由目标。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,11 +9,13 @@ from .agent_contracts import PlanPayload, RequestUnderstandingPayload
 
 @dataclass(frozen=True)
 class PlanNodeOutcome:
+    """plan 节点输出：同时携带更新后的计划与理解结果。"""
     plan: dict
     understanding: dict
 
 
 def resolve_planning_question(question: str, understanding: dict) -> str:
+    """确定用于规划器的核心问题文本。"""
     payload = RequestUnderstandingPayload.from_dict(understanding)
     if (
         payload.used_context
@@ -27,6 +31,7 @@ def resolve_planning_question(question: str, understanding: dict) -> str:
 
 
 def should_build_direct_forecast_plan(understanding: dict) -> bool:
+    """判断是否可以跳过历史查询，直接走预测链路。"""
     payload = RequestUnderstandingPayload.from_dict(understanding)
     return bool(
         payload.needs_forecast
@@ -36,6 +41,7 @@ def should_build_direct_forecast_plan(understanding: dict) -> bool:
 
 
 def update_plan_outcome(*, plan: dict, understanding: dict) -> PlanNodeOutcome:
+    """依据理解结果修正计划，并计算下一跳路由。"""
     plan_payload = PlanPayload.from_dict(plan)
     understanding_payload = RequestUnderstandingPayload.from_dict(understanding)
     route = dict(plan_payload.route)
@@ -59,6 +65,7 @@ def update_plan_outcome(*, plan: dict, understanding: dict) -> PlanNodeOutcome:
 
 
 def route_target(plan: dict, understanding: dict) -> str:
+    """根据计划与理解结果决定 LangGraph 下一跳。"""
     plan_payload = PlanPayload.from_dict(plan)
     understanding_payload = RequestUnderstandingPayload.from_dict(understanding)
     if plan_payload.needs_clarification:

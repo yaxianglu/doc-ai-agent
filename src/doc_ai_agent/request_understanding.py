@@ -1,3 +1,11 @@
+"""请求语义理解主入口。
+
+该模块负责把“原始用户问题 + 上下文”转换成统一结构化结果，供后续流程使用：
+- 先做上下文补全与噪声清理；
+- 再融合实体抽取、后端抽取与规则推理；
+- 最终产出任务类型、时间窗、地区、执行计划等字段。
+"""
+
 from __future__ import annotations
 
 import re
@@ -59,6 +67,10 @@ CITY_ALIASES = {
 
 
 class RequestUnderstanding:
+    """农业问答请求理解器。
+
+    这是语义理解层的编排器（orchestrator），本身不直接做数据查询。
+    """
     CHINESE_NUMBER_MAP = {
         "一": 1,
         "二": 2,
@@ -124,10 +136,15 @@ class RequestUnderstanding:
     }
 
     def __init__(self, backend=None, extractor: EntityExtractionService | None = None):
+        """初始化可选后端抽取器与本地实体抽取服务。"""
         self.backend = backend
         self.extractor = extractor or EntityExtractionService()
 
     def analyze(self, question: str, history: object = None, context: dict | None = None) -> dict:
+        """把用户问题解析成结构化语义结果。
+
+        注意：`history` 当前保留为接口兼容参数，本函数核心使用的是 `context`。
+        """
         text = (question or "").strip()
         resolved_question, context_resolution = self._resolve_with_context(text, context)
         cleaned, ignored = self._strip_noise(resolved_question)
@@ -184,6 +201,7 @@ class RequestUnderstanding:
         if needs_forecast_flag:
             execution_plan.append("forecast")
         if needs_explanation_flag or needs_advice_flag:
+            # 需要解释/建议时，加入知识检索步骤，供答案合成引用依据。
             execution_plan.append("knowledge_retrieval")
         execution_plan.append("answer_synthesis")
 
@@ -224,6 +242,7 @@ class RequestUnderstanding:
         }
 
     def _extract_with_entity_service(self, cleaned: str) -> dict:
+        """调用实体抽取服务，异常时安全降级为空结果。"""
         if not cleaned:
             return {}
         try:
@@ -235,6 +254,7 @@ class RequestUnderstanding:
         return payload
 
     def _extract_with_backend(self, cleaned: str, context: dict | None) -> dict:
+        """调用后端抽取并规范字段。"""
         if self.backend is None or not cleaned or self._should_skip_backend(cleaned):
             return {}
         try:
@@ -271,6 +291,11 @@ class RequestUnderstanding:
 
     @classmethod
     def _should_skip_backend(cls, text: str) -> bool:
+        """判断当前问题是否应跳过后端抽取。
+
+        对于确定性很强的模式（如设备字段问答、明显排行/趋势短句），
+        规则层即可稳定处理，跳过后端可减少不必要成本与波动。
+        """
         normalized = str(text or "")
         if not normalized:
             return True
@@ -319,6 +344,7 @@ class RequestUnderstanding:
 
     @staticmethod
     def _normalize_window_payload(payload: object) -> dict | None:
+        """把后端时间窗载荷规范成内部统一格式。"""
         if not isinstance(payload, dict):
             return None
         window_type = str(payload.get("window_type") or "")
@@ -334,6 +360,7 @@ class RequestUnderstanding:
 
     @staticmethod
     def _coalesce_window(*windows: object) -> dict:
+        """在多个时间窗候选中选择最具体的一个。"""
         fallback = {"window_type": "all", "window_value": None}
         all_window: dict | None = None
         for candidate in windows:
@@ -347,6 +374,7 @@ class RequestUnderstanding:
         return all_window or fallback
 
     def _resolve_with_context(self, text: str, context: dict | None) -> tuple[str, list[str]]:
+        """调用上下文解析模块补全追问。"""
         return resolve_with_context(
             text,
             context,
@@ -357,6 +385,7 @@ class RequestUnderstanding:
         )
 
     def _strip_noise(self, text: str) -> tuple[str, list[str]]:
+        """去除口语噪声短语，返回清理后文本与被忽略项。"""
         ignored: list[str] = []
         cleaned = text
         for phrase in self.NOISE_PHRASES:
@@ -438,6 +467,7 @@ class RequestUnderstanding:
 
     @staticmethod
     def _asks_stored_disposal_field(text: str) -> bool:
+        """判断“处置建议”是否指向已有告警字段而非通用建议。"""
         if "处置建议" not in text:
             return False
         return bool(
@@ -472,6 +502,7 @@ class RequestUnderstanding:
         extracted_level: str,
         context_level: str,
     ) -> str:
+        """综合多个来源推断地区层级（市/县）。"""
         for level in [structured_level, extracted_level]:
             if level in {"city", "county"}:
                 return level
@@ -496,6 +527,7 @@ class RequestUnderstanding:
 
     @staticmethod
     def _extract_past_window(text: str) -> dict:
+        """抽取历史时间窗。"""
         if "今年以来" in text:
             current_year = datetime.now().year
             return {"window_type": "year_since", "window_value": current_year}
@@ -516,6 +548,7 @@ class RequestUnderstanding:
 
     @staticmethod
     def _extract_future_window(text: str) -> dict | None:
+        """抽取未来时间窗。"""
         if "下个月" in text or "下月" in text:
             return {"window_type": "months", "window_value": 1, "horizon_days": 30}
         if "未来半个月" in text:

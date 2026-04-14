@@ -1,3 +1,5 @@
+"""建议与解释生成引擎：在规则与 LLM 之间做兜底协作。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5,6 +7,7 @@ from dataclasses import dataclass
 
 @dataclass
 class AdviceResult:
+    """建议模块输出：回答文本、引用来源与生成模式。"""
     answer: str
     sources: list
     generation_mode: str
@@ -12,6 +15,7 @@ class AdviceResult:
 
 
 class AdviceEngine:
+    """建议/解释生成器：优先规则响应，再按需调用 LLM。"""
     GREETING_PATTERNS = {
         "你好",
         "您好",
@@ -51,6 +55,7 @@ class AdviceEngine:
         return cls._prefixed_section("建议", advice)
 
     def answer(self, question: str, context: dict | None = None) -> AdviceResult:
+        """根据问题类型返回问候、身份说明或建议/解释内容。"""
         context = dict(context or {})
         normalized_question = str(question or "").strip()
         stripped_question = normalized_question.rstrip("？?")
@@ -91,6 +96,7 @@ class AdviceEngine:
                 sources = self.source_provider.search(search_query, limit=3)
 
         if self.llm_client and self.model:
+            # 仅在具备模型配置时启用生成式建议，否则保持规则兜底。
             source_text = ""
             if sources:
                 source_text = "\n".join(

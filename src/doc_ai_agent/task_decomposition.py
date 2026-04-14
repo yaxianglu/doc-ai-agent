@@ -1,7 +1,14 @@
+"""查询计划任务分解器。
+
+把 `query_plan` 转换为可执行任务图（task graph），
+用于明确执行顺序、依赖关系和并行分组。
+"""
+
 from __future__ import annotations
 
 
 def _task_stage(task_type: str) -> str:
+    """将任务类型映射到执行阶段。"""
     if task_type in {"historical_rank", "historical_detail", "historical_overview", "trend_analysis", "comparison_analysis"}:
         return "historical_query"
     if task_type == "forecast":
@@ -14,6 +21,7 @@ def _task_stage(task_type: str) -> str:
 
 
 def _task_title(task_type: str) -> str:
+    """返回任务类型对应的人类可读标题。"""
     return {
         "historical_rank": "查询历史排行",
         "historical_detail": "查询历史明细",
@@ -29,6 +37,7 @@ def _task_title(task_type: str) -> str:
 
 
 def _task_output(task_type: str) -> str:
+    """定义任务产物归档到哪个输出槽位。"""
     return {
         "historical_rank": "historical",
         "historical_detail": "historical",
@@ -44,6 +53,7 @@ def _task_output(task_type: str) -> str:
 
 
 def _primary_task_type(query_plan: dict) -> str | None:
+    """根据聚合方式推导主任务类型。"""
     slots = dict(query_plan.get("slots") or {})
     aggregation = str(slots.get("aggregation") or "")
 
@@ -63,6 +73,12 @@ def _primary_task_type(query_plan: dict) -> str | None:
 
 
 def build_task_graph(query_plan: dict) -> dict:
+    """构建任务图。
+
+    规则要点：
+    - 先放主分析任务，再按需要追加解释/预测/建议任务
+    - 最后统一追加 merge_answer 汇总输出
+    """
     normalized_plan = dict(query_plan or {})
     slots = dict(normalized_plan.get("slots") or {})
     goal = str(normalized_plan.get("goal") or "")
@@ -71,6 +87,7 @@ def build_task_graph(query_plan: dict) -> dict:
     tasks: list[dict] = []
 
     def add_task(task_type: str, depends_on: list[str] | None = None, parallel_group: str = "") -> str:
+        """新增任务节点并返回任务 ID。"""
         task_id = f"t{len(tasks) + 1}"
         tasks.append(
             {

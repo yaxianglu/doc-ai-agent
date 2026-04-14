@@ -1,3 +1,5 @@
+"""查询执行引擎：把路由计划转换为结构化数据查询与中文回答。"""
+
 from __future__ import annotations
 
 import re
@@ -11,12 +13,14 @@ from .query_extractors import extract_day_range as shared_extract_day_range
 
 @dataclass
 class QueryResult:
+    """查询执行结果：包含回答文本、原始数据与证据元信息。"""
     answer: str
     data: list | dict
     evidence: Dict[str, object]
 
 
 class QueryEngine:
+    """面向查询计划的执行器，负责路由到不同数据查询分支。"""
     def __init__(self, repo):
         self.repo = repo
 
@@ -146,6 +150,7 @@ class QueryEngine:
         field: str = "city",
         anomaly_direction: Optional[str] = None,
     ) -> list[dict]:
+        """根据无数据原因生成可执行的重试建议。"""
         code = str(no_data_reason.get("code") or "")
         primary_range = time_ranges[0] if time_ranges else None
         if code in {"outside_available_window", "no_matching_records"}:
@@ -1109,10 +1114,12 @@ class QueryEngine:
         )
 
     def answer(self, question: str, plan: Optional[dict] = None) -> QueryResult:
+        """执行查询计划并返回统一 QueryResult。"""
         plan = plan or {}
         query_type = str(plan.get("query_type") or "count")
 
         if hasattr(self.repo, "top_pest_regions"):
+            # 新版结构化仓储路径：优先命中细分查询分支。
             if query_type == "alerts_trend":
                 return self._answer_alerts_trend(question, plan)
             if query_type == "pest_top":
@@ -1141,7 +1148,7 @@ class QueryEngine:
         if query_type == "alerts_trend":
             return self._answer_alerts_trend(question, plan)
 
-        # Legacy fallback path for the original SQLite alerts dataset.
+        # 旧版 SQLite 告警数据回退路径：当结构化接口不可用时使用。
         since = str(plan.get("since") or self._extract_since(question))
 
         if query_type in {"pest_top", "soil_top", "structured_agri"}:

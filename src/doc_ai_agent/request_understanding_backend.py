@@ -1,3 +1,9 @@
+"""请求理解后端（LLM 结构化抽取）。
+
+本模块定义了后端抽取输出的结构，并通过 Instructor + OpenAI 兼容接口，
+把自然语言问题转换为稳定的结构化字段，供规则层融合使用。
+"""
+
 from __future__ import annotations
 
 import json
@@ -8,12 +14,14 @@ from pydantic import BaseModel, Field
 
 
 class UnderstandingWindow(BaseModel):
+    """时间窗结构。"""
     window_type: Literal["all", "months", "weeks", "days", "none"] = "none"
     window_value: int | None = None
     horizon_days: int | None = None
 
 
 class UnderstandingExtraction(BaseModel):
+    """语义抽取结果结构。"""
     domain: Literal["", "pest", "soil", "mixed"] = ""
     task_type: Literal["unknown", "ranking", "trend", "region_overview", "joint_risk", "data_detail"] = "unknown"
     region_name: str = ""
@@ -26,12 +34,14 @@ class UnderstandingExtraction(BaseModel):
 
 @dataclass
 class InstructorUnderstandingBackend:
+    """基于 Instructor 的语义抽取后端。"""
     api_key: str
     base_url: str
     model: str
     timeout_seconds: int = 20
 
     def __post_init__(self) -> None:
+        """初始化 OpenAI 兼容客户端。"""
         import instructor
         from openai import OpenAI
 
@@ -44,6 +54,7 @@ class InstructorUnderstandingBackend:
         )
 
     def extract(self, question: str, context: dict | None = None) -> dict | None:
+        """调用后端模型抽取结构化语义。"""
         payload = {
             "question": question,
             "context": {

@@ -1,3 +1,8 @@
+"""轻量 XLSX 读取工具（基于 OpenXML 结构解析）。
+
+不依赖 pandas/openpyxl，直接读取 zip 包内 XML，适合服务端批处理场景。
+"""
+
 from __future__ import annotations
 
 import re
@@ -11,12 +16,15 @@ NS_MAIN = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 
 @dataclass(frozen=True)
 class XlsxRow:
+    """统一的行对象：包含工作表名、行号和“表头->值”映射。"""
+
     sheet_name: str
     row_index: int
     values: Dict[str, Optional[str]]
 
 
 def _col_to_idx(cell_ref: str) -> int:
+    """把 Excel 列引用（如 A、AB）转换成从 0 开始的列下标。"""
     col = re.match(r"[A-Z]+", cell_ref).group(0)
     idx = 0
     for c in col:
@@ -25,6 +33,7 @@ def _col_to_idx(cell_ref: str) -> int:
 
 
 def _read_shared_strings(book: zipfile.ZipFile) -> List[str]:
+    """读取共享字符串表（sharedStrings.xml）。"""
     if "xl/sharedStrings.xml" not in book.namelist():
         return []
     root = ET.fromstring(book.read("xl/sharedStrings.xml"))
@@ -38,6 +47,7 @@ def _read_shared_strings(book: zipfile.ZipFile) -> List[str]:
 
 
 def _sheet_targets(book: zipfile.ZipFile) -> Dict[str, str]:
+    """解析工作簿，得到“工作表名 -> 对应 XML 路径”。"""
     workbook = ET.fromstring(book.read("xl/workbook.xml"))
     rels = ET.fromstring(book.read("xl/_rels/workbook.xml.rels"))
 
@@ -56,6 +66,7 @@ def _sheet_targets(book: zipfile.ZipFile) -> Dict[str, str]:
 
 
 def _extract_cells(row_elem: ET.Element, shared: List[str]) -> Dict[int, Optional[str]]:
+    """提取单行单元格值，返回“列下标 -> 单元格值”。"""
     values: Dict[int, Optional[str]] = {}
     for cell in row_elem.findall("x:c", NS_MAIN):
         ref = cell.attrib.get("r", "A1")
@@ -64,6 +75,7 @@ def _extract_cells(row_elem: ET.Element, shared: List[str]) -> Dict[int, Optiona
         if value_node is None or value_node.text is None:
             inline = cell.find("x:is", NS_MAIN)
             if inline is not None:
+                # 兼容 inlineStr 单元格（文本直接嵌在单元格节点内）。
                 text = "".join((t.text or "") for t in inline.iterfind(".//x:t", NS_MAIN))
                 values[idx] = text
             else:
@@ -79,6 +91,7 @@ def _extract_cells(row_elem: ET.Element, shared: List[str]) -> Dict[int, Optiona
 
 
 def iter_xlsx_rows(path: str) -> Iterator[XlsxRow]:
+    """按工作表顺序迭代数据行（首行默认作为表头）。"""
     with zipfile.ZipFile(path) as book:
         shared = _read_shared_strings(book)
         sheets = _sheet_targets(book)
@@ -99,6 +112,7 @@ def iter_xlsx_rows(path: str) -> Iterator[XlsxRow]:
                 payload = {}
                 width = max(len(ordered_headers), (max(cell_values.keys()) + 1) if cell_values else 0)
                 for idx in range(width):
+                    # 对缺失表头的列自动生成 col_N，避免数据错位丢失。
                     header = ordered_headers[idx] if idx < len(ordered_headers) else f"col_{idx+1}"
                     payload[header or f"col_{idx+1}"] = cell_values.get(idx)
                 yield XlsxRow(
@@ -109,4 +123,5 @@ def iter_xlsx_rows(path: str) -> Iterator[XlsxRow]:
 
 
 def read_xlsx_rows(path: str) -> List[XlsxRow]:
+    """一次性读出全部行（在需要随机访问时使用）。"""
     return list(iter_xlsx_rows(path))

@@ -1,7 +1,14 @@
+"""查询计划结构化构建器。
+
+该模块把路由结果转换成统一的 `query_plan` 数据结构，供执行层与回答层消费。
+重点是稳定字段、统一默认值和可预测的聚合语义。
+"""
+
 from __future__ import annotations
 
 
 def _normalized_route(route: dict | None) -> dict:
+    """标准化 route 字段，补齐默认值并做基础类型修正。"""
     raw = dict(route or {})
     top_n = raw.get("top_n")
     if top_n not in {None, ""}:
@@ -22,6 +29,7 @@ def _normalized_route(route: dict | None) -> dict:
 
 
 def _metric_for_query_type(query_type: str, domain: str) -> str:
+    """根据 query_type/domain 映射核心指标名。"""
     if query_type.startswith("pest") or domain == "pest":
         return "pest_severity"
     if query_type.startswith("soil") or domain == "soil":
@@ -32,6 +40,7 @@ def _metric_for_query_type(query_type: str, domain: str) -> str:
 
 
 def _time_range_payload(historical_window: dict | None) -> dict:
+    """把内部窗口结构转成计划层 time_range 载荷。"""
     window = dict(historical_window or {})
     window_type = str(window.get("window_type") or "")
     window_value = window.get("window_value")
@@ -41,6 +50,7 @@ def _time_range_payload(historical_window: dict | None) -> dict:
 
 
 def _region_scope_payload(route: dict, region_name: str, goal: str) -> dict:
+    """生成计划层 region_scope，区分会话模式和分析模式。"""
     if goal == "conversation":
         return {"level": "none", "value": ""}
     if region_name:
@@ -52,6 +62,7 @@ def _region_scope_payload(route: dict, region_name: str, goal: str) -> dict:
 
 
 def _aggregation_for_query_type(query_type: str, answer_mode: str, goal: str) -> str:
+    """推导聚合方式（top_k/detail/trend/forecast 等）。"""
     if goal == "conversation":
         return "none"
     if query_type.endswith("_compare") or answer_mode == "compare":
@@ -72,6 +83,7 @@ def _aggregation_for_query_type(query_type: str, answer_mode: str, goal: str) ->
 
 
 def execution_route(query_plan: dict | None) -> dict:
+    """从 query_plan 中提取并标准化 execution.route。"""
     execution = dict((query_plan or {}).get("execution") or {})
     route = execution.get("route")
     if isinstance(route, dict):
@@ -80,6 +92,7 @@ def execution_route(query_plan: dict | None) -> dict:
 
 
 def replace_execution_route(query_plan: dict | None, route: dict) -> dict:
+    """替换执行 route，并同步依赖 route 的槽位字段（如 top_k 的 k）。"""
     updated = dict(query_plan or {})
     execution = dict(updated.get("execution") or {})
     execution["route"] = _normalized_route(route)
@@ -106,6 +119,13 @@ def build_query_plan(
     needs_forecast: bool,
     needs_advice: bool,
 ) -> dict:
+    """构建统一 query_plan。
+
+    输出包含：
+    - `slots`：任务关键槽位（领域、指标、时间、聚合）
+    - `constraints`：执行约束
+    - `execution`：执行层直接可用的上下文
+    """
     if is_greeting:
         return {
             "version": "v1",

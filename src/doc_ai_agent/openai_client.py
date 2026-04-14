@@ -1,3 +1,5 @@
+"""OpenAI HTTP 客户端：提供最小化文本与 JSON 补全能力。"""
+
 from __future__ import annotations
 
 import json
@@ -7,11 +9,13 @@ from dataclasses import dataclass
 
 @dataclass
 class OpenAIClient:
+    """最小 OpenAI 客户端：封装 chat/completions 调用。"""
     api_key: str
     base_url: str
     timeout_seconds: int = 30
 
     def _chat(self, model: str, system_prompt: str, user_prompt: str, response_format: dict | None = None) -> str:
+        """发送一次聊天补全请求并返回文本内容。"""
         payload = {
             "model": model,
             "messages": [
@@ -37,6 +41,7 @@ class OpenAIClient:
         return data["choices"][0]["message"]["content"]
 
     def complete_json(self, model: str, system_prompt: str, user_prompt: str) -> dict:
+        """请求 JSON 对象响应，并在本地完成反序列化。"""
         content = self._chat(
             model,
             system_prompt,
@@ -46,4 +51,5 @@ class OpenAIClient:
         return json.loads(content)
 
     def complete_text(self, model: str, system_prompt: str, user_prompt: str) -> str:
+        """请求纯文本响应。"""
         return self._chat(model, system_prompt, user_prompt)

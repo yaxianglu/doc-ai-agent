@@ -1,3 +1,5 @@
+"""知识源检索层：支持静态、LlamaIndex 与 Qdrant 多后端检索。"""
+
 from __future__ import annotations
 
 import json
@@ -8,11 +10,14 @@ from typing import List, Protocol
 
 
 class RetrievalBackend(Protocol):
+    """检索后端协议：统一 search 接口，便于替换底层实现。"""
     def search(self, question: str, limit: int = 3, context: dict | None = None) -> List[dict]:
+        """根据问题与上下文返回候选知识源。"""
         ...
 
 
 def _enrich_result(item: dict, *, engine: str, backend: str, strategy: str) -> dict:
+    """为检索结果补充后端、策略和引擎元信息。"""
     enriched = dict(item)
     enriched["retrieval_engine"] = engine
     enriched["retrieval_backend"] = backend
@@ -22,9 +27,11 @@ def _enrich_result(item: dict, *, engine: str, backend: str, strategy: str) -> d
 
 @dataclass
 class StaticSourceProvider:
+    """静态关键词检索实现，适合作为零依赖默认后端。"""
     items: List[dict]
 
     def search(self, question: str, limit: int = 3, context: dict | None = None) -> List[dict]:
+        """执行静态关键词检索，并按匹配得分排序。"""
         keywords = self._keywords(question, context=context)
         domain = str((context or {}).get("domain") or "")
         if not keywords:
@@ -80,6 +87,7 @@ class StaticSourceProvider:
 
 @dataclass
 class LlamaIndexSourceProvider:
+    """LlamaIndex 外层包装：失败时自动回退到静态检索。"""
     items: List[dict]
     backend: RetrievalBackend | None = None
 
@@ -87,9 +95,11 @@ class LlamaIndexSourceProvider:
         self._fallback = StaticSourceProvider(self.items)
 
     def search(self, question: str, limit: int = 3, context: dict | None = None) -> List[dict]:
+        """优先调用 LlamaIndex 检索，失败时回退静态检索。"""
         if self.backend is None:
             return self._fallback_results(question, limit=limit, context=context)
         try:
+            # 向量检索失败时不要中断主流程，直接降级到静态检索。
             result = self.backend.search(question, limit=limit, context=context)
             if result:
                 return result[:limit]
@@ -104,6 +114,7 @@ class LlamaIndexSourceProvider:
 
 @dataclass
 class QdrantSourceProvider:
+    """Qdrant 外层包装：优先语义检索，失败时关键词兜底。"""
     items: List[dict]
     backend: RetrievalBackend | None = None
 
@@ -111,6 +122,7 @@ class QdrantSourceProvider:
         self._fallback = StaticSourceProvider(self.items)
 
     def search(self, question: str, limit: int = 3, context: dict | None = None) -> List[dict]:
+        """优先调用 Qdrant 语义检索，失败时回退静态检索。"""
         if self.backend is None:
             return self._fallback_results(question, limit=limit, context=context)
         try:
@@ -135,6 +147,7 @@ class QdrantSourceProvider:
 
 
 class LlamaIndexRetrievalBackend:
+    """LlamaIndex 向量检索后端。"""
     def __init__(self, items: List[dict], openai_api_key: str, embedding_model: str = "text-embedding-3-small"):
         from llama_index.core import VectorStoreIndex
         from llama_index.core.schema import TextNode
@@ -163,6 +176,7 @@ class LlamaIndexRetrievalBackend:
         self._index = VectorStoreIndex(nodes, embed_model=embed_model)
 
     def search(self, question: str, limit: int = 3, context: dict | None = None) -> List[dict]:
+        """执行 LlamaIndex 检索并补充统一结果元信息。"""
         query = self._build_query(question, context=context)
         retriever = self._index.as_retriever(similarity_top_k=max(limit, 1))
         nodes = retriever.retrieve(query)
@@ -212,6 +226,7 @@ class LlamaIndexRetrievalBackend:
 
 
 class QdrantRetrievalBackend:
+    """Qdrant 向量检索后端。"""
     def __init__(
         self,
         items: List[dict],
@@ -272,6 +287,7 @@ class QdrantRetrievalBackend:
         return [list(item.embedding) for item in response.data]
 
     def search(self, question: str, limit: int = 3, context: dict | None = None) -> List[dict]:
+        """执行 Qdrant 检索并返回标准化知识源列表。"""
         if not self._items:
             return []
         query = self._build_query(question, context=context)
@@ -326,6 +342,7 @@ def create_source_provider(
     qdrant_path: str = "./data/qdrant",
     qdrant_collection: str = "knowledge_sources",
 ) -> StaticSourceProvider | LlamaIndexSourceProvider | QdrantSourceProvider:
+    """按配置创建检索 Provider（static/llamaindex/qdrant）。"""
     normalized_backend = str(backend or "static").strip().lower()
     if normalized_backend not in {"llamaindex", "qdrant"}:
         return StaticSourceProvider(items)
@@ -356,6 +373,7 @@ def create_source_provider(
 
 
 def load_static_sources(path: str) -> StaticSourceProvider:
+    """从 JSON 文件加载静态知识源列表。"""
     p = Path(path)
     if not p.exists():
         return StaticSourceProvider([])
@@ -373,6 +391,7 @@ def load_source_provider(
     qdrant_path: str = "./data/qdrant",
     qdrant_collection: str = "knowledge_sources",
 ) -> StaticSourceProvider | LlamaIndexSourceProvider | QdrantSourceProvider:
+    """从目录与配置加载知识源 Provider。"""
     static_provider = load_static_sources(path)
     return create_source_provider(
         static_provider.items,

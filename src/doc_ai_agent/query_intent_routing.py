@@ -1,3 +1,10 @@
+"""查询意图与路由归一化工具。
+
+本模块聚焦两类工作：
+1. 通过规则打分与特征匹配，判断问题更像“数据查询”还是“建议问答”；
+2. 对外部路由结果做纠偏、合并与元信息补全，输出统一规划输入。
+"""
+
 from __future__ import annotations
 
 import re
@@ -16,6 +23,7 @@ from .task_decomposition import build_task_graph
 
 
 def score_data(question: str) -> float:
+    """评估问题属于“数据查询”意图的置信分数。"""
     q = question.lower()
     score = 0.0
     for token, weight in [
@@ -73,6 +81,7 @@ def score_data(question: str) -> float:
 
 
 def score_advice(question: str) -> float:
+    """评估问题属于“建议/处置说明”意图的置信分数。"""
     q = question.lower()
     score = 0.0
     for token, weight in [
@@ -111,6 +120,11 @@ def infer_query_type(
     has_negated_trend,
     extract_device_code,
 ) -> str:
+    """基于规则推断 query_type。
+
+    该函数按“更具体优先、通用兜底靠后”的顺序匹配，
+    避免泛化规则过早截获更精确的问题类型。
+    """
     if ("同时" in question or "共同" in question) and (("高虫情" in question or "虫情" in question) and ("低墒情" in question or "墒情" in question)):
         return "joint_risk"
     has_region = extract_city(question) is not None or extract_county(question) is not None
@@ -178,6 +192,7 @@ def infer_query_type(
 
 
 def normalize_router_route(question: str, route: dict, *, infer_query_type_fn, is_agri_query_type, deterministic_query_types: set[str]) -> dict:
+    """归一化外部路由结果，优先保留确定性更高的 query_type。"""
     normalized = dict(route)
     router_query_type = str(normalized.get("query_type") or "count")
     heuristic_query_type = infer_query_type_fn(question)
@@ -192,6 +207,10 @@ def normalize_router_route(question: str, route: dict, *, infer_query_type_fn, i
 
 
 def merge_router_route(question: str, route: dict, *, build_route) -> dict:
+    """将外部路由结果合并到本地抽取 route 上。
+
+    合并策略偏保守：当本地已提取出更具体的信息时，不被空值或弱信息覆盖。
+    """
     base = build_route(question, route.get("query_type", "count"))
     merged = dict(base)
 
@@ -207,6 +226,7 @@ def merge_router_route(question: str, route: dict, *, build_route) -> dict:
         if key == "since":
             if value in {None, ""}:
                 continue
+            # 当本地已命中明确时间窗时，阻止被“1970”这类全量兜底值回写覆盖。
             if value == "1970-01-01 00:00:00" and base["window"]["window_type"] != "all":
                 continue
         merged[key] = value
@@ -215,6 +235,7 @@ def merge_router_route(question: str, route: dict, *, build_route) -> dict:
 
 
 def is_low_signal(question: str, *, is_greeting_question) -> bool:
+    """判断输入是否“信息量过低”，需要先澄清。"""
     q = (question or "").strip()
     if not q:
         return True
@@ -230,6 +251,7 @@ def is_low_signal(question: str, *, is_greeting_question) -> bool:
 
 
 def needs_agri_domain_clarification(question: str, *, build_route) -> bool:
+    """判断是否需要先澄清农业领域（虫情/墒情）。"""
     has_agri_domain = re.search(r"(虫情|虫害|墒情)", question) is not None
     asks_severity = re.search(r"(受灾|灾情|最严重|最重)", question) is not None
     asks_region = re.search(r"(地方|地区|哪里|哪儿)", question) is not None
@@ -244,6 +266,7 @@ def needs_agri_domain_clarification(question: str, *, build_route) -> bool:
 
 
 def domain_from_query_type(query_type: str) -> str | None:
+    """从 query_type 反推领域标签。"""
     if query_type.startswith("pest"):
         return "pest"
     if query_type.startswith("soil"):
@@ -252,6 +275,7 @@ def domain_from_query_type(query_type: str) -> str | None:
 
 
 def answer_mode_for_plan(intent: str, route: dict, needs_clarification: bool) -> str:
+    """将 intent + query_type 映射为回答模式。"""
     if needs_clarification:
         return "clarify"
     if intent == "advice":
@@ -287,6 +311,7 @@ def typed_metadata(
     infer_domain_from_text,
     is_scope_correction_follow_up,
 ) -> dict:
+    """补齐规划所需的结构化元数据。"""
     understanding = dict(understanding or {})
     context = dict(context or {})
     if is_greeting_question(question):
@@ -308,6 +333,7 @@ def typed_metadata(
         or str(route.get("county") or "")
         or str(route.get("city") or "")
         or (
+            # 对特别短的追问，允许在安全条件下复用上下文地区名，减少重复追问。
             str(context.get("region_name") or "")
             if len((question or "").strip()) <= 12 and not is_scope_correction_follow_up(question)
             else ""
@@ -335,6 +361,7 @@ def finalize_plan(
     infer_domain_from_text,
     is_scope_correction_follow_up,
 ) -> dict:
+    """为初步 plan 补全 typed metadata、任务图和最终执行 route。"""
     route = dict(plan.get("route") or {})
     finalized = dict(plan)
     finalized.update(
