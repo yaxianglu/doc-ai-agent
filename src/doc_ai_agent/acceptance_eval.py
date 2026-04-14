@@ -7,6 +7,13 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+SUITE_BY_CATEGORY = {
+    "边界能力": "ood",
+    "原因解释": "explanation",
+    "预测能力": "forecast",
+    "多轮上下文": "context",
+}
+
 
 def load_question_bank(path: Path) -> list[dict]:
     """加载题库并规范化字段类型。"""
@@ -51,6 +58,28 @@ def _is_identity_boundary_question(question: str) -> bool:
     """识别身份说明类边界题。"""
     stripped = question.strip().rstrip("？?")
     return stripped in {"你是谁", "你是干什么的", "你能做什么", "你可以做什么"}
+
+
+def _suite_name_for(item: dict) -> str:
+    """推断题目所属的专项评测子集。"""
+    explicit_suite = str(item.get("suite") or "").strip()
+    if explicit_suite:
+        return explicit_suite
+
+    category = str(item.get("category") or "")
+    if category in SUITE_BY_CATEGORY:
+        return SUITE_BY_CATEGORY[category]
+
+    question = str(item.get("question") or "")
+    if _is_boundary_question(item, question):
+        return "ood"
+    if _contains_any(question, ["为什么", "原因", "从数据看"]):
+        return "explanation"
+    if "未来" in question or "下周" in question:
+        return "forecast"
+    if int(item.get("index") or 0) in {46, 47, 48, 49, 50}:
+        return "context"
+    return ""
 
 
 def _score_boundary_response(question: str, answer: str, score: float, failed: list[str]) -> tuple[float, list[str]]:
@@ -175,6 +204,7 @@ def _score_item(item: dict) -> dict:
     return {
         "index": int(item["index"]),
         "category": str(item.get("category") or ""),
+        "suite": _suite_name_for(item),
         "question": question,
         "mode": mode,
         "score": score,
@@ -188,12 +218,20 @@ def score_run(raw_items: list[dict]) -> dict:
     """对整批运行结果打分并汇总分类统计。"""
     items = [_score_item(item) for item in raw_items]
     by_category: dict[str, list[float]] = defaultdict(list)
+    by_suite: dict[str, list[float]] = defaultdict(list)
     for item in items:
         by_category[item["category"]].append(float(item["score"]))
+        suite = str(item.get("suite") or "")
+        if suite:
+            by_suite[suite].append(float(item["score"]))
     average = round(sum(float(item["score"]) for item in items) / len(items), 2) if items else 0.0
     category_scores = {
         category: round(sum(values) / len(values), 2)
         for category, values in sorted(by_category.items())
+    }
+    suite_scores = {
+        suite: round(sum(values) / len(values), 2)
+        for suite, values in sorted(by_suite.items())
     }
     return {
         "generated_at": datetime.now().isoformat(),
@@ -201,6 +239,7 @@ def score_run(raw_items: list[dict]) -> dict:
             "count": len(items),
             "average_score": average,
             "category_scores": category_scores,
+            "suite_scores": suite_scores,
             "low_score_count": sum(1 for item in items if float(item["score"]) < 7.0),
         },
         "items": items,
@@ -260,6 +299,11 @@ def render_score_report(scored: dict) -> str:
     ]
     for category, score in scored["summary"]["category_scores"].items():
         lines.append(f"- {category}: {score}")
+    suite_scores = scored["summary"].get("suite_scores") or {}
+    if suite_scores:
+        lines.extend(["", "## Suite Scores", ""])
+        for suite, score in suite_scores.items():
+            lines.append(f"- {suite}: {score}")
     lines.extend(["", "## Items", ""])
     for item in scored["items"]:
         lines.append(f"- {item['index']:02d} `{item['score']}` {item['question']}")

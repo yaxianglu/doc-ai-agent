@@ -15,6 +15,12 @@ from doc_ai_agent.server import AgentApp
 ROOT = Path(__file__).resolve().parents[1]
 QUESTION_BANK = ROOT / "evals" / "strict_acceptance_50.json"
 EVAL_ROOT = ROOT / "output" / "evals"
+SUITE_BANKS = {
+    "ood": ROOT / "evals" / "ood_eval.json",
+    "explanation": ROOT / "evals" / "explanation_eval.json",
+    "forecast": ROOT / "evals" / "forecast_eval.json",
+    "context": ROOT / "evals" / "context_eval.json",
+}
 
 
 def _timestamp_slug() -> str:
@@ -27,8 +33,19 @@ def _thread_id_for(category: str, known: dict[str, str]) -> str:
     return known[category]
 
 
+def _load_suite_index() -> dict[int, str]:
+    suite_index: dict[int, str] = {}
+    for suite_name, path in SUITE_BANKS.items():
+        if not path.exists():
+            continue
+        for item in load_question_bank(path):
+            suite_index[int(item["index"])] = suite_name
+    return suite_index
+
+
 def run_eval() -> list[dict]:
     questions = load_question_bank(QUESTION_BANK)
+    suite_index = _load_suite_index()
     app = AgentApp(AppConfig.from_env(os.environ))
     app.refresh()
     thread_ids: dict[str, str] = {}
@@ -39,6 +56,7 @@ def run_eval() -> list[dict]:
             {
                 "index": item["index"],
                 "category": item["category"],
+                "suite": suite_index.get(int(item["index"]), ""),
                 "question": item["question"],
                 "ok": True,
                 "mode": response.get("mode"),
