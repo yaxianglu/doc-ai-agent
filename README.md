@@ -105,10 +105,10 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 
 - 固定题库：`evals/strict_acceptance_50.json`
 - 专项子集：
-  - `evals/ood_eval.json`
-  - `evals/explanation_eval.json`
-  - `evals/forecast_eval.json`
-  - `evals/context_eval.json`
+  - `evals/ood_eval.json`（15 题，覆盖天气/新闻/票务/身份等越界硬例）
+  - `evals/explanation_eval.json`（10 题，覆盖原因解释与证据充分性）
+  - `evals/forecast_eval.json`（10 题，覆盖预测证据、置信度与联合风险）
+  - `evals/context_eval.json`（10 题，覆盖领域/地区/时间/原因/预测追问）
 - 完整输出说明：`docs/reports/2026-04-14-strict-acceptance-eval-output.md`
 - 一键运行：
 
@@ -132,6 +132,7 @@ PYTHONPATH=src python3.11 scripts/run_strict_acceptance_eval.py \
   - `output/evals/latest/report.md`
   - `output/evals/latest/comparison.md`（存在 baseline 时）
 - 评分汇总会额外输出 `suite_scores`，用于观察 `ood / explanation / forecast / context` 四个专项子集的平均分。
+- 评分汇总还会输出 `low_score_items_by_suite`，便于快速定位每个专项里的低分题。
 
 - 评分规则：
   - 运行失败、答非所问、`报警/预警` 域串线、`低墒/高墒` 方向错误、预测缺证据、解释缺依据，都会被自动扣分

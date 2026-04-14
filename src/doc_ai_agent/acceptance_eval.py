@@ -219,11 +219,21 @@ def score_run(raw_items: list[dict]) -> dict:
     items = [_score_item(item) for item in raw_items]
     by_category: dict[str, list[float]] = defaultdict(list)
     by_suite: dict[str, list[float]] = defaultdict(list)
+    low_score_items_by_suite: dict[str, list[dict]] = defaultdict(list)
     for item in items:
         by_category[item["category"]].append(float(item["score"]))
         suite = str(item.get("suite") or "")
         if suite:
             by_suite[suite].append(float(item["score"]))
+            if float(item["score"]) < 7.0:
+                low_score_items_by_suite[suite].append(
+                    {
+                        "index": int(item["index"]),
+                        "question": str(item["question"]),
+                        "score": float(item["score"]),
+                        "checks_failed": list(item.get("checks_failed") or []),
+                    }
+                )
     average = round(sum(float(item["score"]) for item in items) / len(items), 2) if items else 0.0
     category_scores = {
         category: round(sum(values) / len(values), 2)
@@ -241,6 +251,10 @@ def score_run(raw_items: list[dict]) -> dict:
             "category_scores": category_scores,
             "suite_scores": suite_scores,
             "low_score_count": sum(1 for item in items if float(item["score"]) < 7.0),
+            "low_score_items_by_suite": {
+                suite: sorted(values, key=lambda item: (float(item["score"]), int(item["index"])))
+                for suite, values in sorted(low_score_items_by_suite.items())
+            },
         },
         "items": items,
     }
@@ -304,6 +318,13 @@ def render_score_report(scored: dict) -> str:
         lines.extend(["", "## Suite Scores", ""])
         for suite, score in suite_scores.items():
             lines.append(f"- {suite}: {score}")
+    low_score_items_by_suite = scored["summary"].get("low_score_items_by_suite") or {}
+    if low_score_items_by_suite:
+        lines.extend(["", "## Low Score Items By Suite", ""])
+        for suite, items in low_score_items_by_suite.items():
+            lines.append(f"- {suite}:")
+            for item in items:
+                lines.append(f"  - {item['index']:02d} `{item['score']}` {item['question']}")
     lines.extend(["", "## Items", ""])
     for item in scored["items"]:
         lines.append(f"- {item['index']:02d} `{item['score']}` {item['question']}")

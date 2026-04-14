@@ -3,5 +3,10 @@
   {"index": 22, "category": "预测能力", "question": "未来7天墒情是否会继续恶化？"},
   {"index": 23, "category": "预测能力", "question": "常州市未来两周虫情趋势如何？"},
   {"index": 24, "category": "预测能力", "question": "未来10天哪些县风险最高？"},
-  {"index": 25, "category": "预测能力", "question": "下周哪些地方最值得重点巡查？"}
+  {"index": 25, "category": "预测能力", "question": "下周哪些地方最值得重点巡查？"},
+  {"index": 71, "category": "预测能力", "question": "未来两周如果继续升高，最先恶化的是哪些县？"},
+  {"index": 72, "category": "预测能力", "question": "未来7天徐州墒情会改善还是继续偏低？"},
+  {"index": 73, "category": "预测能力", "question": "下周苏州虫情是上升还是回落？"},
+  {"index": 74, "category": "预测能力", "question": "未来10天联合风险最高的地区会变吗？"},
+  {"index": 75, "category": "预测能力", "question": "如果样本不足，你对未来两周的判断有多确定？"}
 ]
