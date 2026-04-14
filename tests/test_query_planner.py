@@ -37,7 +37,45 @@ class ForcedGenericExplanationJudger:
         }
 
 
+class NeutralSemanticJudger:
+    def judge(self, _question: str):
+        return {
+            "reason": "",
+            "needs_clarification": False,
+            "clarification": None,
+            "intent": "advice",
+            "confidence": 0.0,
+        }
+
+
+class ForcedOutOfScopeSemanticParser:
+    def parse(self, question: str, context: dict | None = None):
+        del context
+        from doc_ai_agent.semantic_parse import SemanticParseResult
+
+        return SemanticParseResult(
+            normalized_query=str(question or "").strip(),
+            intent="advice",
+            is_out_of_scope=True,
+            fallback_reason="out_of_scope_capability",
+            trace=["normalize", "ood"],
+        )
+
+
 class QueryPlannerTests(unittest.TestCase):
+    def test_planner_uses_semantic_parse_result_for_ood_question(self):
+        planner = QueryPlanner(
+            None,
+            semantic_judger=NeutralSemanticJudger(),
+            semantic_parser=ForcedOutOfScopeSemanticParser(),
+        )
+
+        plan = planner.plan("这个问题被语义解析层标记为越界")
+
+        self.assertEqual(plan["reason"], "out_of_scope_capability")
+        self.assertEqual(plan["route"]["query_type"], "count")
+        self.assertEqual(plan["intent"], "advice")
+
     def test_planner_respects_semantic_judger_decision_for_generic_explanation(self):
         planner = QueryPlanner(None, semantic_judger=ForcedGenericExplanationJudger())
 
