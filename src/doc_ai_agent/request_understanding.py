@@ -135,6 +135,16 @@ class RequestUnderstanding:
         "看区",
         "看市",
     }
+    ALLOWED_INTENTS = {"data_query", "advice"}
+    ALLOWED_TASK_TYPES = {
+        "ranking",
+        "trend",
+        "region_overview",
+        "joint_risk",
+        "data_detail",
+        "compare",
+        "cross_domain_compare",
+    }
 
     def __init__(self, backend=None, extractor: EntityExtractionService | None = None):
         """初始化可选后端抽取器与本地实体抽取服务。"""
@@ -203,6 +213,10 @@ class RequestUnderstanding:
                 normalize_city_mentions,
             )
         )
+        intent = self._resolve_intent(
+            semantic_intent=semantic_parse.intent,
+            structured_intent=str(structured.get("intent") or ""),
+        )
         needs_forecast_flag = needs_forecast(cleaned, future_window, needs_advice_flag)
         needs_historical = needs_historical_data(cleaned, historical_window, future_window, domain, task_type, region_name)
 
@@ -235,6 +249,7 @@ class RequestUnderstanding:
             "normalized_question": normalized_question,
             "historical_query_text": historical_query_text,
             "ignored_phrases": ignored,
+            "intent": intent,
             "task_type": task_type,
             "understanding_engine": structured.get("engine") or extracted.get("engine") or "rules",
             "used_context": used_context,
@@ -282,11 +297,14 @@ class RequestUnderstanding:
             return {}
 
         normalized: dict = {"engine": "instructor"}
+        intent = str(payload.get("intent") or "")
+        if intent in self.ALLOWED_INTENTS:
+            normalized["intent"] = intent
         domain = str(payload.get("domain") or "")
         if domain in {"pest", "soil", "mixed"}:
             normalized["domain"] = domain
         task_type = str(payload.get("task_type") or "")
-        if task_type in {"ranking", "trend", "region_overview", "joint_risk", "data_detail"}:
+        if task_type in self.ALLOWED_TASK_TYPES:
             normalized["task_type"] = task_type
         region_name = self._coalesce_region_name(str(payload.get("region_name") or ""), "")
         if region_name:
@@ -294,10 +312,10 @@ class RequestUnderstanding:
         region_level = str(payload.get("region_level") or "")
         if region_level in {"city", "county"}:
             normalized["region_level"] = region_level
-        historical_window = self._normalize_window_payload(payload.get("historical_window"))
+        historical_window = self._normalize_window_payload(payload.get("historical_window") or payload.get("window"))
         if historical_window:
             normalized["historical_window"] = historical_window
-        future_window = self._normalize_window_payload(payload.get("future_window"))
+        future_window = self._normalize_window_payload(payload.get("future_window") or payload.get("forecast_window"))
         if future_window:
             normalized["future_window"] = future_window
         if payload.get("needs_explanation") is True:
@@ -371,8 +389,12 @@ class RequestUnderstanding:
             "window_type": window_type,
             "window_value": payload.get("window_value"),
         }
-        if payload.get("horizon_days") not in {None, ""}:
-            normalized["horizon_days"] = int(payload["horizon_days"])
+        horizon_days = payload.get("horizon_days")
+        if horizon_days not in {None, ""}:
+            try:
+                normalized["horizon_days"] = int(horizon_days)
+            except (TypeError, ValueError):
+                pass
         return normalized
 
     @staticmethod
@@ -389,6 +411,13 @@ class RequestUnderstanding:
             if window_type == "all" and all_window is None:
                 all_window = candidate
         return all_window or fallback
+
+    @classmethod
+    def _resolve_intent(cls, semantic_intent: str, structured_intent: str) -> str:
+        intent = semantic_intent if semantic_intent in cls.ALLOWED_INTENTS else "advice"
+        if intent == "advice" and structured_intent == "data_query":
+            return "data_query"
+        return intent
 
     def _resolve_with_context(self, text: str, context: dict | None) -> tuple[str, list[str]]:
         """调用上下文解析模块补全追问。"""

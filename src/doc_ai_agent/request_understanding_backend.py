@@ -15,15 +15,16 @@ from pydantic import BaseModel, Field
 
 class UnderstandingWindow(BaseModel):
     """时间窗结构。"""
-    window_type: Literal["all", "months", "weeks", "days", "none"] = "none"
+    window_type: Literal["all", "months", "weeks", "days", "year_since"] = "all"
     window_value: int | None = None
     horizon_days: int | None = None
 
 
 class UnderstandingExtraction(BaseModel):
     """语义抽取结果结构。"""
+    intent: Literal["data_query", "advice"] = "advice"
     domain: Literal["", "pest", "soil", "mixed"] = ""
-    task_type: Literal["unknown", "ranking", "trend", "region_overview", "joint_risk", "data_detail"] = "unknown"
+    task_type: Literal["unknown", "ranking", "trend", "region_overview", "joint_risk", "data_detail", "compare", "cross_domain_compare"] = "unknown"
     region_name: str = ""
     region_level: Literal["", "city", "county"] = ""
     historical_window: UnderstandingWindow = Field(default_factory=UnderstandingWindow)
@@ -74,7 +75,9 @@ class InstructorUnderstandingBackend:
                         "content": (
                             "你是农业问题理解器。"
                             "请基于用户原问题抽取结构化语义，不要把地区概览问题改写成排行问题。"
-                            "task_type 只能是：ranking、trend、region_overview、joint_risk、data_detail、unknown。"
+                            "intent 只能是：data_query、advice。"
+                            "如果属于农业数据分析、统计、趋势、地区概览、排行、联合风险、数据明细，intent= data_query。"
+                            "task_type 只能是：ranking、trend、region_overview、joint_risk、data_detail、compare、cross_domain_compare、unknown。"
                             "如果问题在问某个地区一段时间内的虫情/墒情情况、概况、整体表现、怎么样，"
                             "并且没有明显排行词，就用 region_overview。"
                             "如果问题在问某个地区一段时间内的虫情/墒情具体数据、明细、原始数据、具体数值，"

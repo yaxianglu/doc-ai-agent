@@ -46,6 +46,38 @@ class ParseBackboneSemanticParser:
         )
 
 
+class UnifiedSchemaBackend:
+    def extract(self, _question: str, context: dict | None = None) -> dict:
+        return {
+            "intent": "data_query",
+            "domain": "pest",
+            "task_type": "ranking",
+            "region_name": "苏州市",
+            "region_level": "city",
+            "historical_window": {"window_type": "months", "window_value": 3},
+            "future_window": {"window_type": "weeks", "window_value": 2, "horizon_days": 14},
+        }
+
+
+class AdviceSemanticParser:
+    def parse(self, question: str, context: dict | None = None) -> SemanticParseResult:
+        del question, context
+        return SemanticParseResult(
+            normalized_query="mock",
+            intent="advice",
+            confidence=0.6,
+            domain="",
+            task_type="unknown",
+            region_name="",
+            region_level="",
+            historical_window={"window_type": "all", "window_value": None},
+            future_window=None,
+            followup_type="none",
+            needs_clarification=False,
+            trace=["normalize", "mock"],
+        )
+
+
 class RequestUnderstandingTests(unittest.TestCase):
     def setUp(self):
         self.understanding = RequestUnderstanding()
@@ -569,6 +601,20 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["semantic_parse"]["followup_type"], "contextual")
         self.assertTrue(result["semantic_parse"]["needs_clarification"])
         self.assertEqual(result["trace"], ["normalize", "slots", "mock"])
+
+    def test_unified_backend_semantic_schema_merges_without_loss(self):
+        understanding = RequestUnderstanding(backend=UnifiedSchemaBackend())
+        understanding.semantic_parser = AdviceSemanticParser()
+
+        result = understanding.analyze("请解释并给我建议")
+
+        self.assertEqual(result.get("intent"), "data_query")
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["task_type"], "ranking")
+        self.assertEqual(result["region_name"], "苏州市")
+        self.assertEqual(result["region_level"], "city")
+        self.assertEqual(result["window"], {"window_type": "months", "window_value": 3})
+        self.assertEqual(result["future_window"], {"window_type": "weeks", "window_value": 2, "horizon_days": 14})
 
 
 if __name__ == "__main__":
