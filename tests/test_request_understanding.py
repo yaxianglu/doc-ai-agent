@@ -244,7 +244,7 @@ class RequestUnderstandingTests(unittest.TestCase):
         result = self.understanding.analyze("浙江天气")
 
         self.assertGreaterEqual(result["confidence"], 0.8)
-        self.assertEqual(result["fallback_reason"], "out_of_scope_capability")
+        self.assertEqual(result["fallback_reason"], "out_of_scope_weather")
         self.assertIn("ood", result["trace"])
 
     def test_preserves_trend_semantics_for_zoushi_wording(self):
