@@ -354,6 +354,21 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["region_level"], "county")
         self.assertEqual(result["task_type"], "ranking")
 
+    def test_short_forecast_follow_up_keeps_domain_from_context_even_without_query_type(self):
+        result = self.understanding.analyze(
+            "那未来两周呢？",
+            context={
+                "domain": "pest",
+                "region_name": "",
+                "route": {"query_type": "", "region_level": "county"},
+                "conversation_state": {"last_query_family": "ranking", "last_region_level": "county"},
+            },
+        )
+
+        self.assertEqual(result["domain"], "pest")
+        self.assertEqual(result["followup_type"], "forecast_follow_up")
+        self.assertTrue(result["needs_forecast"])
+
     def test_future_county_risk_question_does_not_extract_fake_region_name(self):
         result = self.understanding.analyze("未来10天哪些县风险最高？")
 
