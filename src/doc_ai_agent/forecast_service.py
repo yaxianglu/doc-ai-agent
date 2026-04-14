@@ -32,7 +32,14 @@ class StatsForecastBackend:
             from statsforecast.models import AutoETS
         except Exception:
             projected_score = self._manual_projection(series, value_key=value_key, horizon_days=horizon_days)
-            return self._build_projection(projected_score, history_points=history_points, fallback=False, fallback_reason="")
+            return self._build_projection(
+                projected_score,
+                history_points=history_points,
+                fallback=True,
+                fallback_reason="backend_unavailable",
+                forecast_backend="manual_trend",
+                model_name="rule_based",
+            )
 
         frame = pd.DataFrame(
             {
@@ -60,11 +67,20 @@ class StatsForecastBackend:
         return round(max(0.0, baseline + slope * min(horizon_days, 14) * 0.7), 2)
 
     @classmethod
-    def _build_projection(cls, projected_score: float, *, history_points: int, fallback: bool, fallback_reason: str) -> ForecastProjection:
+    def _build_projection(
+        cls,
+        projected_score: float,
+        *,
+        history_points: int,
+        fallback: bool,
+        fallback_reason: str,
+        forecast_backend: str = "statsforecast",
+        model_name: str = "AutoETS",
+    ) -> ForecastProjection:
         return ForecastProjection(
             projected_score=projected_score,
-            forecast_backend="statsforecast",
-            model_name="AutoETS",
+            forecast_backend=forecast_backend,
+            model_name=model_name,
             history_points=history_points,
             fallback=fallback,
             fallback_reason=fallback_reason,
@@ -160,6 +176,26 @@ class ForecastService:
             base -= 0.12
         return round(max(0.2, min(0.93, base)), 2)
 
+    @staticmethod
+    def _evidence_strength(history_points: int, *, fallback: bool) -> str:
+        if history_points <= 0:
+            return "weak"
+        if fallback or history_points < 3:
+            return "weak"
+        if history_points < 7:
+            return "medium"
+        return "strong"
+
+    @staticmethod
+    def _fallback_reason_text(reason: str) -> str:
+        if reason == "backend_unavailable":
+            return "预测后端暂不可用，当前改用回退预测"
+        if reason == "insufficient_history":
+            return "历史样本不足，当前以回退预测为主"
+        if reason == "aggregate_count_only":
+            return "当前只有聚合计数，预测证据较弱"
+        return "当前使用回退预测方案"
+
     @classmethod
     def _region_top_factors(
         cls,
@@ -172,6 +208,10 @@ class ForecastService:
         fallback: bool,
     ) -> list[str]:
         factors: list[str] = []
+        if history_points <= 0:
+            factors.append("当前缺少可用历史样本")
+        elif history_points < 3:
+            factors.append("历史样本不足，当前以保守外推为主")
         if latest >= average * 1.2 and latest > 0:
             factors.append("最近值仍高于窗口均值")
         elif latest <= average * 0.8 and average > 0:
@@ -190,12 +230,40 @@ class ForecastService:
         return factors[:3]
 
     @classmethod
-    def _region_answer(cls, *, region_name: str, horizon_phrase: str, label: str, risk_level: str, confidence: float, top_factors: list[str]) -> str:
+    def _region_answer(
+        cls,
+        *,
+        region_name: str,
+        horizon_phrase: str,
+        label: str,
+        risk_level: str,
+        confidence: float,
+        top_factors: list[str],
+        history_points: int,
+        fallback: bool,
+        fallback_reason: str,
+        evidence_strength: str,
+    ) -> str:
         coverage_text = next((item for item in top_factors if str(item).startswith("样本覆盖")), "")
         factor_items = [str(item) for item in top_factors if str(item) and str(item) != coverage_text]
         factor_text = "、".join(factor_items[:2]) if factor_items else "历史样本与最近波动"
-        coverage_suffix = f"，{coverage_text}" if coverage_text else ""
-        return f"{region_name}{horizon_phrase}{label}风险预计为{risk_level}（置信度{confidence:.2f}{coverage_suffix}）。依据：{factor_text}。"
+        coverage_suffix = coverage_text or f"样本覆盖 {history_points} 个观测日"
+        if history_points <= 0:
+            return (
+                f"{region_name}{horizon_phrase}{label}暂不做强预测（置信度{confidence:.2f}，{coverage_suffix}）。"
+                "依据：当前缺少可用历史样本，只能给出保守判断。"
+            )
+        if fallback or history_points < 3:
+            fallback_text = cls._fallback_reason_text(fallback_reason or "insufficient_history")
+            return (
+                f"{region_name}{horizon_phrase}{label}暂以保守预测为主（置信度{confidence:.2f}，{coverage_suffix}，证据强度{evidence_strength}）。"
+                f"依据：{fallback_text}；{factor_text}。"
+            )
+        return (
+            f"{region_name}{horizon_phrase}{label}风险预计为{risk_level}"
+            f"（置信度{confidence:.2f}，{coverage_suffix}，证据强度{evidence_strength}）。"
+            f"依据：{factor_text}。"
+        )
 
     @classmethod
     def _ranking_confidence(cls, row: dict, *, horizon_days: int) -> float:
@@ -258,6 +326,7 @@ class ForecastService:
         )
         risk_level = self._risk_level(risk_index)
         confidence = self._confidence(projection.history_points, fallback=projection.fallback, horizon_days=horizon_days)
+        evidence_strength = self._evidence_strength(projection.history_points, fallback=projection.fallback)
         label = "虫情" if domain == "pest" else "墒情"
         horizon_phrase = self._horizon_phrase(horizon_days)
         top_factors = self._region_top_factors(
@@ -276,6 +345,10 @@ class ForecastService:
                 risk_level=risk_level,
                 confidence=confidence,
                 top_factors=top_factors,
+                history_points=projection.history_points,
+                fallback=projection.fallback,
+                fallback_reason=projection.fallback_reason,
+                evidence_strength=evidence_strength,
             ),
             "data": series,
             "forecast": {
@@ -286,6 +359,7 @@ class ForecastService:
                 "risk_index": risk_index,
                 "risk_level": risk_level,
                 "confidence": confidence,
+                "evidence_strength": evidence_strength,
                 "top_factors": top_factors,
                 "forecast_backend": projection.forecast_backend,
                 "model_name": projection.model_name,
@@ -293,7 +367,7 @@ class ForecastService:
                 "fallback": projection.fallback,
                 "fallback_reason": projection.fallback_reason,
             },
-            "analysis_context": {"domain": domain, "region_name": region_name},
+            "analysis_context": {"domain": domain, "region_name": region_name, "region_level": str(route.get("region_level") or "city")},
         }
 
     def _fallback_region_forecast(self, route: dict, *, domain: str) -> dict:
@@ -308,6 +382,7 @@ class ForecastService:
         risk_index = min(100.0, round(projected_score * 18, 1))
         risk_level = self._risk_level(risk_index)
         confidence = self._confidence(1 if count else 0, fallback=True, horizon_days=horizon_days)
+        evidence_strength = self._evidence_strength(1 if count else 0, fallback=True)
         label = "虫情" if domain == "pest" else "墒情"
         top_factors = [f"历史样本量 {count} 条", "当前使用回退预测方案"]
         return {
@@ -318,6 +393,10 @@ class ForecastService:
                 risk_level=risk_level,
                 confidence=confidence,
                 top_factors=top_factors,
+                history_points=1 if count else 0,
+                fallback=True,
+                fallback_reason="aggregate_count_only",
+                evidence_strength=evidence_strength,
             ),
             "data": [{"region_name": region_name, "historical_count": count, "projected_score": projected_score}],
             "forecast": {
@@ -328,6 +407,7 @@ class ForecastService:
                 "risk_index": risk_index,
                 "risk_level": risk_level,
                 "confidence": confidence,
+                "evidence_strength": evidence_strength,
                 "top_factors": top_factors,
                 "forecast_backend": "statsforecast",
                 "model_name": "AutoETS",
@@ -335,7 +415,7 @@ class ForecastService:
                 "fallback": True,
                 "fallback_reason": "aggregate_count_only",
             },
-            "analysis_context": {"domain": domain, "region_name": region_name},
+            "analysis_context": {"domain": domain, "region_name": region_name, "region_level": str(route.get("region_level") or "city")},
         }
 
     def forecast_top_regions(
@@ -395,6 +475,10 @@ class ForecastService:
             f"{idx+1}.{row['region_name']}（{row['risk_level']}，置信度{row['confidence']:.2f}）" for idx, row in enumerate(ranked[:top_n])
         )
         overall_confidence = round(sum(float(row.get("confidence") or 0) for row in ranked[:top_n]) / max(len(ranked[:top_n]), 1), 2) if ranked else 0.2
+        answer = (
+            f"{answer}。整体置信度{overall_confidence:.2f}。"
+            "依据：按历史风险强度排序，结合记录覆盖与活跃天数估计置信度。"
+        )
         return {
             "answer": answer,
             "data": ranked[:top_n],
@@ -404,6 +488,7 @@ class ForecastService:
                 "horizon_days": horizon_days,
                 "risk_level": "高" if ranked else "低",
                 "confidence": overall_confidence,
+                "evidence_strength": "medium" if ranked else "weak",
                 "top_factors": ["按历史风险强度排序", "结合记录覆盖与活跃天数估计置信度"],
                 "forecast_backend": "statsforecast",
                 "model_name": "AutoETS",
@@ -411,5 +496,5 @@ class ForecastService:
                 "fallback": False,
                 "fallback_reason": "",
             },
-            "analysis_context": {"domain": domain, "region_name": ""},
+            "analysis_context": {"domain": domain, "region_name": "", "region_level": region_level},
         }
