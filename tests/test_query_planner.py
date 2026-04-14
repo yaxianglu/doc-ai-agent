@@ -26,7 +26,27 @@ class FakePlaybookRouter:
         return self.payload
 
 
+class ForcedGenericExplanationJudger:
+    def judge(self, _question: str):
+        return {
+            "reason": "generic_explanation",
+            "needs_clarification": False,
+            "clarification": None,
+            "intent": "advice",
+            "confidence": 0.78,
+        }
+
+
 class QueryPlannerTests(unittest.TestCase):
+    def test_planner_respects_semantic_judger_decision_for_generic_explanation(self):
+        planner = QueryPlanner(None, semantic_judger=ForcedGenericExplanationJudger())
+
+        plan = planner.plan("这个输入本来会走低信号")
+
+        self.assertEqual(plan["reason"], "generic_explanation")
+        self.assertFalse(plan["needs_clarification"])
+        self.assertEqual(plan["intent"], "advice")
+
     def test_context_follow_up_can_use_shared_semantics_without_planner_private_helpers(self):
         real_planner = QueryPlanner(None)
         planner = SimpleNamespace(

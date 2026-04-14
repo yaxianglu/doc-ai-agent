@@ -344,6 +344,20 @@ class AggressiveRouterLLM(FakeLLMClient):
 
 
 class AgentTests(unittest.TestCase):
+    def test_identity_question_returns_capability_intro(self):
+        agent = DocAIAgent(
+            AlertRepository(self.db),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("你是谁？", thread_id="thread-identity")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("AI农情工作台", result["answer"])
+        self.assertIn("虫情", result["answer"])
+        self.assertEqual(result["evidence"]["generation_mode"], "rule")
+        self.assertFalse(result["evidence"]["request_understanding"]["used_context"])
+
     def test_greeting_does_not_answer_with_stale_agri_context(self):
         agent = DocAIAgent(
             AlertRepository(self.db),
