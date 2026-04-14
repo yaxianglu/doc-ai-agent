@@ -5,6 +5,7 @@ import unittest
 from doc_ai_agent.agent import DocAIAgent
 from doc_ai_agent.advice_engine import AdviceResult
 from doc_ai_agent.repository import AlertRepository
+from doc_ai_agent.source_provider import QdrantSourceProvider
 
 
 class FakeLLMClient:
@@ -67,6 +68,50 @@ class RichFakeSourceProvider:
         if domain:
             items = [item for item in items if item["domain"] == domain] or items
         return items[:limit]
+
+
+class RecallThenRerankBackend:
+    def __init__(self):
+        self.last_limit = None
+
+    def search(self, question, limit=3, context=None):
+        del question, context
+        self.last_limit = limit
+        return [
+            {
+                "title": "墒情调度与灌排要点",
+                "url": "https://example.gov/soil",
+                "published_at": "2026-02-15",
+                "snippet": "低墒优先补灌，高墒优先排水，并复核未来天气。",
+                "domain": "soil",
+                "tags": ["墒情", "排水", "补灌"],
+                "retrieval_engine": "qdrant",
+                "retrieval_backend": "qdrant",
+                "retrieval_strategy": "semantic-vector",
+            },
+            {
+                "title": "虫情监测与绿色防控技术",
+                "url": "https://example.gov/pest-generic",
+                "published_at": "2026-02-14",
+                "snippet": "针对迁飞性害虫应加强监测预警，按阈值采取分区防控措施。",
+                "domain": "pest",
+                "tags": ["虫情", "防控", "阈值"],
+                "retrieval_engine": "qdrant",
+                "retrieval_backend": "qdrant",
+                "retrieval_strategy": "semantic-vector",
+            },
+            {
+                "title": "徐州市虫情阈值分区防控指南",
+                "url": "https://example.gov/pest-xz",
+                "published_at": "2026-03-01",
+                "snippet": "徐州市连续高值时，按地块阈值执行分区防控并在24-48小时复查。",
+                "domain": "pest",
+                "tags": ["徐州市", "虫情", "阈值", "分区防控"],
+                "retrieval_engine": "qdrant",
+                "retrieval_backend": "qdrant",
+                "retrieval_strategy": "semantic-vector",
+            },
+        ][:limit]
 
 
 class FakeStructuredRepo:
@@ -839,6 +884,27 @@ class AgentGraphTests(unittest.TestCase):
         self.assertIn("原因：", result["answer"])
         self.assertIn("依据：", result["answer"])
         self.assertIn("建议：", result["answer"])
+
+    def test_analysis_answer_uses_reranked_knowledge_grounding_order(self):
+        backend = RecallThenRerankBackend()
+        source_provider = QdrantSourceProvider(items=[], backend=backend)
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=source_provider,
+        )
+
+        result = agent.answer(
+            "我不太会表达，你先看看过去5个月虫情最严重的地方是哪里，"
+            "再解释一下为什么，最后给处置建议",
+            thread_id="thread-mixed-rerank",
+        )
+
+        self.assertEqual(result["mode"], "analysis")
+        self.assertGreater(backend.last_limit or 0, 3)
+        self.assertEqual(result["evidence"]["knowledge"][0]["title"], "徐州市虫情阈值分区防控指南")
+        self.assertEqual(result["evidence"]["knowledge_sources"][0]["title"], "徐州市虫情阈值分区防控指南")
+        self.assertIn("依据：参考 徐州市虫情阈值分区防控指南；虫情监测与绿色防控技术", result["answer"])
 
     def test_compare_two_regions_returns_actual_comparison(self):
         agent = DocAIAgent(
