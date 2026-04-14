@@ -155,6 +155,7 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertTrue(result["used_context"])
         self.assertEqual(result["resolved_question"], "过去5个月墒情最严重的地方是哪里")
         self.assertEqual(result["normalized_question"], "过去5个月墒情最严重的地方是哪里")
+        self.assertEqual(result["followup_type"], "domain_follow_up")
 
     def test_full_question_does_not_inherit_previous_domain_context(self):
         result = self.understanding.analyze(
@@ -213,6 +214,7 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["region_name"], "南京市")
         self.assertEqual(result["resolved_question"], "虫情 南京市呢")
         self.assertEqual(result["normalized_question"], "虫情 南京市呢")
+        self.assertEqual(result["followup_type"], "region_follow_up")
 
     def test_generic_future_advice_follow_up_keeps_domain_without_sticky_region(self):
         result = self.understanding.analyze(
@@ -256,6 +258,31 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["resolved_question"], "那过去半年呢")
         self.assertEqual(result["window"]["window_type"], "months")
         self.assertEqual(result["window"]["window_value"], 6)
+        self.assertEqual(result["followup_type"], "time_follow_up")
+
+    def test_explanation_follow_up_is_explicitly_labeled(self):
+        result = self.understanding.analyze(
+            "为什么",
+            context={
+                "domain": "soil",
+                "region_name": "徐州市",
+            },
+        )
+
+        self.assertEqual(result["followup_type"], "explanation_follow_up")
+        self.assertTrue(result["used_context"])
+
+    def test_forecast_follow_up_is_explicitly_labeled(self):
+        result = self.understanding.analyze(
+            "未来两周呢",
+            context={
+                "domain": "pest",
+                "region_name": "徐州市",
+            },
+        )
+
+        self.assertEqual(result["followup_type"], "forecast_follow_up")
+        self.assertTrue(result["needs_forecast"])
 
     def test_non_agri_topic_does_not_reuse_agri_context(self):
         result = self.understanding.analyze(
