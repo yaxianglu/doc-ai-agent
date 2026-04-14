@@ -1,0 +1,778 @@
+{
+  "strict-eval-final-1": {
+    "memory_version": 2,
+    "turn_count": 5,
+    "domain": "soil",
+    "region_name": "未知地区",
+    "query_type": "soil_top",
+    "window": {
+      "window_type": "weeks",
+      "window_value": 2
+    },
+    "route": {
+      "query_type": "soil_top",
+      "since": "2026-03-31 00:00:00",
+      "until": null,
+      "city": null,
+      "county": null,
+      "device_code": null,
+      "region_level": "county",
+      "window": {
+        "window_type": "weeks",
+        "window_value": 2
+      },
+      "top_n": 1,
+      "forecast_window": null,
+      "forecast_mode": ""
+    },
+    "forecast": {},
+    "last_question": "最近两周墒情异常最多的是哪些地区？",
+    "last_answer": "从2026-03-31起，墒情异常最多的地区为：1.未知地区（异常强度423.55，异常30条，低墒16，高墒14）",
+    "last_verified_answer": "从2026-03-31起，墒情异常最多的地区为：1.未知地区（异常强度423.55，异常30条，低墒16，高墒14）",
+    "pending_user_question": null,
+    "pending_clarification": null,
+    "user_preferences": {},
+    "conversation_state": {
+      "last_intent": "data_query",
+      "last_answer_mode": "data_query",
+      "last_clarification_reason": ""
+    },
+    "slots": {
+      "domain": {
+        "value": "soil",
+        "source": "explicit",
+        "priority": 100,
+        "ttl": 4,
+        "updated_at_turn": 5
+      },
+      "region": {
+        "value": "未知地区",
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 5
+      },
+      "time_range": {
+        "value": {
+          "mode": "relative",
+          "value": "2_weeks"
+        },
+        "source": "explicit",
+        "priority": 100,
+        "ttl": 4,
+        "updated_at_turn": 5
+      },
+      "intent": {
+        "value": "analysis",
+        "source": "system",
+        "priority": 80,
+        "ttl": 2,
+        "updated_at_turn": 1
+      }
+    }
+  },
+  "strict-eval-final-2": {
+    "memory_version": 2,
+    "turn_count": 5,
+    "domain": "pest",
+    "region_name": "江苏",
+    "query_type": "pest_top",
+    "window": {
+      "window_type": "all",
+      "window_value": null
+    },
+    "route": {
+      "query_type": "pest_top",
+      "since": "1970-01-01 00:00:00",
+      "until": null,
+      "city": "江苏",
+      "county": null,
+      "device_code": null,
+      "region_level": "county",
+      "window": {
+        "window_type": "all",
+        "window_value": null
+      },
+      "top_n": 5,
+      "forecast_window": null,
+      "forecast_mode": ""
+    },
+    "forecast": {},
+    "last_question": "江苏范围内，虫情最高的是哪些市？再细到县。",
+    "last_answer": "历史上，虫情严重度最高的Top5市为：1.常州市（严重度656731.0，记录8842条）；2.盐城市（严重度212260.0，记录46490条）；3.宿迁市（严重度134963.0，记录23584条）；4.泰州市（严重度111294.0，记录20372条）；5.苏州市（严重度91243.0，记录34269条）。再细到县，Top5区县为：1.新北区（严重度576476.0，记录881条）；2.泗洪县（严重度59638.0，记录7555条）；3.六合区（严重度49417.0，记录6618条）；4.大丰区（严重度38577.0，记录6422条）；5.沭阳县（严重度37315.0，记录5881条）",
+    "last_verified_answer": "历史上，虫情严重度最高的Top5市为：1.常州市（严重度656731.0，记录8842条）；2.盐城市（严重度212260.0，记录46490条）；3.宿迁市（严重度134963.0，记录23584条）；4.泰州市（严重度111294.0，记录20372条）；5.苏州市（严重度91243.0，记录34269条）。再细到县，Top5区县为：1.新北区（严重度576476.0，记录881条）；2.泗洪县（严重度59638.0，记录7555条）；3.六合区（严重度49417.0，记录6618条）；4.大丰区（严重度38577.0，记录6422条）；5.沭阳县（严重度37315.0，记录5881条）",
+    "pending_user_question": null,
+    "pending_clarification": null,
+    "user_preferences": {},
+    "conversation_state": {
+      "last_intent": "data_query",
+      "last_answer_mode": "data_query",
+      "last_clarification_reason": ""
+    },
+    "slots": {
+      "domain": {
+        "value": "pest",
+        "source": "explicit",
+        "priority": 100,
+        "ttl": 4,
+        "updated_at_turn": 5
+      },
+      "region": {
+        "value": "江苏",
+        "source": "explicit",
+        "priority": 100,
+        "ttl": 4,
+        "updated_at_turn": 5
+      },
+      "time_range": {
+        "value": {
+          "mode": "none",
+          "value": null
+        },
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 5
+      },
+      "intent": {
+        "value": "analysis",
+        "source": "system",
+        "priority": 80,
+        "ttl": 2,
+        "updated_at_turn": 1
+      }
+    }
+  },
+  "strict-eval-final-3": {
+    "memory_version": 2,
+    "turn_count": 5,
+    "domain": "pest",
+    "region_name": "新北区",
+    "query_type": "pest_top",
+    "window": {
+      "window_type": "months",
+      "window_value": 6
+    },
+    "route": {
+      "query_type": "pest_top",
+      "since": "2025-10-16 00:00:00",
+      "until": null,
+      "city": null,
+      "county": null,
+      "device_code": null,
+      "region_level": "county",
+      "window": {
+        "window_type": "months",
+        "window_value": 6
+      },
+      "top_n": 5,
+      "forecast_window": null,
+      "forecast_mode": ""
+    },
+    "forecast": {},
+    "last_question": "过去半年风险最高的是哪些地区？",
+    "last_answer": "从2025-10-16起，虫情严重度最高的Top5区县为：1.新北区（严重度30407.0，记录320条）；2.溧阳市（严重度21131.0，记录1188条）；3.宜兴市（严重度4111.0，记录2024条）；4.江宁区（严重度3347.0，记录2017条）；5.六合区（严重度2860.0，记录3618条）",
+    "last_verified_answer": "从2025-10-16起，虫情严重度最高的Top5区县为：1.新北区（严重度30407.0，记录320条）；2.溧阳市（严重度21131.0，记录1188条）；3.宜兴市（严重度4111.0，记录2024条）；4.江宁区（严重度3347.0，记录2017条）；5.六合区（严重度2860.0，记录3618条）",
+    "pending_user_question": null,
+    "pending_clarification": null,
+    "user_preferences": {},
+    "conversation_state": {
+      "last_intent": "data_query",
+      "last_answer_mode": "data_query",
+      "last_clarification_reason": ""
+    },
+    "slots": {
+      "domain": {
+        "value": "pest",
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 5
+      },
+      "region": {
+        "value": "新北区",
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 5
+      },
+      "time_range": {
+        "value": {
+          "mode": "relative",
+          "value": "6_months"
+        },
+        "source": "explicit",
+        "priority": 100,
+        "ttl": 4,
+        "updated_at_turn": 5
+      },
+      "intent": {
+        "value": "analysis",
+        "source": "system",
+        "priority": 80,
+        "ttl": 2,
+        "updated_at_turn": 1
+      }
+    }
+  },
+  "strict-eval-final-4": {
+    "memory_version": 2,
+    "turn_count": 5,
+    "domain": "soil",
+    "region_name": "",
+    "query_type": "soil_trend",
+    "window": {
+      "window_type": "months",
+      "window_value": 2
+    },
+    "route": {
+      "query_type": "soil_trend",
+      "since": "2026-02-13 00:00:00",
+      "until": null,
+      "city": null,
+      "county": null,
+      "device_code": null,
+      "region_level": "city",
+      "window": {
+        "window_type": "months",
+        "window_value": 2
+      },
+      "top_n": 5,
+      "forecast_window": null,
+      "forecast_mode": ""
+    },
+    "forecast": {},
+    "last_question": "近两个月墒情有没有缓解？",
+    "last_answer": "从2026-02-13起整体墒情趋势：整体下降。",
+    "last_verified_answer": "从2026-02-13起整体墒情趋势：整体下降。",
+    "pending_user_question": null,
+    "pending_clarification": null,
+    "user_preferences": {},
+    "conversation_state": {
+      "last_intent": "data_query",
+      "last_answer_mode": "data_query",
+      "last_clarification_reason": ""
+    },
+    "slots": {
+      "domain": {
+        "value": "soil",
+        "source": "explicit",
+        "priority": 100,
+        "ttl": 4,
+        "updated_at_turn": 5
+      },
+      "region": {
+        "value": "",
+        "source": "empty",
+        "priority": 0,
+        "ttl": 0,
+        "updated_at_turn": 4
+      },
+      "time_range": {
+        "value": {
+          "mode": "relative",
+          "value": "2_months"
+        },
+        "source": "explicit",
+        "priority": 100,
+        "ttl": 4,
+        "updated_at_turn": 5
+      },
+      "intent": {
+        "value": "analysis",
+        "source": "system",
+        "priority": 80,
+        "ttl": 2,
+        "updated_at_turn": 1
+      }
+    }
+  },
+  "strict-eval-final-5": {
+    "memory_version": 2,
+    "turn_count": 5,
+    "domain": "pest",
+    "region_name": "常州市",
+    "query_type": "pest_top",
+    "window": {
+      "window_type": "all",
+      "window_value": null
+    },
+    "route": {
+      "query_type": "pest_top",
+      "since": "1970-01-01 00:00:00",
+      "until": null,
+      "city": null,
+      "county": null,
+      "device_code": null,
+      "region_level": "city",
+      "window": {
+        "window_type": "all",
+        "window_value": null
+      },
+      "top_n": 5,
+      "forecast_window": {
+        "window_type": "weeks",
+        "window_value": 1,
+        "horizon_days": 7
+      },
+      "forecast_mode": ""
+    },
+    "forecast": {
+      "domain": "pest",
+      "mode": "ranking",
+      "horizon_days": 14,
+      "risk_level": "高",
+      "confidence": 0.82,
+      "top_factors": [
+        "按历史风险强度排序",
+        "结合记录覆盖与活跃天数估计置信度"
+      ],
+      "forecast_backend": "statsforecast",
+      "model_name": "AutoETS",
+      "history_points": 5,
+      "fallback": false,
+      "fallback_reason": ""
+    },
+    "last_question": "下周哪些地方最值得重点巡查？",
+    "last_answer": "未来两周虫情风险最高的地区为：1.常州市（高，置信度0.82）；2.盐城市（低，置信度0.82）；3.宿迁市（低，置信度0.82）；4.泰州市（低，置信度0.82）；5.苏州市（低，置信度0.82）",
+    "last_verified_answer": "未来两周虫情风险最高的地区为：1.常州市（高，置信度0.82）；2.盐城市（低，置信度0.82）；3.宿迁市（低，置信度0.82）；4.泰州市（低，置信度0.82）；5.苏州市（低，置信度0.82）",
+    "pending_user_question": null,
+    "pending_clarification": null,
+    "user_preferences": {},
+    "conversation_state": {
+      "last_intent": "data_query",
+      "last_answer_mode": "data_query",
+      "last_clarification_reason": ""
+    },
+    "slots": {
+      "domain": {
+        "value": "pest",
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 4
+      },
+      "region": {
+        "value": "常州市",
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 5
+      },
+      "time_range": {
+        "value": {
+          "mode": "none",
+          "value": null
+        },
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 1
+      },
+      "intent": {
+        "value": "analysis",
+        "source": "system",
+        "priority": 80,
+        "ttl": 2,
+        "updated_at_turn": 1
+      }
+    }
+  },
+  "strict-eval-final-6": {
+    "memory_version": 2,
+    "turn_count": 5,
+    "domain": "pest",
+    "region_name": "",
+    "query_type": "pest_overview",
+    "window": {
+      "window_type": "all",
+      "window_value": null
+    },
+    "route": {
+      "query_type": "",
+      "since": "1970-01-01 00:00:00",
+      "until": null,
+      "city": null,
+      "county": null,
+      "device_code": null,
+      "region_level": "city",
+      "window": {
+        "window_type": "all",
+        "window_value": null
+      },
+      "top_n": null,
+      "forecast_window": null,
+      "forecast_mode": ""
+    },
+    "forecast": {},
+    "last_question": "从数据看，这次异常最可能的原因是什么？",
+    "last_answer": "原因：本次异常最可能的原因是近期台风或暴雨导致田间积水，造成作物根系缺氧或病害加重。依据是近期有台风和暴雨相关技术意见，均强调排涝、清沟和病害巡查。建议重点复核田间积水点、沟渠通畅性及作物根部健康状况。\n依据：结合上下文与虫情监测与绿色防控技术综合判断。",
+    "last_verified_answer": "原因：本次异常最可能的原因是近期台风或暴雨导致田间积水，造成作物根系缺氧或病害加重。依据是近期有台风和暴雨相关技术意见，均强调排涝、清沟和病害巡查。建议重点复核田间积水点、沟渠通畅性及作物根部健康状况。\n依据：结合上下文与虫情监测与绿色防控技术综合判断。",
+    "pending_user_question": null,
+    "pending_clarification": null,
+    "user_preferences": {},
+    "conversation_state": {
+      "last_intent": "advice",
+      "last_answer_mode": "advice",
+      "last_clarification_reason": ""
+    },
+    "slots": {
+      "domain": {
+        "value": "pest",
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 4
+      },
+      "region": {
+        "value": "",
+        "source": "empty",
+        "priority": 0,
+        "ttl": 0,
+        "updated_at_turn": 1
+      },
+      "time_range": {
+        "value": {
+          "mode": "none",
+          "value": null
+        },
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 5
+      },
+      "intent": {
+        "value": "analysis",
+        "source": "system",
+        "priority": 80,
+        "ttl": 2,
+        "updated_at_turn": 3
+      }
+    }
+  },
+  "strict-eval-final-7": {
+    "memory_version": 2,
+    "turn_count": 5,
+    "domain": "pest",
+    "region_name": "",
+    "query_type": "pest_forecast",
+    "window": {
+      "window_type": "all",
+      "window_value": null
+    },
+    "route": {
+      "query_type": "",
+      "since": "1970-01-01 00:00:00",
+      "until": null,
+      "city": null,
+      "county": null,
+      "device_code": null,
+      "region_level": "city",
+      "window": {
+        "window_type": "all",
+        "window_value": null
+      },
+      "top_n": null,
+      "forecast_window": null,
+      "forecast_mode": ""
+    },
+    "forecast": {
+      "domain": "pest",
+      "mode": "region",
+      "horizon_days": 14,
+      "projected_score": 0.0,
+      "risk_index": 0.0,
+      "risk_level": "低",
+      "confidence": 0.28,
+      "top_factors": [
+        "最近值与窗口均值接近",
+        "样本覆盖 0 个观测日",
+        "当前使用回退预测方案"
+      ],
+      "forecast_backend": "statsforecast",
+      "model_name": "AutoETS",
+      "history_points": 0,
+      "fallback": true,
+      "fallback_reason": "insufficient_history"
+    },
+    "last_question": "给我一个分轻重缓急的行动建议。",
+    "last_answer": "建议：1. 先查田间墒情，低墒地块优先补灌，高墒地块及时排水，防止渍害。  \n2. 台风后立即清沟排水、扶苗培土，喷施叶面肥，促进小麦恢复生长。  \n3. 加强虫情监测，重点关注迁飞性害虫，按阈值分区防控。  \n风险点：排水不及时易烂根，防控用药需注意安全间隔期。  \n复查项：墒情、苗情、虫情每3天复查一次，动态调整措施。",
+    "last_verified_answer": "建议：1. 先查田间墒情，低墒地块优先补灌，高墒地块及时排水，防止渍害。  \n2. 台风后立即清沟排水、扶苗培土，喷施叶面肥，促进小麦恢复生长。  \n3. 加强虫情监测，重点关注迁飞性害虫，按阈值分区防控。  \n风险点：排水不及时易烂根，防控用药需注意安全间隔期。  \n复查项：墒情、苗情、虫情每3天复查一次，动态调整措施。",
+    "pending_user_question": null,
+    "pending_clarification": null,
+    "user_preferences": {},
+    "conversation_state": {
+      "last_intent": "advice",
+      "last_answer_mode": "advice",
+      "last_clarification_reason": ""
+    },
+    "slots": {
+      "domain": {
+        "value": "pest",
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 4
+      },
+      "region": {
+        "value": "",
+        "source": "empty",
+        "priority": 0,
+        "ttl": 0,
+        "updated_at_turn": 4
+      },
+      "time_range": {
+        "value": {
+          "mode": "none",
+          "value": null
+        },
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 1
+      },
+      "intent": {
+        "value": "analysis",
+        "source": "system",
+        "priority": 80,
+        "ttl": 2,
+        "updated_at_turn": 1
+      }
+    }
+  },
+  "strict-eval-final-8": {
+    "memory_version": 2,
+    "turn_count": 5,
+    "domain": "",
+    "region_name": "",
+    "query_type": "active_devices",
+    "window": {
+      "window_type": "all",
+      "window_value": null
+    },
+    "route": {
+      "query_type": "active_devices",
+      "since": "1970-01-01 00:00:00",
+      "until": null,
+      "city": null,
+      "county": null,
+      "device_code": null,
+      "region_level": "city",
+      "window": {
+        "window_type": "all",
+        "window_value": null
+      },
+      "top_n": 10,
+      "forecast_window": null,
+      "forecast_mode": ""
+    },
+    "forecast": {},
+    "last_question": "给我列出最近最活跃的10台设备。",
+    "last_answer": "历史上，最活跃的Top10台设备为：1.SNS00204334（预警64次，活跃32天）；2.SNS00213276（预警40次，活跃20天）；3.SNS00205751（预警38次，活跃19天）；4.SNS00206185（预警34次，活跃17天）；5.SNS00213858（预警34次，活跃17天）；6.SNS00213891（预警34次，活跃17天）；7.SNS00213408（预警32次，活跃16天）；8.SNS00213588（预警32次，活跃16天）；9.SNS00213424（预警32次，活跃16天）；10.SNS00204931（预警30次，活跃15天）。",
+    "last_verified_answer": "历史上，最活跃的Top10台设备为：1.SNS00204334（预警64次，活跃32天）；2.SNS00213276（预警40次，活跃20天）；3.SNS00205751（预警38次，活跃19天）；4.SNS00206185（预警34次，活跃17天）；5.SNS00213858（预警34次，活跃17天）；6.SNS00213891（预警34次，活跃17天）；7.SNS00213408（预警32次，活跃16天）；8.SNS00213588（预警32次，活跃16天）；9.SNS00213424（预警32次，活跃16天）；10.SNS00204931（预警30次，活跃15天）。",
+    "pending_user_question": null,
+    "pending_clarification": null,
+    "user_preferences": {},
+    "conversation_state": {
+      "last_intent": "data_query",
+      "last_answer_mode": "data_query",
+      "last_clarification_reason": ""
+    },
+    "slots": {
+      "domain": {
+        "value": "",
+        "source": "empty",
+        "priority": 0,
+        "ttl": 0,
+        "updated_at_turn": 1
+      },
+      "region": {
+        "value": "",
+        "source": "empty",
+        "priority": 0,
+        "ttl": 0,
+        "updated_at_turn": 1
+      },
+      "time_range": {
+        "value": {
+          "mode": "none",
+          "value": null
+        },
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 4
+      },
+      "intent": {
+        "value": "analysis",
+        "source": "system",
+        "priority": 80,
+        "ttl": 2,
+        "updated_at_turn": 5
+      }
+    }
+  },
+  "strict-eval-final-9": {
+    "memory_version": 2,
+    "turn_count": 5,
+    "domain": "",
+    "region_name": "",
+    "query_type": "unmatched_region_records",
+    "window": {
+      "window_type": "all",
+      "window_value": null
+    },
+    "route": {
+      "query_type": "",
+      "since": "1970-01-01 00:00:00",
+      "until": null,
+      "city": null,
+      "county": null,
+      "device_code": null,
+      "region_level": "city",
+      "window": {
+        "window_type": "all",
+        "window_value": null
+      },
+      "top_n": null,
+      "forecast_window": null,
+      "forecast_mode": ""
+    },
+    "forecast": {},
+    "last_question": "这些空数据更像是采集问题还是映射问题？",
+    "last_answer": "建议：先检查采集设备和数据源，确认传感器、监测点是否正常工作（如断电、损坏、信号丢失）；再核查数据映射流程，排查数据传输、格式转换、数据库字段匹配等环节。风险点：遗漏硬件故障、忽视软件配置错误。复查项：设备状态、原始数据日志、映射规则与数据库记录。",
+    "last_verified_answer": "建议：先检查采集设备和数据源，确认传感器、监测点是否正常工作（如断电、损坏、信号丢失）；再核查数据映射流程，排查数据传输、格式转换、数据库字段匹配等环节。风险点：遗漏硬件故障、忽视软件配置错误。复查项：设备状态、原始数据日志、映射规则与数据库记录。",
+    "pending_user_question": null,
+    "pending_clarification": null,
+    "user_preferences": {},
+    "conversation_state": {
+      "last_intent": "advice",
+      "last_answer_mode": "advice",
+      "last_clarification_reason": ""
+    },
+    "slots": {
+      "domain": {
+        "value": "",
+        "source": "empty",
+        "priority": 0,
+        "ttl": 0,
+        "updated_at_turn": 1
+      },
+      "region": {
+        "value": "",
+        "source": "empty",
+        "priority": 0,
+        "ttl": 0,
+        "updated_at_turn": 3
+      },
+      "time_range": {
+        "value": {
+          "mode": "none",
+          "value": null
+        },
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 1
+      },
+      "intent": {
+        "value": "advice",
+        "source": "system",
+        "priority": 80,
+        "ttl": 2,
+        "updated_at_turn": 5
+      }
+    }
+  },
+  "strict-eval-final-10": {
+    "memory_version": 2,
+    "turn_count": 5,
+    "domain": "pest",
+    "region_name": "新北区",
+    "query_type": "pest_forecast",
+    "window": {
+      "window_type": "all",
+      "window_value": null
+    },
+    "route": {
+      "query_type": "pest_forecast",
+      "since": "2025-11-15 00:00:00",
+      "until": null,
+      "city": null,
+      "county": null,
+      "device_code": null,
+      "region_level": "county",
+      "window": {
+        "window_type": "all",
+        "window_value": null
+      },
+      "top_n": null,
+      "forecast_window": {
+        "window_type": "weeks",
+        "window_value": 2,
+        "horizon_days": 14
+      },
+      "forecast_mode": "ranking"
+    },
+    "forecast": {
+      "domain": "pest",
+      "mode": "ranking",
+      "horizon_days": 14,
+      "risk_level": "高",
+      "confidence": 0.82,
+      "top_factors": [
+        "按历史风险强度排序",
+        "结合记录覆盖与活跃天数估计置信度"
+      ],
+      "forecast_backend": "statsforecast",
+      "model_name": "AutoETS",
+      "history_points": 1,
+      "fallback": false,
+      "fallback_reason": ""
+    },
+    "last_question": "那未来两周呢？",
+    "last_answer": "未来两周虫情风险最高的地区为：1.新北区（高，置信度0.82）",
+    "last_verified_answer": "未来两周虫情风险最高的地区为：1.新北区（高，置信度0.82）",
+    "pending_user_question": null,
+    "pending_clarification": null,
+    "user_preferences": {},
+    "conversation_state": {
+      "last_intent": "data_query",
+      "last_answer_mode": "data_query",
+      "last_clarification_reason": ""
+    },
+    "slots": {
+      "domain": {
+        "value": "pest",
+        "source": "explicit",
+        "priority": 100,
+        "ttl": 4,
+        "updated_at_turn": 2
+      },
+      "region": {
+        "value": "新北区",
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 5
+      },
+      "time_range": {
+        "value": {
+          "mode": "none",
+          "value": null
+        },
+        "source": "inferred",
+        "priority": 60,
+        "ttl": 2,
+        "updated_at_turn": 5
+      },
+      "intent": {
+        "value": "analysis",
+        "source": "system",
+        "priority": 80,
+        "ttl": 2,
+        "updated_at_turn": 2
+      }
+    }
+  }
+}
