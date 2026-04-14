@@ -12,6 +12,8 @@ class FakeLlamaBackend:
         self.payload = payload
 
     def search(self, question: str, limit: int = 1, context: dict | None = None):
+        if isinstance(self.payload, list):
+            return [dict(item) for item in self.payload[:limit]]
         return [dict(self.payload)]
 
 
@@ -72,6 +74,70 @@ class QueryPlaybookRouterTests(unittest.TestCase):
 
         self.assertEqual(result["query_type"], "joint_risk")
         self.assertEqual(result["retrieval_engine"], "static-fallback")
+
+    def test_llamaindex_router_reranks_trend_over_overview_for_ambiguous_candidates(self):
+        router = LlamaIndexQueryPlaybookRouter(
+            backend=FakeLlamaBackend(
+                [
+                    {
+                        "intent": "data_query",
+                        "query_type": "pest_overview",
+                        "domain": "pest",
+                        "title": "虫情地区概览",
+                        "retrieval_engine": "llamaindex",
+                        "matched_terms": ["虫害"],
+                        "score": 0.92,
+                    },
+                    {
+                        "intent": "data_query",
+                        "query_type": "pest_trend",
+                        "domain": "pest",
+                        "title": "虫情趋势分析",
+                        "retrieval_engine": "llamaindex",
+                        "matched_terms": ["虫害", "走势"],
+                        "score": 0.81,
+                    },
+                ]
+            )
+        )
+
+        result = router.route("南京近三周虫害走势怎么样？")
+
+        self.assertEqual(result["query_type"], "pest_trend")
+        self.assertEqual(result["retrieval_rank"], 1)
+        self.assertEqual(result["recall_rank"], 2)
+        self.assertTrue(result["retrieval_reranked"])
+
+    def test_llamaindex_router_reranks_overview_over_top_for_region_summary(self):
+        router = LlamaIndexQueryPlaybookRouter(
+            backend=FakeLlamaBackend(
+                [
+                    {
+                        "intent": "data_query",
+                        "query_type": "pest_top",
+                        "domain": "pest",
+                        "title": "虫情严重地区排行",
+                        "retrieval_engine": "llamaindex",
+                        "matched_terms": ["虫情"],
+                        "score": 0.93,
+                    },
+                    {
+                        "intent": "data_query",
+                        "query_type": "pest_overview",
+                        "domain": "pest",
+                        "title": "虫情地区概览",
+                        "retrieval_engine": "llamaindex",
+                        "matched_terms": ["虫情", "整体"],
+                        "score": 0.79,
+                    },
+                ]
+            )
+        )
+
+        result = router.route("过去5个月徐州市虫情整体情况如何？")
+
+        self.assertEqual(result["query_type"], "pest_overview")
+        self.assertTrue(result["retrieval_reranked"])
 
 
 if __name__ == "__main__":

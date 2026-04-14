@@ -98,6 +98,11 @@ def playbook_context_trace(playbook_route: dict) -> list[str]:
     retrieval_engine = str(playbook_route.get("retrieval_engine") or "").strip()
     if retrieval_engine:
         trace.append(f"playbook_router={retrieval_engine}")
+    if playbook_route.get("retrieval_reranked"):
+        trace.append("playbook_reranked")
+    recall_rank = playbook_route.get("recall_rank")
+    if recall_rank not in (None, "", 0):
+        trace.append(f"playbook_recall_rank={recall_rank}")
     matched_terms = playbook_route.get("matched_terms")
     if isinstance(matched_terms, list) and matched_terms:
         trace.append("matched_terms=" + ",".join(str(term) for term in matched_terms[:4]))

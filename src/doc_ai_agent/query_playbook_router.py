@@ -258,11 +258,13 @@ class LlamaIndexQueryPlaybookRouter:
         if self.backend is None:
             return fallback_results
         try:
-            results = self.backend.search(question, limit=limit, context=context)
+            recall_limit = max(limit * 3, 5)
+            results = self.backend.search(question, limit=recall_limit, context=context)
             if results:
-                top_score = float(results[0].get("score") or 0.0)
+                reranked = self._rerank_results(question, results, limit=limit, context=context)
+                top_score = max(float(item.get("score") or 0.0) for item in results)
                 if top_score >= 0.35:
-                    guarded = self._apply_guardrails(question, results[:limit], fallback_results, context=context)
+                    guarded = self._apply_guardrails(question, reranked, fallback_results, context=context)
                     if guarded:
                         return guarded[:limit]
         except Exception:
@@ -278,6 +280,32 @@ class LlamaIndexQueryPlaybookRouter:
         """给静态兜底结果打上来源标记。"""
         results = self.fallback.search(question, limit=limit, context=context)
         return [self._mark_fallback(item) for item in results]
+
+    def _rerank_results(self, question: str, results: List[dict], limit: int, context: dict | None = None) -> List[dict]:
+        """把向量召回的多个候选再按查询相关性重排。"""
+        reranked: list[dict] = []
+        for recall_rank, item in enumerate(results, start=1):
+            candidate = dict(item)
+            static_score, matched_terms = self.fallback._score_playbook(question, candidate, context=context)
+            prior_score = min(max(float(candidate.get("score") or 0.0), 0.0), 1.0) * 4.0
+            candidate["matched_terms"] = self._dedupe_terms(
+                [term for term in candidate.get("matched_terms", []) or [] if isinstance(term, str)] + matched_terms
+            )
+            candidate["recall_rank"] = int(candidate.get("retrieval_rank") or recall_rank)
+            candidate["rerank_score"] = round(static_score + prior_score, 4)
+            candidate["retrieval_reranked"] = True
+            reranked.append(candidate)
+
+        reranked.sort(
+            key=lambda item: (
+                -float(item.get("rerank_score") or 0.0),
+                -float(item.get("score") or 0.0),
+                int(item.get("recall_rank") or 0),
+            )
+        )
+        for retrieval_rank, item in enumerate(reranked[:limit], start=1):
+            item["retrieval_rank"] = retrieval_rank
+        return reranked[:limit]
 
     def _apply_guardrails(
         self,
@@ -342,6 +370,16 @@ class LlamaIndexQueryPlaybookRouter:
         enriched = dict(item)
         enriched["retrieval_engine"] = "static-fallback"
         return enriched
+
+    @staticmethod
+    def _dedupe_terms(terms: list[str]) -> list[str]:
+        """保持 matched_terms 顺序稳定，同时避免重复。"""
+        deduped: list[str] = []
+        for term in terms:
+            normalized = str(term or "").strip()
+            if normalized and normalized not in deduped:
+                deduped.append(normalized)
+        return deduped
 
 
 class LlamaIndexQueryPlaybookBackend:
