@@ -292,6 +292,25 @@ class AcceptanceEvalTests(unittest.TestCase):
         self.assertIn("forecast_overclaims_weak_evidence", item["checks_failed"])
         self.assertLess(item["score"], 7.5)
 
+    def test_score_run_penalizes_fallback_shaped_county_answer(self):
+        raw = [
+            {
+                "index": 117,
+                "category": "综合能力",
+                "question": "最近30天哪些县虫情高但预警并不多？",
+                "ok": True,
+                "mode": "data_query",
+                "seconds": 0.4,
+                "answer": "这次回答没有对齐到县级口径，我先保守收口：请让我按县一级重新返回结果，避免把市级排行误当成县级答案。",
+            }
+        ]
+
+        scored = score_run(raw)
+        item = scored["items"][0]
+        self.assertIn("fallback_instead_of_answer", item["checks_failed"])
+        self.assertIn("county_scope_mismatch", item["checks_failed"])
+        self.assertLess(item["score"], 5.0)
+
 
 if __name__ == "__main__":
     unittest.main()

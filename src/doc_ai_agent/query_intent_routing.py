@@ -103,6 +103,9 @@ def score_advice(question: str) -> float:
         ("给我", 0.1),
         ("24小时", 0.2),
         ("农户", 0.15),
+        ("优先级", 0.35),
+        ("先盯", 0.25),
+        ("先处理", 0.25),
     ]:
         if token in q:
             score += weight
@@ -131,6 +134,21 @@ def infer_query_type(
     future_window = extract_future_window(question)
     _, _, historical_window = extract_relative_window(question)
     has_explicit_historical_window = historical_window.get("window_type") != "none" or extract_day_range(question)[0] is not None
+    if "预警" in question and "虫情" in question and any(token in question for token in ["并不高", "不高", "不算高"]):
+        return "alerts_high_pest_low"
+    if "虫情" in question and any(token in question for token in ["预警", "报警", "告警"]) and any(token in question for token in ["并不多", "不多", "不算多"]):
+        return "pest_high_alerts_low"
+    if has_region and any(token in question for token in ["哪个县", "哪个区", "哪些县", "哪些区", "最重", "最异常", "最严重", "最高", "最多"]):
+        if "虫情" in question or "虫害" in question:
+            return "pest_top"
+        if "墒情" in question:
+            return "soil_top"
+    if "设备" in question and "墒情" in question and "最近一次" in question and extract_device_code(question):
+        return "latest_soil_device"
+    if "设备" in question and "墒情" in question and "异常" in question and "没有任何预警" in question:
+        return "soil_only_abnormal_devices"
+    if "设备" in question and "墒情" in question and "异常" in question:
+        return "soil_abnormal_devices"
     if future_window and not has_explicit_historical_window and ("虫情" in question or "虫害" in question):
         return "pest_forecast"
     if future_window and not has_explicit_historical_window and "墒情" in question:
@@ -174,6 +192,10 @@ def infer_query_type(
         and any(token in question for token in ["数量", "条数", "多少", "增加", "减少", "上升", "下降"])
     ):
         return "alerts_trend"
+    if any(token in question for token in ["预警", "报警", "告警"]) and (
+        "top" in question.lower() or "Top" in question or "前5" in question or "前十" in question or re.search(r"前\s*\d+", question) or "最多" in question
+    ):
+        return "alerts_top"
     if "变化了多少" in question and "到" in question and "市" in question:
         return "city_day_change"
     if "最高" in question and "告警值" in question:
@@ -271,6 +293,8 @@ def domain_from_query_type(query_type: str) -> str | None:
         return "pest"
     if query_type.startswith("soil"):
         return "soil"
+    if query_type in {"alerts_high_pest_low", "pest_high_alerts_low"}:
+        return "mixed"
     return None
 
 
@@ -292,6 +316,8 @@ def answer_mode_for_plan(intent: str, route: dict, needs_clarification: bool) ->
     if query_type.endswith("_forecast"):
         return "forecast"
     if query_type.endswith("_top"):
+        return "ranking"
+    if query_type in {"alerts_high_pest_low", "pest_high_alerts_low"}:
         return "ranking"
     if query_type == "joint_risk":
         return "joint_risk"

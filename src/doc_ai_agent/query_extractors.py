@@ -59,6 +59,11 @@ INVALID_REGION_PHRASES = {
     "看县",
     "看区",
     "看市",
+    "同一个县",
+    "如果一个县",
+    "一个县",
+    "这个县",
+    "该县",
 }
 
 
@@ -157,6 +162,8 @@ def extract_county(question: str) -> Optional[str]:
     if not match:
         return None
     county = match.group(1)
+    if "市" in county:
+        county = county.split("市")[-1]
     if is_invalid_region_candidate(county):
         return None
     return county
@@ -207,7 +214,7 @@ def default_top_n(question: str, query_type: str) -> Optional[int]:
         return explicit_top_n
     if query_type == "active_devices":
         return 10
-    if query_type in {"pest_top", "soil_top", "joint_risk"}:
+    if query_type in {"pest_top", "soil_top", "joint_risk", "alerts_high_pest_low", "pest_high_alerts_low"}:
         return 5 if asks_for_multiple_ranked_results(question) else 1
     if query_type == "top":
         return 5

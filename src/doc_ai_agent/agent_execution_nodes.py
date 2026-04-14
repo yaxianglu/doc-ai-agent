@@ -78,7 +78,10 @@ def build_forecast_execution_context(
     first_region = first_region_name(query_result) if query_result else ""
     inherited_region = memory_context.get("region_name") if understanding.get("reuse_region_from_context") else ""
     explicit_region_name = understanding.get("region_name") or route.get("county") or route.get("city")
-    region_name = explicit_region_name if forecast_mode == "ranking" else (explicit_region_name or inherited_region or first_region)
+    if forecast_mode == "ranking":
+        region_name = route.get("county") or first_region or explicit_region_name or inherited_region
+    else:
+        region_name = explicit_region_name or inherited_region or first_region
     region_level = (
         understanding.get("region_level")
         or route.get("region_level")
@@ -86,12 +89,16 @@ def build_forecast_execution_context(
         or infer_region_level_from_name(str(region_name or ""))
         or "city"
     )
+    forecast_city = route.get("city") or None
+    forecast_county = route.get("county") or None
+    if forecast_mode == "ranking" and region_level == "county":
+        forecast_county = region_name or forecast_county
     forecast_route = {
         "query_type": f"{domain}_forecast",
         "since": route.get("since") or memory_context.get("route", {}).get("since") or "1970-01-01 00:00:00",
         "until": route.get("until"),
-        "city": explicit_region_name if forecast_mode != "ranking" and region_level != "county" else (route.get("city") or None),
-        "county": explicit_region_name if forecast_mode != "ranking" and region_level == "county" else (route.get("county") or None),
+        "city": explicit_region_name if forecast_mode != "ranking" and region_level != "county" else forecast_city,
+        "county": explicit_region_name if forecast_mode != "ranking" and region_level == "county" else forecast_county,
         "region_level": region_level,
         "top_n": route.get("top_n") or 1,
         "window": route.get("window") or understanding.get("window") or memory_context.get("window") or {"window_type": "all", "window_value": None},

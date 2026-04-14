@@ -1199,6 +1199,172 @@ class QueryEngine:
             },
         )
 
+    def _answer_alerts_top(self, question: str, plan: dict) -> QueryResult:
+        """返回预警/报警 Top 排行。"""
+        since = str(plan.get("since") or self._extract_since(question))
+        field = str(plan.get("field", "")).strip() or ("county" if "区县" in question or "县" in question else "city")
+        top_n = int(plan.get("top_n") or 5)
+        day_start, day_end = self._extract_day_range(question)
+        if day_start:
+            since = day_start
+        data = self.repo.top_n_filtered(field, top_n, since, until=day_end) if hasattr(self.repo, "top_n_filtered") else self.repo.top_n(field, top_n, since)
+        if data:
+            answer = f"自{since[:10]}以来，Top{top_n}为：" + "；".join([f"{i+1}.{r['name']}({r['count']})" for i, r in enumerate(data)])
+        else:
+            suffix = self._available_alert_range_suffix()
+            answer = f"自{since[:10]}以来，暂无可用于 Top{top_n} 排行的数据。"
+            if suffix:
+                answer = f"{answer}{suffix}"
+        return QueryResult(
+            answer=answer,
+            data=data,
+            evidence={
+                "sql": f"SELECT {field}, COUNT(*) FROM alerts WHERE alert_time >= ? GROUP BY {field} ORDER BY COUNT(*) DESC LIMIT {top_n}",
+                "since": since,
+                "query_type": "alerts_top",
+                "available_data_ranges": self._available_alert_ranges() if not data else [],
+                "no_data_reasons": [
+                    self._build_no_data_reason(
+                        source="alerts",
+                        label="告警数据",
+                        since=since,
+                        until=day_end,
+                        time_range=self.repo.available_alert_time_range() if hasattr(self.repo, "available_alert_time_range") else None,
+                    )
+                ]
+                if not data
+                else [],
+                "recovery_suggestions": self._build_recovery_suggestions(
+                    question=question,
+                    query_type="top",
+                    no_data_reason=self._build_no_data_reason(
+                        source="alerts",
+                        label="告警数据",
+                        since=since,
+                        until=day_end,
+                        time_range=self.repo.available_alert_time_range() if hasattr(self.repo, "available_alert_time_range") else None,
+                    ),
+                    time_ranges=self._available_alert_ranges(),
+                    top_n=top_n,
+                    field=field,
+                )
+                if not data
+                else [],
+            },
+        )
+
+    @staticmethod
+    def _rank_score(index: int, total: int) -> float:
+        if total <= 0:
+            return 0.0
+        return round((total - index) / total, 4)
+
+    def _build_cross_signal_gap_rows(
+        self,
+        *,
+        primary_rows: list[dict],
+        secondary_rows: list[dict],
+        primary_key: str,
+        secondary_key: str,
+        top_n: int,
+    ) -> list[dict]:
+        primary_total = len(primary_rows)
+        secondary_total = len(secondary_rows)
+        primary_map = {
+            str(row.get("region_name") or row.get("name") or ""): {
+                "value": float(row.get(primary_key) or row.get("count") or 0),
+                "rank_score": self._rank_score(index, primary_total),
+            }
+            for index, row in enumerate(primary_rows)
+            if str(row.get("region_name") or row.get("name") or "")
+        }
+        secondary_map = {
+            str(row.get("region_name") or row.get("name") or ""): {
+                "value": float(row.get(secondary_key) or row.get("count") or 0),
+                "rank_score": self._rank_score(index, secondary_total),
+            }
+            for index, row in enumerate(secondary_rows)
+            if str(row.get("region_name") or row.get("name") or "")
+        }
+        candidates: list[dict] = []
+        for region_name, primary_meta in primary_map.items():
+            secondary_meta = secondary_map.get(region_name, {"value": 0.0, "rank_score": 0.0})
+            gap_score = round(primary_meta["rank_score"] - secondary_meta["rank_score"], 4)
+            if primary_meta["value"] <= 0 or gap_score <= 0:
+                continue
+            candidates.append(
+                {
+                    "region_name": region_name,
+                    "primary_value": primary_meta["value"],
+                    "secondary_value": secondary_meta["value"],
+                    "gap_score": gap_score,
+                }
+            )
+        candidates.sort(key=lambda item: (-item["gap_score"], -item["primary_value"], item["secondary_value"], item["region_name"]))
+        return candidates[:top_n]
+
+    def _answer_alerts_high_pest_low(self, question: str, plan: dict) -> QueryResult:
+        since = str(plan.get("since") or "1970-01-01 00:00:00")
+        until = plan.get("until") or None
+        region_level = str(plan.get("region_level") or "county")
+        top_n = max(1, int(plan.get("top_n") or 5))
+        field = "county" if region_level == "county" else "city"
+        alert_rows = self.repo.top_n_filtered(field, max(top_n * 4, 12), since, until=until) if hasattr(self.repo, "top_n_filtered") else []
+        pest_rows = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=max(top_n * 4, 12), city=plan.get("city"), county=plan.get("county")) if hasattr(self.repo, "top_pest_regions") else []
+        data = self._build_cross_signal_gap_rows(
+            primary_rows=[{"region_name": row.get("name"), "count": row.get("count")} for row in alert_rows],
+            secondary_rows=pest_rows,
+            primary_key="count",
+            secondary_key="severity_score",
+            top_n=top_n,
+        )
+        if not data:
+            return QueryResult(
+                answer="当前没有识别出“预警多但虫情并不高”的明显县级地区。",
+                data=[],
+                evidence={"sql": "alerts_top + top_pest_regions", "query_type": "alerts_high_pest_low", "since": since, "until": until},
+            )
+        details = "；".join(
+            f"{idx+1}.{row['region_name']}（预警{int(row['primary_value'])}条，虫情严重度{self._format_metric_value(row['secondary_value'])}，反差{row['gap_score']:.2f}）"
+            for idx, row in enumerate(data)
+        )
+        return QueryResult(
+            answer=f"从{since[:10]}起，预警多但虫情并不高的重点县为：{details}",
+            data=data,
+            evidence={"sql": "alerts_top + top_pest_regions", "query_type": "alerts_high_pest_low", "since": since, "until": until, "region_level": region_level},
+        )
+
+    def _answer_pest_high_alerts_low(self, question: str, plan: dict) -> QueryResult:
+        since = str(plan.get("since") or "1970-01-01 00:00:00")
+        until = plan.get("until") or None
+        region_level = str(plan.get("region_level") or "county")
+        top_n = max(1, int(plan.get("top_n") or 5))
+        field = "county" if region_level == "county" else "city"
+        pest_rows = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=max(top_n * 4, 12), city=plan.get("city"), county=plan.get("county")) if hasattr(self.repo, "top_pest_regions") else []
+        alert_rows = self.repo.top_n_filtered(field, max(top_n * 4, 12), since, until=until) if hasattr(self.repo, "top_n_filtered") else []
+        data = self._build_cross_signal_gap_rows(
+            primary_rows=pest_rows,
+            secondary_rows=[{"region_name": row.get("name"), "count": row.get("count")} for row in alert_rows],
+            primary_key="severity_score",
+            secondary_key="count",
+            top_n=top_n,
+        )
+        if not data:
+            return QueryResult(
+                answer="当前没有识别出“虫情高但预警并不多”的明显县级地区。",
+                data=[],
+                evidence={"sql": "top_pest_regions + alerts_top", "query_type": "pest_high_alerts_low", "since": since, "until": until},
+            )
+        details = "；".join(
+            f"{idx+1}.{row['region_name']}（虫情严重度{self._format_metric_value(row['primary_value'])}，预警{int(row['secondary_value'])}条，反差{row['gap_score']:.2f}）"
+            for idx, row in enumerate(data)
+        )
+        return QueryResult(
+            answer=f"从{since[:10]}起，虫情高但预警并不多的重点县为：{details}",
+            data=data,
+            evidence={"sql": "top_pest_regions + alerts_top", "query_type": "pest_high_alerts_low", "since": since, "until": until, "region_level": region_level},
+        )
+
     def answer(self, question: str, plan: Optional[dict] = None) -> QueryResult:
         """执行查询计划并返回统一 QueryResult。"""
         plan = plan or {}
@@ -1206,10 +1372,16 @@ class QueryEngine:
 
         if hasattr(self.repo, "top_pest_regions"):
             # 新版结构化仓储路径：优先命中细分查询分支。
+            if query_type == "alerts_top":
+                return self._answer_alerts_top(question, plan)
+            if query_type == "alerts_high_pest_low":
+                return self._answer_alerts_high_pest_low(question, plan)
             if query_type == "alerts_trend":
                 return self._answer_alerts_trend(question, plan)
             if query_type == "pest_top":
                 return self._answer_pest_top(question, plan)
+            if query_type == "pest_high_alerts_low":
+                return self._answer_pest_high_alerts_low(question, plan)
             if query_type == "soil_top":
                 return self._answer_soil_top(question, plan)
             if query_type == "pest_detail":
@@ -1255,56 +1427,8 @@ class QueryEngine:
                 },
             )
 
-        if query_type == "top":
-            field = str(plan.get("field", "")).strip() or ("county" if "区县" in question or "县" in question else "city")
-            top_n = int(plan.get("top_n") or 5)
-            day_start, day_end = self._extract_day_range(question)
-            if day_start:
-                since = day_start
-            data = self.repo.top_n_filtered(field, top_n, since, until=day_end) if hasattr(self.repo, "top_n_filtered") else self.repo.top_n(field, top_n, since)
-            if data:
-                answer = f"自{since[:10]}以来，Top{top_n}为：" + "；".join([f"{i+1}.{r['name']}({r['count']})" for i, r in enumerate(data)])
-            else:
-                suffix = self._available_alert_range_suffix()
-                answer = f"自{since[:10]}以来，暂无可用于 Top{top_n} 排行的数据。"
-                if suffix:
-                    answer = f"{answer}{suffix}"
-            return QueryResult(
-                answer=answer,
-                data=data,
-                evidence={
-                    "sql": f"SELECT {field}, COUNT(*) FROM alerts WHERE alert_time >= ? GROUP BY {field} ORDER BY COUNT(*) DESC LIMIT {top_n}",
-                    "since": since,
-                    "available_data_ranges": self._available_alert_ranges() if not data else [],
-                    "no_data_reasons": [
-                        self._build_no_data_reason(
-                            source="alerts",
-                            label="告警数据",
-                            since=since,
-                            until=day_end,
-                            time_range=self.repo.available_alert_time_range() if hasattr(self.repo, "available_alert_time_range") else None,
-                        )
-                    ]
-                    if not data
-                    else [],
-                    "recovery_suggestions": self._build_recovery_suggestions(
-                        question=question,
-                        query_type="top",
-                        no_data_reason=self._build_no_data_reason(
-                            source="alerts",
-                            label="告警数据",
-                            since=since,
-                            until=day_end,
-                            time_range=self.repo.available_alert_time_range() if hasattr(self.repo, "available_alert_time_range") else None,
-                        ),
-                        time_ranges=self._available_alert_ranges(),
-                        top_n=top_n,
-                        field=field,
-                    )
-                    if not data
-                    else [],
-                },
-            )
+        if query_type in {"top", "alerts_top"}:
+            return self._answer_alerts_top(question, plan)
 
         if query_type == "highest_values":
             m = re.search(r"最高的(\d+)条", question)
@@ -1437,6 +1561,58 @@ class QueryEngine:
                 answer=f"设备{device_code}最近一次预警时间{row['alert_time']}，等级{row['alert_level']}{disposal_text}。",
                 data=[row],
                 evidence={"sql": "SELECT ... WHERE device_code = ? ORDER BY alert_time DESC LIMIT 1"},
+            )
+
+        if query_type == "latest_soil_device":
+            device_code = str(plan.get("device_code") or "")
+            if not device_code:
+                m = re.search(r"(SNS\d+)", question)
+                device_code = m.group(1) if m else ""
+            if not device_code:
+                return QueryResult(answer="未识别到设备编码。", data=[], evidence={"sql": ""})
+            row = self.repo.latest_soil_by_device(device_code) if hasattr(self.repo, "latest_soil_by_device") else None
+            if row is None:
+                return QueryResult(answer=f"未找到设备{device_code}的墒情记录。", data=[], evidence={"sql": "latest_soil_by_device"})
+            anomaly = str(row.get("soil_anomaly_type") or "normal")
+            return QueryResult(
+                answer=f"设备{device_code}最近一次墒情记录时间{row['sample_time']}，异常类型{anomaly}。",
+                data=[row],
+                evidence={"sql": "latest_soil_by_device", "query_type": "latest_soil_device"},
+            )
+
+        if query_type == "soil_abnormal_devices":
+            top_n = max(1, int(plan.get("top_n") or 10))
+            until = plan.get("until") or None
+            city = plan.get("city")
+            county = plan.get("county")
+            data = self.repo.abnormal_soil_devices(since, until=until, city=city, county=county, limit=top_n) if hasattr(self.repo, "abnormal_soil_devices") else []
+            scope_parts = [part for part in [city, county] if part]
+            scope_text = "".join(scope_parts)
+            prefix = f"{scope_text}墒情异常设备有：" if scope_text else "墒情异常设备有："
+            details = "；".join(
+                f"{idx+1}.{row['device_sn']}（{row.get('device_name') or '未命名设备'}，异常{row['abnormal_count']}次）"
+                for idx, row in enumerate(data)
+            ) if data else "无"
+            return QueryResult(
+                answer=f"{prefix}{details}。",
+                data=data,
+                evidence={"sql": "abnormal_soil_devices", "query_type": "soil_abnormal_devices", "city": city, "county": county, "since": since, "until": until},
+            )
+
+        if query_type == "soil_only_abnormal_devices":
+            top_n = max(1, int(plan.get("top_n") or 10))
+            until = plan.get("until") or None
+            city = plan.get("city")
+            county = plan.get("county")
+            data = self.repo.soil_anomaly_devices_without_alerts(since, until=until, city=city, county=county, limit=top_n) if hasattr(self.repo, "soil_anomaly_devices_without_alerts") else []
+            details = "；".join(
+                f"{idx+1}.{row['device_sn']}（{row.get('device_name') or '未命名设备'}，墒情异常{row['abnormal_count']}次）"
+                for idx, row in enumerate(data)
+            ) if data else "无"
+            return QueryResult(
+                answer=f"最近时间窗内没有任何预警但有墒情异常的设备有：{details}。",
+                data=data,
+                evidence={"sql": "soil_anomaly_devices_without_alerts", "query_type": "soil_only_abnormal_devices", "city": city, "county": county, "since": since, "until": until},
             )
 
         if query_type == "region_disposal":

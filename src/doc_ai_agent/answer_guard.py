@@ -165,6 +165,23 @@ class AnswerGuard:
             return "这次回答没有对齐到虫情口径，我先保守收口：请让我按虫情数据重新回答，避免混入墒情或预警结果。"
         return f"这次回答和你的问题没有完全对齐。我建议我按原问题“{question}”重新生成一次更保守的答案。"
 
+    @staticmethod
+    def _retry_route_for_violation(question: str, route: dict, expected_domain: str, violations: list[dict]) -> dict:
+        """为可恢复的问题生成一次内部重试 route。"""
+        if not violations:
+            return {}
+        codes = {str(item.get("code") or "") for item in violations}
+        updated = dict(route or {})
+        if "county_scope_mismatch" in codes and str(updated.get("region_level") or "") == "county":
+            if updated.get("city") and updated.get("county") == updated.get("city"):
+                updated["county"] = None
+                return updated
+        if "domain_mismatch" in codes and expected_domain == "alerts":
+            if str(updated.get("query_type") or "") in {"top", "count", "", "structured_agri"}:
+                updated["query_type"] = "alerts_top" if not has_trend_intent(question) else "alerts_trend"
+                return updated
+        return {}
+
     def review(
         self,
         *,
@@ -214,6 +231,16 @@ class AnswerGuard:
 
         violations = hard_violations + soft_violations
         if hard_violations:
+            retry_route = self._retry_route_for_violation(question, route, expected_domain, hard_violations)
+            if retry_route:
+                return {
+                    "ok": False,
+                    "action": "retry",
+                    "violations": violations,
+                    "rewritten_answer": "",
+                    "fallback_answer": "",
+                    "retry_route": retry_route,
+                }
             fallback_answer = self._fallback_answer(question, expected_domain, county_scope=county_scope)
             return {
                 "ok": False,
@@ -221,6 +248,7 @@ class AnswerGuard:
                 "violations": violations,
                 "rewritten_answer": "",
                 "fallback_answer": fallback_answer,
+                "retry_route": {},
             }
         if rewritten_answer != answer:
             return {
@@ -229,6 +257,7 @@ class AnswerGuard:
                 "violations": violations,
                 "rewritten_answer": rewritten_answer,
                 "fallback_answer": "",
+                "retry_route": {},
             }
         return {
             "ok": True,
@@ -236,4 +265,5 @@ class AnswerGuard:
             "violations": [],
             "rewritten_answer": "",
             "fallback_answer": "",
+            "retry_route": {},
         }

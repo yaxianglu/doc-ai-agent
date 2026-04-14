@@ -27,11 +27,17 @@ class IntentRouter:
         "count",
         "active_devices",
         "top",
+        "alerts_top",
+        "alerts_high_pest_low",
         "avg_by_level",
         "consecutive_devices",
         "empty_county_records",
+        "latest_soil_device",
         "pest_top",
+        "pest_high_alerts_low",
         "pest_overview",
+        "soil_abnormal_devices",
+        "soil_only_abnormal_devices",
         "soil_top",
         "soil_overview",
         "pest_trend",
@@ -61,9 +67,12 @@ class IntentRouter:
     }
     QUERY_TYPE_TASK_HINTS = {
         "top": "ranking",
+        "alerts_top": "ranking",
+        "alerts_high_pest_low": "ranking",
         "active_devices": "ranking",
         "consecutive_devices": "ranking",
         "pest_top": "ranking",
+        "pest_high_alerts_low": "ranking",
         "soil_top": "ranking",
         "city_day_change": "trend",
         "pest_trend": "trend",
@@ -85,7 +94,7 @@ class IntentRouter:
         """
         system_prompt = (
             "你是意图路由器。请仅输出JSON，字段包含: intent(data_query|advice),"
-            "query_type(count|active_devices|top|avg_by_level|consecutive_devices|empty_county_records|pest_top|pest_overview|soil_top|soil_overview|pest_trend|soil_trend|joint_risk|structured_agri|latest_device|region_disposal|sms_empty|subtype_ratio|city_day_change|highest_values|threshold_summary|unknown_region_devices|unmatched_region_records), "
+            "query_type(count|active_devices|top|alerts_top|alerts_high_pest_low|avg_by_level|consecutive_devices|empty_county_records|pest_top|pest_high_alerts_low|pest_overview|soil_abnormal_devices|soil_only_abnormal_devices|soil_top|soil_overview|pest_trend|soil_trend|joint_risk|structured_agri|latest_device|latest_soil_device|region_disposal|sms_empty|subtype_ratio|city_day_change|highest_values|threshold_summary|unknown_region_devices|unmatched_region_records), "
             "field(city|county|alert_type|alert_level|region_level), top_n, min_days, since(YYYY-MM-DD HH:MM:SS), until(YYYY-MM-DD HH:MM:SS|null), "
             "region_level(city|county|null), city, county, device_code, threshold(number|null)。"
             "如果是设备最近一次预警、设备活跃排行、未知区域设备、空字段检查、地区处置建议、阈值统计、短信为空、子类型占比、城市日变化、最高告警值等确定性数据问题，必须返回 intent=data_query。"

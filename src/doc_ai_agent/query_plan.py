@@ -8,6 +8,22 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+PREFECTURE_LEVEL_CITIES = {
+    "南京市",
+    "无锡市",
+    "徐州市",
+    "常州市",
+    "苏州市",
+    "南通市",
+    "连云港市",
+    "淮安市",
+    "盐城市",
+    "扬州市",
+    "镇江市",
+    "泰州市",
+    "宿迁市",
+}
+
 
 def _normalize_historical_window(payload: object) -> dict:
     """规范化历史窗口结构。"""
@@ -74,6 +90,8 @@ def _query_type_from_canonical_understanding(canonical: dict, fallback_query_typ
         return "joint_risk"
     if future_window and historical_window.get("window_type") in {"all", "none", ""}:
         return f"{domain}_forecast"
+    if fallback_query_type in {"pest_top", "soil_top"} and str(canonical.get("region_level") or "") == "county":
+        return fallback_query_type
     if task_type == "trend":
         return f"{domain}_trend"
     if task_type == "ranking":
@@ -118,8 +136,20 @@ def route_from_canonical_understanding(understanding: dict | None, fallback_rout
         route["region_level"] = region_level
     if region_name:
         if route["region_level"] == "county":
-            route["county"] = region_name
-            route["city"] = route.get("city")
+            fallback_city = route.get("city")
+            fallback_county = route.get("county")
+            if fallback_county not in {None, ""}:
+                route["county"] = fallback_county
+                route["city"] = fallback_city
+            elif fallback_city not in {None, ""}:
+                route["city"] = fallback_city
+                route["county"] = None
+            elif region_name in PREFECTURE_LEVEL_CITIES:
+                route["city"] = region_name
+                route["county"] = None
+            else:
+                route["county"] = region_name
+                route["city"] = None
         else:
             route["city"] = region_name
             route["county"] = None
@@ -199,6 +229,8 @@ def _aggregation_for_query_type(query_type: str, answer_mode: str, goal: str) ->
     if query_type.endswith("_forecast") or answer_mode == "forecast":
         return "forecast"
     if query_type == "joint_risk":
+        return "top_k"
+    if query_type in {"alerts_high_pest_low", "pest_high_alerts_low"}:
         return "top_k"
     return "none"
 

@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 from doc_ai_agent.query_context_followup import build_context_follow_up_plan
+from doc_ai_agent.query_plan import route_from_canonical_understanding
 from doc_ai_agent.query_planner import QueryPlanner
 
 
@@ -574,6 +575,97 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["query_type"], "latest_device")
         self.assertEqual(plan["route"]["device_code"], "SNS00204659")
 
+    def test_extract_latest_soil_device_slot(self):
+        planner = QueryPlanner(None)
+        plan = planner.plan("设备 SNS00204333 最近一次墒情记录是什么时候？")
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "latest_soil_device")
+        self.assertEqual(plan["route"]["device_code"], "SNS00204333")
+
+    def test_soil_abnormal_devices_query_keeps_city_and_county(self):
+        planner = QueryPlanner(None)
+        plan = planner.plan("南通市如东县有哪些墒情设备出现过异常？")
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "soil_abnormal_devices")
+        self.assertEqual(plan["route"]["city"], "南通市")
+        self.assertEqual(plan["route"]["county"], "如东县")
+
+    def test_soil_only_abnormal_devices_query_uses_cross_signal_route(self):
+        planner = QueryPlanner(None)
+        plan = planner.plan("哪些设备最近一个月没有任何预警但有墒情异常？")
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "soil_only_abnormal_devices")
+
+    def test_same_county_placeholder_device_query_needs_clarification(self):
+        planner = QueryPlanner(None)
+        plan = planner.plan("同一个县里，哪几台设备的异常最频繁？")
+        self.assertTrue(plan["needs_clarification"])
+        self.assertEqual(plan["answer_mode"], "clarify")
+        self.assertIsNone(plan["route"]["county"])
+
+    def test_compound_county_rank_and_forecast_routes_to_pest_top(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("过去3个月常州哪个县虫情最重，未来两周会不会继续升高？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_top")
+        self.assertEqual(plan["route"]["city"], "常州市")
+        self.assertIsNone(plan["route"]["county"])
+        self.assertEqual(plan["route"]["region_level"], "county")
+        self.assertEqual(plan["route"]["top_n"], 1)
+        self.assertEqual(plan["route"]["forecast_window"]["horizon_days"], 14)
+        self.assertEqual(
+            plan["query_plan"]["decomposition"]["execution_plan"],
+            ["understand_request", "historical_query", "forecast", "answer_synthesis"],
+        )
+
+    def test_compound_soil_county_rank_and_reason_routes_to_soil_top(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("过去8周苏州哪个县墒情最异常，主要是低墒还是高墒，为什么？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "soil_top")
+        self.assertEqual(plan["route"]["city"], "苏州市")
+        self.assertIsNone(plan["route"]["county"])
+        self.assertEqual(plan["route"]["region_level"], "county")
+        self.assertEqual(plan["route"]["top_n"], 1)
+        self.assertTrue(plan["query_plan"]["slots"]["need_explanation"])
+        self.assertEqual(
+            plan["query_plan"]["decomposition"]["execution_plan"],
+            ["understand_request", "historical_query", "knowledge_retrieval", "answer_synthesis"],
+        )
+
+    def test_alerts_many_but_pest_low_query_uses_cross_signal_route(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("最近30天哪些县预警多但虫情并不高？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "alerts_high_pest_low")
+        self.assertEqual(plan["route"]["region_level"], "county")
+        self.assertEqual(plan["route"]["top_n"], 5)
+
+    def test_pest_high_but_alerts_low_query_uses_cross_signal_route(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("最近30天哪些县虫情高但预警并不多？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_high_alerts_low")
+        self.assertEqual(plan["route"]["region_level"], "county")
+        self.assertEqual(plan["route"]["top_n"], 5)
+
+    def test_generic_priority_question_does_not_treat_conditional_county_as_placeholder(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("如果一个县同时虫情高、低墒多、预警也多，应该怎么分优先级？")
+
+        self.assertFalse(plan["needs_clarification"])
+        self.assertEqual(plan["intent"], "advice")
+        self.assertEqual(plan["answer_mode"], "advice")
+
     def test_router_count_does_not_override_heuristic_latest_device(self):
         planner = QueryPlanner(
             FakeRouter(
@@ -1090,8 +1182,39 @@ class QueryPlannerTests(unittest.TestCase):
 
         self.assertEqual(plan["route"]["query_type"], "pest_top")
         self.assertEqual(plan["route"]["city"], "常州市")
+        self.assertIsNone(plan["route"]["county"])
         self.assertEqual(plan["route"]["region_level"], "county")
         self.assertEqual(plan["query_plan"]["slots"]["region_scope"], {"level": "county", "value": "常州市"})
+
+    def test_canonical_understanding_keeps_parent_city_for_county_scope(self):
+        route = route_from_canonical_understanding(
+            {
+                "canonical_understanding": {
+                    "intent": "data_query",
+                    "domain": "pest",
+                    "task_type": "ranking",
+                    "region_name": "常州市",
+                    "region_level": "county",
+                    "historical_window": {"window_type": "all", "window_value": None},
+                    "future_window": None,
+                    "followup_type": "none",
+                    "needs_clarification": False,
+                }
+            },
+            {
+                "query_type": "pest_top",
+                "since": "1970-01-01 00:00:00",
+                "until": None,
+                "city": "常州市",
+                "county": None,
+                "region_level": "county",
+                "window": {"window_type": "all", "window_value": None},
+            },
+        )
+
+        self.assertEqual(route["region_level"], "county")
+        self.assertEqual(route["city"], "常州市")
+        self.assertIsNone(route["county"])
 
     def test_router_cannot_downgrade_generic_county_scope_to_city(self):
         planner = QueryPlanner(
@@ -1305,8 +1428,8 @@ class QueryPlannerTests(unittest.TestCase):
         plan = planner.plan("最近10天报警最多的是哪里？")
 
         self.assertEqual(plan["intent"], "data_query")
-        self.assertEqual(plan["route"]["query_type"], "top")
-        self.assertEqual(plan["answer_mode"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "alerts_top")
+        self.assertEqual(plan["answer_mode"], "ranking")
 
     def test_county_advice_question_keeps_county_scope(self):
         planner = QueryPlanner(None)

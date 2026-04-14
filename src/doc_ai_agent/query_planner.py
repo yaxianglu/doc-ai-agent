@@ -76,14 +76,20 @@ class QueryPlanner:
     DETERMINISTIC_QUERY_TYPES = {
         "avg_by_level",
         "active_devices",
+        "alerts_top",
+        "alerts_high_pest_low",
         "alerts_trend",
         "consecutive_devices",
         "empty_county_records",
         "latest_device",
+        "latest_soil_device",
         "pest_detail",
+        "pest_high_alerts_low",
         "region_disposal",
         "sms_empty",
+        "soil_abnormal_devices",
         "soil_detail",
+        "soil_only_abnormal_devices",
         "subtype_ratio",
         "city_day_change",
         "highest_values",
@@ -188,6 +194,17 @@ class QueryPlanner:
             extract_day_range=self._extract_day_range,
             has_negated_trend=self._has_negated_trend,
             extract_device_code=self._extract_device_code,
+        )
+
+    @staticmethod
+    def _is_generic_priority_advice_question(question: str) -> bool:
+        normalized = str(question or "")
+        return (
+            "优先级" in normalized
+            and "虫情" in normalized
+            and any(token in normalized for token in ["墒情", "低墒", "高墒"])
+            and any(token in normalized for token in ["预警", "报警", "告警"])
+            and any(token in normalized for token in ["如果一个县", "如果某个县", "同一个县", "怎么分", "怎么排"])
         )
 
     def _build_route(self, question: str, query_type: str) -> dict:
@@ -418,6 +435,8 @@ class QueryPlanner:
                 "某市",
                 "某地区",
                 "某区域",
+                "同一个县",
+                "如果一个县",
                 "某个设备",
                 "某个县",
                 "这个县",
@@ -518,6 +537,16 @@ class QueryPlanner:
         if context_follow_up := self._context_follow_up_plan(original_question, context, understanding):
             # 若识别为上下文追问，优先复用线程状态，避免重复抽取和重复提问。
             return self._finalize_plan(context_follow_up, question, context=context, understanding=understanding)
+        if self._is_generic_priority_advice_question(question):
+            return self._finalize_plan({
+                "intent": "advice",
+                "confidence": 0.82,
+                "route": self._build_route(question, "joint_risk"),
+                "needs_clarification": False,
+                "clarification": None,
+                "reason": "generic_priority_advice",
+                "context_trace": [],
+            }, question, context=context, understanding=understanding)
         if self._has_actionable_canonical_understanding(understanding):
             canonical = canonical_understanding_payload(understanding)
             route = route_from_canonical_understanding(
@@ -760,9 +789,11 @@ class QueryPlanner:
 
         if route.get("query_type") in {
             "active_devices",
+            "alerts_high_pest_low",
             "alerts_trend",
             "empty_county_records",
             "pest_top",
+            "pest_high_alerts_low",
             "pest_detail",
             "soil_top",
             "soil_detail",

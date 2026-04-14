@@ -18,6 +18,7 @@ from .agent_execution_nodes import (
     build_advice_response,
     build_clarification_response,
     build_forecast_execution_context,
+    build_query_result_payload,
     run_knowledge_node,
     run_query_node,
 )
@@ -283,7 +284,7 @@ class DocAIAgent:
 
     @staticmethod
     def _asks_region_ranking(question: str) -> bool:
-        return any(token in question for token in ["哪里", "哪儿", "哪些地区", "哪些地方", "最严重的地方"])
+        return any(token in question for token in ["哪里", "哪儿", "哪些地区", "哪些地方", "最严重的地方", "哪个县", "哪些县", "哪几个县", "哪个区", "哪些区"])
 
     @staticmethod
     def _infer_region_level_from_name(region_name: str) -> str:
@@ -659,12 +660,23 @@ class DocAIAgent:
             response=response,
         )
         final_answer = response.get("answer", "")
+        refreshed_query_result = None
         if review["action"] == "rewrite":
             final_answer = review["rewritten_answer"] or final_answer
+        elif review["action"] == "retry":
+            retry_route = dict(review.get("retry_route") or {})
+            retry_result = self.query_engine.answer(state.get("question", ""), plan=retry_route)
+            refreshed_query_result = build_query_result_payload(retry_result, retry_route)
+            final_answer = refreshed_query_result.get("answer") or final_answer
         elif review["action"] == "fallback":
             final_answer = review["fallback_answer"] or final_answer
         guarded = dict(response)
         guarded["answer"] = final_answer
+        if refreshed_query_result:
+            guarded["data"] = refreshed_query_result.get("data", [])
+            merged_evidence = dict(guarded.get("evidence") or {})
+            merged_evidence.update(dict(refreshed_query_result.get("evidence") or {}))
+            guarded["evidence"] = merged_evidence
         evidence = dict(guarded.get("evidence") or {})
         evidence["answer_guard"] = {
             "ok": review["ok"],
@@ -673,6 +685,8 @@ class DocAIAgent:
             "violation_codes": [str(item.get("code") or "") for item in review["violations"]],
         }
         guarded["evidence"] = evidence
+        if refreshed_query_result:
+            return {"response": guarded, "query_result": refreshed_query_result}
         return {"response": guarded}
 
     @staticmethod
