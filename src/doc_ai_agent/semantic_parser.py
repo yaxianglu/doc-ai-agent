@@ -37,6 +37,7 @@ class SemanticParser:
             return SemanticParseResult(
                 normalized_query=normalized,
                 intent="advice",
+                confidence=0.92,
                 is_out_of_scope=True,
                 fallback_reason="out_of_scope_capability",
                 trace=trace,
@@ -45,5 +46,6 @@ class SemanticParser:
         return SemanticParseResult(
             normalized_query=normalized,
             intent="data_query" if "虫情" in normalized else "advice",
+            confidence=0.52,
             trace=trace,
         )

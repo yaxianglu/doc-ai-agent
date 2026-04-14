@@ -220,6 +220,13 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["domain"], "")
         self.assertEqual(result["region_name"], "")
 
+    def test_non_agri_topic_exposes_semantic_confidence_and_trace(self):
+        result = self.understanding.analyze("浙江天气")
+
+        self.assertGreaterEqual(result["confidence"], 0.8)
+        self.assertEqual(result["fallback_reason"], "out_of_scope_capability")
+        self.assertIn("ood", result["trace"])
+
     def test_preserves_trend_semantics_for_zoushi_wording(self):
         result = self.understanding.analyze("南京近三周虫害走势怎么样？")
 

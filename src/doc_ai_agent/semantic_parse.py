@@ -11,6 +11,7 @@ class SemanticParseResult:
 
     normalized_query: str = ""
     intent: str = "advice"
+    confidence: float = 0.0
     is_out_of_scope: bool = False
     fallback_reason: str = ""
     trace: list[str] = field(default_factory=list)
@@ -22,6 +23,7 @@ class SemanticParseResult:
         return cls(
             normalized_query=str(raw.get("normalized_query") or ""),
             intent=str(raw.get("intent") or "advice"),
+            confidence=float(raw.get("confidence") or 0.0),
             is_out_of_scope=bool(raw.get("is_out_of_scope")),
             fallback_reason=str(raw.get("fallback_reason") or ""),
             trace=list(raw.get("trace") or []),
@@ -32,6 +34,7 @@ class SemanticParseResult:
         return {
             "normalized_query": self.normalized_query,
             "intent": self.intent,
+            "confidence": self.confidence,
             "is_out_of_scope": self.is_out_of_scope,
             "fallback_reason": self.fallback_reason,
             "trace": list(self.trace),
