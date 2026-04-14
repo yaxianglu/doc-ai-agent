@@ -8,5 +8,10 @@
   {"index": 57, "category": "边界能力", "question": "帮我查一下高铁票"},
   {"index": 58, "category": "边界能力", "question": "你是谁？"},
   {"index": 59, "category": "边界能力", "question": "你好，浙江天气"},
-  {"index": 60, "category": "边界能力", "question": "那杭州天气呢？"}
+  {"index": 60, "category": "边界能力", "question": "那杭州天气呢？"},
+  {"index": 61, "category": "边界能力", "question": "今天杭州降雨概率多少？"},
+  {"index": 62, "category": "边界能力", "question": "宁波明天气温几度？"},
+  {"index": 63, "category": "边界能力", "question": "给我查下浙江新闻头条"},
+  {"index": 64, "category": "边界能力", "question": "上海到北京的火车票还有吗？"},
+  {"index": 65, "category": "边界能力", "question": "杭州空气质量怎么样？"}
 ]

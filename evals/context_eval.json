@@ -3,5 +3,10 @@
   {"index": 47, "category": "多轮上下文", "question": "其中虫情的呢？"},
   {"index": 48, "category": "多轮上下文", "question": "最高的县有哪些？"},
   {"index": 49, "category": "多轮上下文", "question": "为什么会这样？"},
-  {"index": 50, "category": "多轮上下文", "question": "那未来两周呢？"}
+  {"index": 50, "category": "多轮上下文", "question": "那未来两周呢？"},
+  {"index": 76, "category": "多轮上下文", "question": "先看过去5个月最严重的是哪里"},
+  {"index": 77, "category": "多轮上下文", "question": "其中墒情的"},
+  {"index": 78, "category": "多轮上下文", "question": "换成县一级"},
+  {"index": 79, "category": "多轮上下文", "question": "为什么"},
+  {"index": 80, "category": "多轮上下文", "question": "那下周呢"}
 ]

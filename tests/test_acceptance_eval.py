@@ -205,6 +205,44 @@ class AcceptanceEvalTests(unittest.TestCase):
         self.assertGreaterEqual(suite_scores["forecast"], 8.0)
         self.assertGreaterEqual(suite_scores["ood"], 8.5)
 
+    def test_transformer_hard_case_banks_are_expanded(self):
+        root = Path(__file__).resolve().parents[1] / "evals"
+
+        self.assertEqual(len(load_question_bank(root / "ood_eval.json")), 15)
+        self.assertEqual(len(load_question_bank(root / "explanation_eval.json")), 10)
+        self.assertEqual(len(load_question_bank(root / "forecast_eval.json")), 10)
+        self.assertEqual(len(load_question_bank(root / "context_eval.json")), 10)
+
+    def test_score_run_surfaces_low_score_items_grouped_by_suite(self):
+        raw = [
+            {
+                "index": 54,
+                "category": "边界能力",
+                "question": "上海天气预报",
+                "ok": True,
+                "mode": "data_query",
+                "seconds": 0.5,
+                "answer": "从2026-03-14起，墒情异常最多的地区为：1.淮安市。",
+            },
+            {
+                "index": 24,
+                "category": "预测能力",
+                "question": "未来10天哪些县风险最高？",
+                "ok": True,
+                "mode": "data_query",
+                "seconds": 0.4,
+                "answer": "未来10天风险较高。",
+            },
+        ]
+
+        scored = score_run(raw)
+
+        by_suite = scored["summary"]["low_score_items_by_suite"]
+        self.assertIn("ood", by_suite)
+        self.assertIn("forecast", by_suite)
+        self.assertEqual(by_suite["ood"][0]["index"], 54)
+        self.assertEqual(by_suite["forecast"][0]["index"], 24)
+
 
 if __name__ == "__main__":
     unittest.main()
