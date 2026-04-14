@@ -13,6 +13,7 @@ from .agent_analysis_synthesis import build_data_grounded_advice, build_data_gro
 from .agent_comparison import detect_compare_request
 from .agent_compare_execution import execute_compare_request
 from .agent_contracts import FinalResponseEvidence, ForecastExecutionContext
+from .answer_guard import AnswerGuard
 from .agent_execution_nodes import (
     build_advice_response,
     build_clarification_response,
@@ -74,6 +75,7 @@ class DocAIAgent:
         self.router_model = router_model
         self.advice_model = advice_model
         self.query_engine = QueryEngine(repo)
+        self.answer_guard = AnswerGuard()
         self.forecast_engine = ForecastEngine(repo)
         self.forecast_service = ForecastService(repo)
         self.source_provider = source_provider
@@ -124,6 +126,7 @@ class DocAIAgent:
         workflow.add_node("forecast", self._forecast_node)
         workflow.add_node("knowledge", self._knowledge_node)
         workflow.add_node("synthesize", self._synthesize_node)
+        workflow.add_node("answer_guard", self._answer_guard_node)
         workflow.add_node("advice", self._advice_node)
         workflow.add_node("clarify", self._clarify_node)
         workflow.add_node("persist", self._persist_node)
@@ -143,9 +146,10 @@ class DocAIAgent:
         workflow.add_edge("query", "forecast")
         workflow.add_edge("forecast", "knowledge")
         workflow.add_edge("knowledge", "synthesize")
-        workflow.add_edge("synthesize", "persist")
-        workflow.add_edge("advice", "persist")
-        workflow.add_edge("clarify", "persist")
+        workflow.add_edge("synthesize", "answer_guard")
+        workflow.add_edge("advice", "answer_guard")
+        workflow.add_edge("clarify", "answer_guard")
+        workflow.add_edge("answer_guard", "persist")
         workflow.add_edge("persist", END)
         return workflow.compile()
 
@@ -641,6 +645,35 @@ class DocAIAgent:
             advice_text=advice_text,
             advice_sources=advice_sources,
         )
+
+    def _answer_guard_node(self, state: AgentState) -> dict:
+        response = dict(state.get("response") or {})
+        if not response.get("answer") or response.get("mode") == "advice":
+            return {"response": response}
+        review = self.answer_guard.review(
+            question=state.get("question", ""),
+            understanding=dict(state.get("understanding") or {}),
+            plan=dict(state.get("plan") or {}),
+            query_result=dict(state.get("query_result") or {}),
+            forecast_result=dict(state.get("forecast_result") or {}),
+            response=response,
+        )
+        final_answer = response.get("answer", "")
+        if review["action"] == "rewrite":
+            final_answer = review["rewritten_answer"] or final_answer
+        elif review["action"] == "fallback":
+            final_answer = review["fallback_answer"] or final_answer
+        guarded = dict(response)
+        guarded["answer"] = final_answer
+        evidence = dict(guarded.get("evidence") or {})
+        evidence["answer_guard"] = {
+            "ok": review["ok"],
+            "action": review["action"],
+            "violations": list(review["violations"]),
+            "violation_codes": [str(item.get("code") or "") for item in review["violations"]],
+        }
+        guarded["evidence"] = evidence
+        return {"response": guarded}
 
     @staticmethod
     def _first_region_name(response: dict) -> str:

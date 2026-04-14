@@ -4,6 +4,7 @@ import unittest
 
 from doc_ai_agent.agent import DocAIAgent
 from doc_ai_agent.advice_engine import AdviceResult
+from doc_ai_agent.query_engine import QueryResult
 from doc_ai_agent.repository import AlertRepository
 from doc_ai_agent.source_provider import QdrantSourceProvider
 
@@ -1716,6 +1717,29 @@ class AgentGraphTests(unittest.TestCase):
         self.assertNotIn("请补充", result["answer"])
         self.assertRegex(result["answer"], r"(增加|减少|上升|下降)")
         self.assertEqual(result["evidence"]["historical_query"]["query_type"], "alerts_trend")
+
+    def test_answer_guard_rewrites_broken_trend_answer_before_persist(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.query_engine.answer = lambda question, plan=None: QueryResult(
+            answer="最近30天预警信息共 12 条。",
+            data=[
+                {"date": "2026-03-15", "alert_count": 4},
+                {"date": "2026-03-29", "alert_count": 9},
+                {"date": "2026-04-13", "alert_count": 12},
+            ],
+            evidence={"query_type": "alerts_trend", "sql": "alerts_trend"},
+        )
+
+        result = agent.answer("最近30天预警数量是增加还是减少？", thread_id="thread-answer-guard-trend")
+
+        self.assertIn("预警数量趋势", result["answer"])
+        self.assertRegex(result["answer"], r"(整体上升|整体下降|整体波动平稳|样本不足)")
+        self.assertEqual(result["evidence"]["answer_guard"]["action"], "rewrite")
+        self.assertIn("trend_missing_direction", result["evidence"]["answer_guard"]["violation_codes"])
 
     def test_county_advice_question_targets_county_not_city(self):
         agent = DocAIAgent(
