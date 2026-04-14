@@ -100,3 +100,39 @@ curl -s -X POST http://127.0.0.1:8000/chat \
 cd /Users/mac/Desktop/code/service/doc-ai-agent
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
+
+## 严格 50 题评测
+
+- 固定题库：`evals/strict_acceptance_50.json`
+- 完整输出说明：`docs/reports/2026-04-14-strict-acceptance-eval-output.md`
+- 一键运行：
+
+```bash
+cd /Users/mac/Desktop/personal/doc-cloud/doc-ai-agent
+PYTHONPATH=src python3.11 scripts/run_strict_acceptance_eval.py --score --compare
+```
+
+- 如果只想基于已有 raw 结果重新评分：
+
+```bash
+cd /Users/mac/Desktop/personal/doc-cloud/doc-ai-agent
+PYTHONPATH=src python3.11 scripts/run_strict_acceptance_eval.py \
+  --score \
+  --from-raw output/acceptance_run_final_2026-04-14.json
+```
+
+- 输出目录：
+  - `output/evals/latest/raw.json`
+  - `output/evals/latest/scored.json`
+  - `output/evals/latest/report.md`
+  - `output/evals/latest/comparison.md`（存在 baseline 时）
+
+- 评分规则：
+  - 运行失败、答非所问、`报警/预警` 域串线、`低墒/高墒` 方向错误、预测缺证据、解释缺依据，都会被自动扣分
+  - 自动评分用于稳定回归门，不替代人工严格验收
+- 当前标准输出：
+  - `output/evals/latest/raw.json`
+  - `output/evals/latest/scored.json`
+  - `output/evals/latest/report.md`
+  - `output/evals/latest/comparison.md`
+- 详细说明见：`docs/reports/2026-04-14-strict-acceptance-eval-output.md`

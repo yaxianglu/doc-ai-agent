@@ -185,8 +185,11 @@ class ForecastService:
 
     @classmethod
     def _region_answer(cls, *, region_name: str, horizon_phrase: str, label: str, risk_level: str, confidence: float, top_factors: list[str]) -> str:
-        factor_text = "、".join(top_factors[:2]) if top_factors else "历史样本与最近波动"
-        return f"{region_name}{horizon_phrase}{label}风险预计为{risk_level}（置信度{confidence:.2f}）。依据：{factor_text}。"
+        coverage_text = next((item for item in top_factors if str(item).startswith("样本覆盖")), "")
+        factor_items = [str(item) for item in top_factors if str(item) and str(item) != coverage_text]
+        factor_text = "、".join(factor_items[:2]) if factor_items else "历史样本与最近波动"
+        coverage_suffix = f"，{coverage_text}" if coverage_text else ""
+        return f"{region_name}{horizon_phrase}{label}风险预计为{risk_level}（置信度{confidence:.2f}{coverage_suffix}）。依据：{factor_text}。"
 
     @classmethod
     def _ranking_confidence(cls, row: dict, *, horizon_days: int) -> float:

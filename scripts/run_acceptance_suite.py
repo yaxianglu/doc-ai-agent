@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import time
 from pathlib import Path
 
@@ -13,45 +12,21 @@ from doc_ai_agent.server import AgentApp
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "output" / "acceptance_run_after_data_refresh.json"
-
-
-def _question_source_candidates() -> list[Path]:
-    direct = ROOT / "output" / "acceptance_run_after_data_refresh.json"
-    candidates = [direct]
-    try:
-        proc = subprocess.run(
-            ["git", "worktree", "list", "--porcelain"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except Exception:
-        return candidates
-    for line in proc.stdout.splitlines():
-        if not line.startswith("worktree "):
-            continue
-        worktree_path = Path(line.split(" ", 1)[1].strip())
-        candidate = worktree_path / "output" / "acceptance_run_after_data_refresh.json"
-        if candidate not in candidates:
-            candidates.append(candidate)
-    return candidates
+QUESTION_BANK = ROOT / "evals" / "strict_acceptance_50.json"
 
 
 def _load_questions() -> list[dict]:
-    for candidate in _question_source_candidates():
-        if not candidate.exists():
-            continue
-        payload = json.loads(candidate.read_text(encoding="utf-8"))
-        return [
-            {
-                "index": int(item["index"]),
-                "category": str(item["category"]),
-                "question": str(item["question"]),
-            }
-            for item in payload
-        ]
-    raise SystemExit("cannot find acceptance_run_after_data_refresh.json to source questions")
+    if not QUESTION_BANK.exists():
+        raise SystemExit(f"cannot find strict question bank: {QUESTION_BANK}")
+    payload = json.loads(QUESTION_BANK.read_text(encoding="utf-8"))
+    return [
+        {
+            "index": int(item["index"]),
+            "category": str(item["category"]),
+            "question": str(item["question"]),
+        }
+        for item in payload
+    ]
 
 
 def _thread_id_for(category: str, known: dict[str, str]) -> str:

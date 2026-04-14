@@ -148,6 +148,7 @@ def build_data_grounded_explanation(
         first_title = str(knowledge[0].get("title") or "")
         if first_title:
             sentences.append(f"结合{first_title}的经验，这类“先冲高、后回落”或持续高值形态，通常都需要复核监测点位、阈值判断和田间处置时机。")
+    sentences.append("待核查项包括监测点位是否稳定、阈值口径是否一致，以及田间处置是否与异常抬升时段对应。")
 
     return "".join(sentences)
 

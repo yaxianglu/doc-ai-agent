@@ -11,6 +11,10 @@ from doc_ai_agent.server import build_app
 
 class QuestionSuiteTests(unittest.TestCase):
     @staticmethod
+    def _strict_question_bank_path() -> Path:
+        return Path(__file__).resolve().parents[1] / "evals" / "strict_acceptance_50.json"
+
+    @staticmethod
     def _acceptance_artifact_candidates() -> list[Path]:
         repo_root = Path(__file__).resolve().parents[1]
         direct = repo_root / "output" / "acceptance_run_after_data_refresh.json"
@@ -41,6 +45,14 @@ class QuestionSuiteTests(unittest.TestCase):
                 payload = json.loads(candidate.read_text(encoding="utf-8"))
                 return {int(item["index"]): item for item in payload}
         raise unittest.SkipTest("acceptance_run_after_data_refresh.json not available in any repo worktree")
+
+    def test_strict_acceptance_question_bank_is_stable(self):
+        path = self._strict_question_bank_path()
+        self.assertTrue(path.exists(), msg=str(path))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(len(payload), 50)
+        self.assertEqual([int(item["index"]) for item in payload], list(range(1, 51)))
+        self.assertTrue(all(str(item["question"]).strip() for item in payload))
 
     def test_recommended_questions(self):
         repo_root = os.path.dirname(os.path.dirname(__file__))

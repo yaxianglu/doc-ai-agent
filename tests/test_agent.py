@@ -526,6 +526,14 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["city"], "徐州市")
         self.assertEqual(result["evidence"]["alert_level"], "涝渍")
 
+    def test_alert_top_question_with_baojing_wording_is_not_misrouted_to_advice(self):
+        result = self.agent.answer("最近10天报警最多的是哪里？")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertNotIn("你希望我做数据统计", result["answer"])
+        self.assertIn("Top", result["answer"])
+        self.assertEqual(result["evidence"]["query_type"], "top")
+
     def test_threshold_summary_stays_data_only(self):
         result = self.agent.answer("告警值超过20的预警主要在哪些城市？")
 
@@ -1020,6 +1028,7 @@ class AgentGraphTests(unittest.TestCase):
             {"window_type": "months", "window_value": 5},
         )
         self.assertTrue(str(result["evidence"]["historical_query"]["since"]).startswith("2025-"))
+        self.assertIn("待核查", reason_section)
 
     def test_explanation_without_structured_evidence_reports_insufficient_evidence(self):
         agent = DocAIAgent(
@@ -1128,6 +1137,8 @@ class AgentGraphTests(unittest.TestCase):
         self.assertIn("整体", reason_section)
         self.assertIn("未来两周", reason_section)
         self.assertIn("高值", reason_section)
+        prediction_section = result["answer"].split("预测：", 1)[1].split("依据：", 1)[0]
+        self.assertIn("样本覆盖", prediction_section)
 
     def test_explicit_no_advice_request_returns_data_only(self):
         agent = DocAIAgent(

@@ -181,6 +181,22 @@ class QueryEngineTests(unittest.TestCase):
         self.assertEqual(self.repo.last_soil_top_kwargs["city"], "苏州市")
         self.assertEqual(self.repo.last_soil_top_kwargs["region_level"], "county")
 
+    def test_soil_top_treats_piandi_as_low_anomaly_direction(self):
+        result = self.engine.answer(
+            "对墒情偏低最严重的区域应该怎么处理？",
+            plan={
+                "query_type": "soil_top",
+                "since": "2025-11-14 00:00:00",
+                "region_level": "city",
+                "city": None,
+                "county": None,
+                "top_n": 5,
+            },
+        )
+
+        self.assertEqual(self.repo.last_soil_top_kwargs["anomaly_direction"], "low")
+        self.assertIn("低墒", result.answer)
+
     def test_pest_top_can_answer_city_then_county_breakdown(self):
         result = self.engine.answer(
             "江苏范围内，虫情最高的是哪些市？再细到县。",
