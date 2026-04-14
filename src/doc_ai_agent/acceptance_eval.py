@@ -33,6 +33,33 @@ def _contains_any(text: str, tokens: list[str]) -> bool:
     return any(token in text for token in tokens)
 
 
+def _asks_county_scope(question: str) -> bool:
+    """识别是否明确要求县/区县粒度。"""
+    return _contains_any(question, ["县", "区县", "按县", "按区县", "最高的县", "哪些县", "哪个县"])
+
+
+def _has_county_level_answer(answer: str) -> bool:
+    """粗略判断回答里是否真的落到了县/区县粒度。"""
+    return bool(_contains_any(answer, ["区县", "县"]) or ("区" in answer and "市" not in answer))
+
+
+def _is_trend_question(question: str) -> bool:
+    """识别趋势/增减/缓解类问题。"""
+    return _contains_any(question, ["趋势", "走势", "上升", "下降", "增加", "减少", "缓解", "好转"])
+
+
+def _has_trend_answer(answer: str) -> bool:
+    """识别回答里是否给出了趋势判断。"""
+    return _contains_any(answer, ["趋势", "上升", "下降", "平稳", "波动", "缓解", "增加", "减少"])
+
+
+def _is_weak_forecast_without_caution(answer: str) -> bool:
+    """识别样本极弱但仍然强预测的情况。"""
+    weak_sample = _contains_any(answer, ["样本覆盖 0 个观测日", "样本覆盖 1 个观测日"])
+    caution = _contains_any(answer, ["暂不做强预测", "保守预测", "回退预测", "证据强度weak", "证据较弱"])
+    return weak_sample and not caution
+
+
 def _is_placeholder_question(question: str) -> bool:
     """识别是否在问“某设备/某县”这类占位问题。"""
     return _contains_any(question, ["某设备", "某县", "这个县", "该县", "这个地区", "该地区", "这个区域", "该区域"])
@@ -86,7 +113,7 @@ def _score_boundary_response(question: str, answer: str, score: float, failed: l
     """对越界/边界能力问题做专项评分。"""
     if _is_identity_boundary_question(question):
         if _contains_any(answer, ["我是", "AI农情工作台", "助手"]):
-            return max(score, 8.5), failed
+            return score, failed
         score -= 3.0
         failed.append("identity_answer_unhelpful")
         return score, failed
@@ -150,7 +177,7 @@ def _score_item(item: dict) -> dict:
             "category": str(item.get("category") or ""),
             "question": question,
             "mode": mode,
-            "score": max(score, 8.5),
+            "score": max(0.0, round(score, 1)),
             "checks_failed": [entry for entry in failed if entry != "misrouted_to_advice"],
             "seconds": seconds,
             "answer": answer,
@@ -162,7 +189,7 @@ def _score_item(item: dict) -> dict:
             "category": str(item.get("category") or ""),
             "question": question,
             "mode": mode,
-            "score": max(score, 8.5),
+            "score": max(0.0, round(score, 1)),
             "checks_failed": [entry for entry in failed if entry != "misrouted_to_advice"],
             "seconds": seconds,
             "answer": answer,
@@ -179,6 +206,14 @@ def _score_item(item: dict) -> dict:
         score -= 2.0
         failed.append("soil_direction_mismatch")
 
+    if _asks_county_scope(question) and not _has_county_level_answer(answer):
+        score -= 3.0
+        failed.append("county_scope_mismatch")
+
+    if _is_trend_question(question) and not _has_trend_answer(answer):
+        score -= 3.0
+        failed.append("trend_missing_direction")
+
     if "未来" in question:
         if "置信度" not in answer:
             score -= 1.5
@@ -189,6 +224,9 @@ def _score_item(item: dict) -> dict:
         if "样本覆盖" not in answer:
             score -= 1.0
             failed.append("forecast_missing_sample_coverage")
+        if _is_weak_forecast_without_caution(answer):
+            score -= 3.0
+            failed.append("forecast_overclaims_weak_evidence")
 
     if _contains_any(question, ["为什么", "原因"]) and "原因" not in answer:
         score -= 2.0
@@ -199,6 +237,10 @@ def _score_item(item: dict) -> dict:
     if _contains_any(question, ["为什么", "原因"]) and "待核查" not in answer:
         score -= 0.8
         failed.append("explanation_missing_followup_checks")
+
+    if "1970-01-01" in answer:
+        score -= 3.5
+        failed.append("internal_default_time_exposed")
 
     score = max(0.0, round(score, 1))
     return {
