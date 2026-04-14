@@ -43,7 +43,24 @@ def _asks_county_scope(question: str) -> bool:
 
 def _has_county_level_answer(answer: str) -> bool:
     """粗略判断回答里是否真的落到了县/区县粒度。"""
+    if _is_fallback_shaped_answer(answer):
+        return False
     return bool(_contains_any(answer, ["区县", "县"]) or ("区" in answer and "市" not in answer))
+
+
+def _is_fallback_shaped_answer(answer: str) -> bool:
+    """识别“保守收口/要求重答”这类并未真正作答的模板。"""
+    return _contains_any(
+        answer,
+        [
+            "我先保守收口",
+            "请让我按县一级重新返回结果",
+            "请让我按预警/报警数据重新回答",
+            "请让我按墒情数据重新回答",
+            "请让我按虫情数据重新回答",
+            "这次回答没有对齐到",
+        ],
+    )
 
 
 def _is_trend_question(question: str) -> bool:
@@ -244,6 +261,10 @@ def _score_item(item: dict) -> dict:
     if _contains_any(question, ["偏低", "低墒", "缺水"]) and "高墒" in answer and "低墒" not in answer:
         score -= 2.0
         failed.append("soil_direction_mismatch")
+
+    if _is_fallback_shaped_answer(answer):
+        score -= 6.0
+        failed.append("fallback_instead_of_answer")
 
     if _asks_county_scope(question) and not _has_county_level_answer(answer):
         score -= 3.0

@@ -70,6 +70,8 @@ def route_target(plan: dict, understanding: dict) -> str:
     understanding_payload = RequestUnderstandingPayload.from_dict(understanding)
     if plan_payload.needs_clarification:
         return "clarify"
+    if plan_payload.intent == "advice" and plan_payload.reason == "generic_priority_advice":
+        return "advice"
     if (
         plan_payload.intent == "advice"
         and not understanding_payload.needs_historical

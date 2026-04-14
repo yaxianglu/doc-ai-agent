@@ -712,7 +712,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result["mode"], "data_query")
         self.assertNotIn("你希望我做数据统计", result["answer"])
         self.assertIn("Top", result["answer"])
-        self.assertEqual(result["evidence"]["query_type"], "top")
+        self.assertEqual(result["evidence"]["query_type"], "alerts_top")
 
     def test_threshold_summary_stays_data_only(self):
         result = self.agent.answer("告警值超过20的预警主要在哪些城市？")
@@ -1448,6 +1448,35 @@ class AgentGraphTests(unittest.TestCase):
         self.assertIn("预测：", result["answer"])
         self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "徐州市")
 
+    def test_compound_county_rank_then_forecast_uses_county_result_in_answer(self):
+        agent = DocAIAgent(
+            CountyRankingRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer("过去3个月常州哪个县虫情最重，未来两周会不会继续升高？", thread_id="thread-county-rank-forecast")
+
+        self.assertEqual(result["mode"], "analysis")
+        self.assertIn("结论：", result["answer"])
+        self.assertIn("铜山区", result["answer"])
+        self.assertIn("预测：", result["answer"])
+        self.assertEqual(result["evidence"]["analysis_context"]["region_level"], "county")
+        self.assertEqual(result["evidence"]["historical_query"]["query_type"], "pest_top")
+
+    def test_generic_priority_question_returns_action_priorities_instead_of_clarification(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer("如果一个县同时虫情高、低墒多、预警也多，应该怎么分优先级？", thread_id="thread-generic-priority")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertNotIn("请补充具体对象", result["answer"])
+        self.assertIn("建议：", result["answer"])
+
     def test_high_risk_advice_uses_time_bound_follow_up_language(self):
         agent = DocAIAgent(
             FakeStructuredRepo(),
@@ -1858,6 +1887,52 @@ class AgentGraphTests(unittest.TestCase):
         self.assertRegex(result["answer"], r"(整体上升|整体下降|整体波动平稳|样本不足)")
         self.assertEqual(result["evidence"]["answer_guard"]["action"], "rewrite")
         self.assertIn("trend_missing_direction", result["evidence"]["answer_guard"]["violation_codes"])
+
+    def test_answer_guard_retries_county_scope_with_corrected_route(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+        seen_routes = []
+
+        def fake_answer(question, plan=None):
+            seen_routes.append(dict(plan or {}))
+            self.assertEqual(question, "常州市下面虫情最严重的县有哪些？")
+            self.assertEqual(plan["city"], "常州市")
+            self.assertIsNone(plan["county"])
+            return QueryResult(
+                answer="历史上，虫情严重度最高的Top5区县为：1.溧阳市（严重度9，记录3条）",
+                data=[{"region_name": "溧阳市", "severity_score": 9, "record_count": 3, "active_days": 2}],
+                evidence={"query_type": "pest_top", "city": "常州市", "county": None},
+            )
+
+        agent.query_engine.answer = fake_answer
+
+        result = agent._answer_guard_node(
+            {
+                "question": "常州市下面虫情最严重的县有哪些？",
+                "understanding": {"domain": "pest", "needs_forecast": False},
+                "plan": {"route": {"query_type": "pest_top", "region_level": "county", "city": "常州市", "county": "常州市"}},
+                "query_result": {
+                    "mode": "data_query",
+                    "answer": "历史上，虫情严重度最高的Top5市为：1.常州市。",
+                    "data": [],
+                    "evidence": {"query_type": "pest_top", "city": "常州市", "county": "常州市"},
+                },
+                "forecast_result": {},
+                "response": {
+                    "mode": "data_query",
+                    "answer": "历史上，虫情严重度最高的Top5市为：1.常州市。",
+                    "data": [],
+                    "evidence": {"query_type": "pest_top", "city": "常州市", "county": "常州市"},
+                },
+            }
+        )["response"]
+
+        self.assertEqual(len(seen_routes), 1)
+        self.assertIn("区县", result["answer"])
+        self.assertEqual(result["evidence"]["answer_guard"]["action"], "retry")
+        self.assertIsNone(result["evidence"]["county"])
 
     def test_county_advice_question_targets_county_not_city(self):
         agent = DocAIAgent(

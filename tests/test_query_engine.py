@@ -23,7 +23,19 @@ class FakeAlertRepo:
                 "severity_score": 9,
                 "record_count": 3,
                 "active_days": 2,
-            }
+            },
+            {
+                "region_name": "铜山区",
+                "severity_score": 8,
+                "record_count": 3,
+                "active_days": 2,
+            },
+            {
+                "region_name": "睢宁县",
+                "severity_score": 7,
+                "record_count": 2,
+                "active_days": 2,
+            },
         ][:top_n]
 
     def top_soil_regions(self, since, until=None, region_level="city", top_n=5, anomaly_direction=None, city=None, county=None):
@@ -105,6 +117,51 @@ class FakeAlertRepo:
                 "alert_level": "重旱",
             }
         ][:limit]
+
+    def latest_soil_by_device(self, device_code):
+        return {
+            "device_sn": device_code,
+            "sample_time": "2026-04-12 09:00:00",
+            "soil_anomaly_type": "low",
+            "soil_anomaly_score": 12.5,
+            "city_name": "南通市",
+            "county_name": "如东县",
+        }
+
+    def abnormal_soil_devices(self, since, until=None, city=None, county=None, limit=10):
+        return [
+            {
+                "device_sn": "SNS00204333",
+                "device_name": "墒情设备1",
+                "city_name": city or "南通市",
+                "county_name": county or "如东县",
+                "abnormal_count": 4,
+                "last_sample_time": "2026-04-12 09:00:00",
+            }
+        ][:limit]
+
+    def soil_anomaly_devices_without_alerts(self, since, until=None, city=None, county=None, limit=10):
+        return [
+            {
+                "device_sn": "SNS00204333",
+                "device_name": "墒情设备1",
+                "city_name": city or "南通市",
+                "county_name": county or "如东县",
+                "abnormal_count": 4,
+                "last_sample_time": "2026-04-12 09:00:00",
+            }
+        ][:limit]
+
+    def top_n_filtered(self, field, n, since, until=None, min_alert_value=None):
+        del since, until, min_alert_value
+        if field != "county":
+            return []
+        return [
+            {"name": "溧阳市", "count": 12},
+            {"name": "金坛区", "count": 11},
+            {"name": "铜山区", "count": 3},
+            {"name": "睢宁县", "count": 2},
+        ][:n]
 
 
 class TrendRepo(FakeAlertRepo):
@@ -188,6 +245,46 @@ class QueryEngineTests(unittest.TestCase):
         self.assertIn("没有匹配到区域", result.answer)
         self.assertIn("SNS009", result.answer)
 
+    def test_latest_soil_device_returns_latest_soil_record(self):
+        result = self.engine.answer(
+            "设备 SNS00204333 最近一次墒情记录是什么时候？",
+            plan={"query_type": "latest_soil_device", "device_code": "SNS00204333", "since": "1970-01-01 00:00:00"},
+        )
+
+        self.assertIn("墒情记录时间2026-04-12 09:00:00", result.answer)
+        self.assertEqual(result.data[0]["device_sn"], "SNS00204333")
+
+    def test_soil_abnormal_devices_answer_lists_devices_with_region_filter(self):
+        result = self.engine.answer(
+            "南通市如东县有哪些墒情设备出现过异常？",
+            plan={
+                "query_type": "soil_abnormal_devices",
+                "since": "1970-01-01 00:00:00",
+                "city": "南通市",
+                "county": "如东县",
+                "top_n": 10,
+            },
+        )
+
+        self.assertIn("如东县", result.answer)
+        self.assertIn("SNS00204333", result.answer)
+        self.assertEqual(result.data[0]["county_name"], "如东县")
+
+    def test_soil_only_abnormal_devices_answer_excludes_alert_driven_active_devices(self):
+        result = self.engine.answer(
+            "哪些设备最近一个月没有任何预警但有墒情异常？",
+            plan={
+                "query_type": "soil_only_abnormal_devices",
+                "since": "2026-03-15 00:00:00",
+                "city": None,
+                "county": None,
+                "top_n": 10,
+            },
+        )
+
+        self.assertIn("没有任何预警但有墒情异常", result.answer)
+        self.assertIn("SNS00204333", result.answer)
+
     def test_pest_top_passes_city_scope_filter_to_repo(self):
         self.engine.answer(
             "常州市下面虫情最严重的县有哪些？",
@@ -202,6 +299,7 @@ class QueryEngineTests(unittest.TestCase):
         )
 
         self.assertEqual(self.repo.last_pest_top_kwargs["city"], "常州市")
+        self.assertIsNone(self.repo.last_pest_top_kwargs["county"])
         self.assertEqual(self.repo.last_pest_top_kwargs["region_level"], "county")
 
     def test_soil_top_passes_city_scope_filter_to_repo(self):
@@ -218,6 +316,7 @@ class QueryEngineTests(unittest.TestCase):
         )
 
         self.assertEqual(self.repo.last_soil_top_kwargs["city"], "苏州市")
+        self.assertIsNone(self.repo.last_soil_top_kwargs["county"])
         self.assertEqual(self.repo.last_soil_top_kwargs["region_level"], "county")
 
     def test_soil_top_treats_piandi_as_low_anomaly_direction(self):
@@ -300,6 +399,36 @@ class QueryEngineTests(unittest.TestCase):
         self.assertIn("当前可用虫情监测数据范围为 2026-01-05 至 2026-04-08", result.answer)
         self.assertIn("建议：先去掉南京市", result.answer)
         self.assertNotIn("1970-01-01", result.answer)
+
+    def test_alerts_high_pest_low_answer_lists_counties(self):
+        result = self.engine.answer(
+            "最近30天哪些县预警多但虫情并不高？",
+            plan={
+                "query_type": "alerts_high_pest_low",
+                "since": "2026-03-15 00:00:00",
+                "region_level": "county",
+                "top_n": 3,
+            },
+        )
+
+        self.assertIn("预警多但虫情并不高", result.answer)
+        self.assertIn("金坛区", result.answer)
+        self.assertEqual(result.data[0]["region_name"], "金坛区")
+
+    def test_pest_high_alerts_low_answer_lists_counties(self):
+        result = self.engine.answer(
+            "最近30天哪些县虫情高但预警并不多？",
+            plan={
+                "query_type": "pest_high_alerts_low",
+                "since": "2026-03-15 00:00:00",
+                "region_level": "county",
+                "top_n": 3,
+            },
+        )
+
+        self.assertIn("虫情高但预警并不多", result.answer)
+        self.assertIn("铜山区", result.answer)
+        self.assertEqual(result.data[0]["region_name"], "铜山区")
 
 
 if __name__ == "__main__":

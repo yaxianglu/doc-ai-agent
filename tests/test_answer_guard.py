@@ -95,6 +95,28 @@ class AnswerGuardTests(unittest.TestCase):
         self.assertEqual(result["violations"][0]["code"], "internal_default_time_exposed")
         self.assertNotIn("1970-01-01", result["rewritten_answer"])
 
+    def test_retries_county_scope_mismatch_with_parent_city_route(self):
+        result = self.guard.review(
+            question="常州市下面虫情最严重的县有哪些？",
+            understanding={"domain": "pest", "needs_forecast": False},
+            plan={"route": {"query_type": "pest_top", "region_level": "county", "city": "常州市", "county": "常州市"}},
+            query_result={},
+            forecast_result={},
+            response={
+                "mode": "data_query",
+                "answer": "历史上，虫情严重度最高的Top5市为：1.常州市。",
+                "data": [],
+                "evidence": {},
+            },
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["action"], "retry")
+        self.assertEqual(result["violations"][0]["code"], "county_scope_mismatch")
+        self.assertEqual(result["retry_route"]["city"], "常州市")
+        self.assertIsNone(result["retry_route"]["county"])
+        self.assertEqual(result["retry_route"]["region_level"], "county")
+
 
 if __name__ == "__main__":
     unittest.main()

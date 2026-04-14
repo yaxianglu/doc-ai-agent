@@ -763,6 +763,127 @@ class MySQLRepository:
         """
         return self._fetch_json_object(sql)
 
+    def latest_soil_by_device(self, device_code: str) -> Optional[dict]:
+        """按设备编码查询最新一条墒情记录。"""
+        sql = f"""
+        SELECT JSON_OBJECT(
+          'device_sn', device_sn,
+          'device_name', device_name,
+          'city_name', city_name,
+          'county_name', county_name,
+          'sample_time', DATE_FORMAT(sample_time, '%Y-%m-%d %H:%i:%s'),
+          'soil_anomaly_type', soil_anomaly_type,
+          'soil_anomaly_score', CAST(soil_anomaly_score AS DECIMAL(12,2))
+        )
+        FROM fact_soil_moisture
+        WHERE device_sn = {self._quote(device_code)}
+        ORDER BY sample_time DESC
+        LIMIT 1;
+        """
+        return self._fetch_json_object(sql)
+
+    def abnormal_soil_devices(
+        self,
+        since: str,
+        until: Optional[str] = None,
+        city: Optional[str] = None,
+        county: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[dict]:
+        """查询指定时间窗内出现过墒情异常的设备。"""
+        where = [
+            "soil_anomaly_type IN ('low', 'high')",
+            f"sample_time >= {self._quote(since)}",
+        ]
+        if until:
+            where.append(f"sample_time < {self._quote(until)}")
+        if city:
+            where.append(f"city_name = {self._quote(city)}")
+        if county:
+            where.append(f"county_name = {self._quote(county)}")
+        sql = f"""
+        SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
+        FROM (
+          SELECT JSON_OBJECT(
+            'device_sn', device_sn,
+            'device_name', device_name,
+            'city_name', city_name,
+            'county_name', county_name,
+            'abnormal_count', abnormal_count,
+            'last_sample_time', DATE_FORMAT(last_sample_time, '%Y-%m-%d %H:%i:%s')
+          ) AS item
+          FROM (
+            SELECT
+              device_sn,
+              MAX(device_name) AS device_name,
+              MAX(city_name) AS city_name,
+              MAX(county_name) AS county_name,
+              COUNT(*) AS abnormal_count,
+              MAX(sample_time) AS last_sample_time
+            FROM fact_soil_moisture
+            WHERE {' AND '.join(where)}
+            GROUP BY device_sn
+            ORDER BY abnormal_count DESC, last_sample_time DESC, device_sn ASC
+            LIMIT {max(1, int(limit))}
+          ) base
+        ) q;
+        """
+        return self._fetch_json(sql)
+
+    def soil_anomaly_devices_without_alerts(
+        self,
+        since: str,
+        until: Optional[str] = None,
+        city: Optional[str] = None,
+        county: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[dict]:
+        """查询有墒情异常但无告警的设备。"""
+        soil_where = [
+            "s.soil_anomaly_type IN ('low', 'high')",
+            f"s.sample_time >= {self._quote(since)}",
+        ]
+        alert_where = [f"a.alert_time >= {self._quote(since)}"]
+        if until:
+            soil_where.append(f"s.sample_time < {self._quote(until)}")
+            alert_where.append(f"a.alert_time < {self._quote(until)}")
+        if city:
+            soil_where.append(f"s.city_name = {self._quote(city)}")
+        if county:
+            soil_where.append(f"s.county_name = {self._quote(county)}")
+        sql = f"""
+        SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
+        FROM (
+          SELECT JSON_OBJECT(
+            'device_sn', device_sn,
+            'device_name', device_name,
+            'city_name', city_name,
+            'county_name', county_name,
+            'abnormal_count', abnormal_count,
+            'last_sample_time', DATE_FORMAT(last_sample_time, '%Y-%m-%d %H:%i:%s')
+          ) AS item
+          FROM (
+            SELECT
+              s.device_sn,
+              MAX(s.device_name) AS device_name,
+              MAX(s.city_name) AS city_name,
+              MAX(s.county_name) AS county_name,
+              COUNT(*) AS abnormal_count,
+              MAX(s.sample_time) AS last_sample_time
+            FROM fact_soil_moisture s
+            LEFT JOIN alerts a
+              ON a.device_code = s.device_sn
+             AND {' AND '.join(alert_where)}
+            WHERE {' AND '.join(soil_where)}
+              AND a.device_code IS NULL
+            GROUP BY s.device_sn
+            ORDER BY abnormal_count DESC, last_sample_time DESC, s.device_sn ASC
+            LIMIT {max(1, int(limit))}
+          ) base
+        ) q;
+        """
+        return self._fetch_json(sql)
+
     def latest_by_region_keyword(self, city_or_county_keyword: str, region_keyword: str) -> Optional[dict]:
         """按地区+区域关键词查询最新告警。"""
         sql = f"""

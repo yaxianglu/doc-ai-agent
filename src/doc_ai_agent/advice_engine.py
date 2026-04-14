@@ -186,6 +186,17 @@ class AdviceEngine:
                 generation_mode="rule",
                 model="",
             )
+        if "优先级" in q and "虫情" in q and any(token in q for token in ["墒情", "低墒", "高墒"]) and any(token in q for token in ["预警", "报警", "告警"]):
+            return AdviceResult(
+                answer=self._format_advice_answer(
+                    "可按“三层优先级”执行：1) 一级先盯同时满足预警持续、虫情高位、低墒或高墒持续异常的县；"
+                    "2) 二级处理只有两项同时偏高的县，先做加密巡查和点位复核；"
+                    "3) 三级保留单项异常县做连续复测。县内落地时，先处置持续多日且仍在抬升的点位，再处理单日冲高样本。"
+                ),
+                sources=sources or ["综合风险优先级规则库（Phase 2）"],
+                generation_mode="rule",
+                model="",
+            )
         if "台风" in q and "小麦" in q:
             return AdviceResult(
                 answer=self._format_advice_answer(
