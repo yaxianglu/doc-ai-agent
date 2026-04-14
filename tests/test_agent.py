@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -1038,6 +1039,123 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(fourth["mode"], "data_query")
         self.assertEqual(fourth["evidence"]["forecast"]["mode"], "ranking")
         self.assertIn("风险最高", fourth["answer"])
+
+    def test_forecast_follow_up_can_recover_from_legacy_ranking_memory_without_query_type(self):
+        memory_path = os.path.join(self.td.name, "legacy-memory.json")
+        with open(memory_path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "thread-legacy-ranking": {
+                        "memory_version": 2,
+                        "turn_count": 3,
+                        "domain": "pest",
+                        "region_name": "",
+                        "query_type": "",
+                        "window": {"window_type": "months", "window_value": 5},
+                        "route": {
+                            "query_type": "",
+                            "since": "2025-11-14 00:00:00",
+                            "until": None,
+                            "city": None,
+                            "county": None,
+                            "region_level": "county",
+                            "window": {"window_type": "months", "window_value": 5},
+                        },
+                        "forecast": {},
+                        "conversation_state": {
+                            "last_intent": "data_query",
+                            "last_answer_mode": "data_query",
+                            "last_query_family": "ranking",
+                            "last_region_level": "county",
+                        },
+                        "slots": {
+                            "domain": {"value": "pest", "source": "carried", "priority": 90, "ttl": 4, "updated_at_turn": 3},
+                            "region": {"value": "", "source": "empty", "priority": 0, "ttl": 0, "updated_at_turn": 3},
+                            "time_range": {
+                                "value": {"mode": "relative", "value": "5_months"},
+                                "source": "carried",
+                                "priority": 90,
+                                "ttl": 4,
+                                "updated_at_turn": 3,
+                            },
+                            "intent": {"value": "data_query", "source": "system", "priority": 80, "ttl": 2, "updated_at_turn": 3},
+                        },
+                    }
+                },
+                handle,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        agent = DocAIAgent(
+            CountyRankingRepo(),
+            memory_store_path=memory_path,
+        )
+
+        result = agent.answer("那未来两周呢？", thread_id="thread-legacy-ranking")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(result["evidence"]["forecast"]["mode"], "ranking")
+        self.assertEqual(result["evidence"]["memory_state"]["route"]["region_level"], "county")
+        self.assertIn("风险最高", result["answer"])
+
+    def test_expired_memory_slots_do_not_drive_short_follow_up(self):
+        memory_path = os.path.join(self.td.name, "expired-memory.json")
+        with open(memory_path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "thread-expired-memory": {
+                        "memory_version": 2,
+                        "turn_count": 8,
+                        "domain": "pest",
+                        "region_name": "徐州市",
+                        "query_type": "pest_top",
+                        "window": {"window_type": "months", "window_value": 5},
+                        "route": {
+                            "query_type": "pest_top",
+                            "since": "2025-11-14 00:00:00",
+                            "until": None,
+                            "city": "徐州市",
+                            "county": None,
+                            "region_level": "city",
+                            "window": {"window_type": "months", "window_value": 5},
+                        },
+                        "forecast": {},
+                        "conversation_state": {
+                            "last_intent": "data_query",
+                            "last_answer_mode": "data_query",
+                            "last_query_family": "ranking",
+                            "last_region_level": "city",
+                        },
+                        "slots": {
+                            "domain": {"value": "pest", "source": "explicit", "priority": 100, "ttl": 2, "updated_at_turn": 1},
+                            "region": {"value": "徐州市", "source": "explicit", "priority": 100, "ttl": 2, "updated_at_turn": 1},
+                            "time_range": {
+                                "value": {"mode": "relative", "value": "5_months"},
+                                "source": "explicit",
+                                "priority": 100,
+                                "ttl": 2,
+                                "updated_at_turn": 1,
+                            },
+                            "intent": {"value": "data_query", "source": "system", "priority": 80, "ttl": 2, "updated_at_turn": 1},
+                        },
+                    }
+                },
+                handle,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        agent = DocAIAgent(
+            CountyRankingRepo(),
+            memory_store_path=memory_path,
+        )
+
+        result = agent.answer("那未来两周呢？", thread_id="thread-expired-memory")
+
+        self.assertNotEqual(result["mode"], "data_query")
+        self.assertFalse(result["evidence"]["request_understanding"]["used_context"])
+        self.assertIn("补充", result["answer"])
 
     def test_ranking_request_respects_requested_top_n(self):
         agent = DocAIAgent(

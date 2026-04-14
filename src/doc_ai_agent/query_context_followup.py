@@ -30,6 +30,37 @@ def _asks_region_ranking(planner, question: str) -> bool:
     return any(token in normalized for token in ["哪里", "哪儿", "哪些地区", "哪些地方", "最高的县", "最高的区", "最严重的地方", "风险最高"])
 
 
+def _query_family_from_type(query_type: str) -> str:
+    normalized = str(query_type or "")
+    if normalized.endswith("_top") or normalized == "joint_risk":
+        return "ranking"
+    if normalized.endswith("_trend"):
+        return "trend"
+    if normalized.endswith("_detail"):
+        return "detail"
+    if normalized.endswith("_overview"):
+        return "overview"
+    if normalized.endswith("_forecast"):
+        return "forecast"
+    return ""
+
+
+def _query_type_from_family(domain: str, family: str) -> str:
+    if domain not in {"pest", "soil"}:
+        return ""
+    if family == "ranking":
+        return f"{domain}_top"
+    if family == "trend":
+        return f"{domain}_trend"
+    if family == "detail":
+        return f"{domain}_detail"
+    if family == "overview":
+        return f"{domain}_overview"
+    if family == "forecast":
+        return f"{domain}_forecast"
+    return ""
+
+
 def build_context_follow_up_plan(planner, question: str, context: dict | None, understanding: dict | None = None) -> dict | None:
     """基于线程上下文构造追问计划。
 
@@ -58,11 +89,15 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None, u
         return None
 
     previous_route = dict(context.get("route") or {})
+    conversation_state = dict(context.get("conversation_state") or {})
     previous_query_type = str(previous_route.get("query_type") or context.get("query_type") or "")
     domain = str(context.get("domain") or planner._domain_from_query_type(previous_query_type) or "")
+    previous_query_family = str(conversation_state.get("last_query_family") or _query_family_from_type(previous_query_type))
+    if not previous_query_type and previous_query_family:
+        previous_query_type = _query_type_from_family(domain, previous_query_family)
     trace = [f"reused thread context domain={domain or 'unknown'}"]
     previous_region_name = str(context.get("region_name") or "")
-    previous_region_level = str(previous_route.get("region_level") or "")
+    previous_region_level = str(previous_route.get("region_level") or conversation_state.get("last_region_level") or "")
     if any(token in question for token in ["这个县", "该县", "这个区", "该区"]) and previous_region_level != "county":
         # 县/区指代对粒度要求更高，若上文不是县级上下文则先澄清，避免误用。
         return {
@@ -197,6 +232,11 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None, u
         route["query_type"] = f"{domain}_forecast"
         route["forecast_window"] = future_window or dict(context.get("forecast") or {}).get("window") or {"window_type": "days", "window_value": 14, "horizon_days": 14}
         forecast_ranking_follow_up = ranking_follow_up or (
+            previous_query_family == "ranking"
+            and not previous_region_name
+            and not city
+            and not county
+        ) or (
             previous_query_type in {"pest_top", "soil_top"}
             and str(previous_route.get("region_level") or "") == "county"
             and not any(token in question for token in ["更糟", "恶化", "更严重", "会怎样", "怎么样"])

@@ -3,6 +3,22 @@
 from __future__ import annotations
 
 
+def query_family_from_type(query_type: str) -> str:
+    """把 query_type 折叠成稳定的查询家族，便于跨轮追问复用。"""
+    normalized = str(query_type or "")
+    if normalized.endswith("_top") or normalized in {"top", "joint_risk"}:
+        return "ranking"
+    if normalized.endswith("_trend") or normalized == "city_day_change":
+        return "trend"
+    if normalized.endswith("_detail"):
+        return "detail"
+    if normalized.endswith("_overview"):
+        return "overview"
+    if normalized.endswith("_forecast"):
+        return "forecast"
+    return ""
+
+
 def memory_time_range_value(window: dict | None) -> dict:
     """把 window 结构转换为标准化 time_range 槽位值。"""
     normalized_window = dict(window or {})
@@ -110,6 +126,7 @@ def build_memory_snapshot(
     window = route.get("window") or previous_context.get("window") or {}
     query_plan = dict(plan.get("query_plan") or {})
     query_plan_intent = str(query_plan.get("intent") or plan.get("intent") or "")
+    query_type = analysis_context.get("query_type") or route.get("query_type") or previous_context.get("query_type") or ""
 
     domain_source = "explicit" if understanding.get("domain") else ("carried" if preserve_thread_scope and previous_slots.get("domain") else ("inferred" if domain else "empty"))
     region_source = (
@@ -169,7 +186,7 @@ def build_memory_snapshot(
         "turn_count": turn_count,
         "domain": domain,
         "region_name": region_name,
-        "query_type": analysis_context.get("query_type") or route.get("query_type") or previous_context.get("query_type") or "",
+        "query_type": query_type,
         "window": window,
         "route": route,
         "forecast": forecast,
@@ -183,6 +200,8 @@ def build_memory_snapshot(
             "last_intent": str(plan.get("intent") or ""),
             "last_answer_mode": str(response.get("mode") or ""),
             "last_clarification_reason": str(plan.get("reason") or "") if plan.get("needs_clarification") else "",
+            "last_query_family": query_family_from_type(query_type),
+            "last_region_level": str(analysis_context.get("region_level") or route.get("region_level") or ""),
         },
         "slots": slots,
     }

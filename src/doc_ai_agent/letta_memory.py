@@ -6,6 +6,8 @@ import json
 import os
 from typing import Protocol
 
+from .agent_memory import query_family_from_type
+
 
 def _time_range_slot_value_from_window(window: dict | None) -> dict:
     """把 window 结构压缩成 time_range 槽位值。"""
@@ -75,6 +77,33 @@ def _slot_has_value(value: object) -> bool:
     return True
 
 
+def _slot_is_fresh(slot: dict, turn_count: int) -> bool:
+    """判断槽位在当前轮次下是否仍然有效。"""
+    ttl = int(slot.get("ttl") or 0)
+    updated_at_turn = int(slot.get("updated_at_turn") or 0)
+    if ttl <= 0:
+        return False
+    if not _slot_has_value(slot.get("value")):
+        return False
+    return max(turn_count - updated_at_turn, 0) < ttl
+
+
+def _query_type_from_family(domain: str, family: str) -> str:
+    if domain not in {"pest", "soil"}:
+        return ""
+    if family == "ranking":
+        return f"{domain}_top"
+    if family == "trend":
+        return f"{domain}_trend"
+    if family == "detail":
+        return f"{domain}_detail"
+    if family == "overview":
+        return f"{domain}_overview"
+    if family == "forecast":
+        return f"{domain}_forecast"
+    return ""
+
+
 def _normalize_slot(slot_name: str, slot_payload: object, fallback_value: object, turn_count: int) -> dict:
     """把任意形态的槽位规整成统一内部结构。"""
     payload = dict(slot_payload or {})
@@ -137,15 +166,31 @@ def normalize_memory_snapshot(snapshot: dict | None) -> dict:
     ]
     turn_count = int(payload.get("turn_count") or max(existing_turns or [0]))
     slots = _build_slots(payload, turn_count)
-    time_range_window = _window_from_time_range_slot(slots["time_range"]["value"])
+    effective_domain = str(slots["domain"]["value"] or "") if _slot_is_fresh(slots["domain"], turn_count) else ""
+    effective_region = str(slots["region"]["value"] or "") if _slot_is_fresh(slots["region"], turn_count) else ""
+    time_range_window = _window_from_time_range_slot(slots["time_range"]["value"]) if _slot_is_fresh(slots["time_range"], turn_count) else {}
+    route = dict(payload.get("route") or {})
+    last_query_family = str((payload.get("conversation_state") or {}).get("last_query_family") or "")
+    if not effective_region:
+        route["city"] = None
+        route["county"] = None
+    if not time_range_window:
+        route["window"] = {}
+    query_type = str(payload.get("query_type") or route.get("query_type") or "")
+    if not query_type and effective_domain and last_query_family:
+        query_type = _query_type_from_family(effective_domain, last_query_family)
+        route["query_type"] = query_type
+    if not effective_domain and query_type.startswith(("pest_", "soil_")):
+        query_type = ""
+        route["query_type"] = ""
     return {
         "memory_version": int(payload.get("memory_version") or 2),
         "turn_count": turn_count,
-        "domain": str(payload.get("domain") or slots["domain"]["value"] or ""),
-        "region_name": str(payload.get("region_name") or slots["region"]["value"] or ""),
-        "query_type": str(payload.get("query_type") or ""),
-        "window": dict(payload.get("window") or time_range_window),
-        "route": dict(payload.get("route") or {}),
+        "domain": effective_domain,
+        "region_name": effective_region,
+        "query_type": query_type,
+        "window": dict(time_range_window),
+        "route": route,
         "forecast": dict(payload.get("forecast") or {}),
         "last_question": str(payload.get("last_question") or ""),
         "last_answer": str(payload.get("last_answer") or ""),
@@ -157,6 +202,8 @@ def normalize_memory_snapshot(snapshot: dict | None) -> dict:
             "last_intent": str((payload.get("conversation_state") or {}).get("last_intent") or payload.get("intent") or ""),
             "last_answer_mode": str((payload.get("conversation_state") or {}).get("last_answer_mode") or payload.get("answer_mode") or ""),
             "last_clarification_reason": str((payload.get("conversation_state") or {}).get("last_clarification_reason") or payload.get("pending_clarification") or ""),
+            "last_query_family": str(last_query_family or query_family_from_type(query_type)),
+            "last_region_level": str((payload.get("conversation_state") or {}).get("last_region_level") or route.get("region_level") or ""),
         },
         "slots": slots,
     }
