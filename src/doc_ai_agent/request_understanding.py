@@ -156,21 +156,27 @@ class RequestUnderstanding:
         extracted = self._extract_with_entity_service(cleaned)
         structured = self._extract_with_backend(cleaned, context if used_context else None)
 
-        domain = structured.get("domain") or extracted.get("domain") or self._infer_domain(cleaned, context if used_context else None)
+        domain = semantic_parse.domain or structured.get("domain") or extracted.get("domain") or self._infer_domain(cleaned, context if used_context else None)
         historical_window = self._coalesce_window(
+            semantic_parse.historical_window,
             structured.get("historical_window"),
             extracted.get("historical_window"),
             self._extract_past_window(cleaned),
         )
-        future_window = self._extract_future_window(cleaned) or structured.get("future_window") or extracted.get("future_window")
-        region_name = self._coalesce_region_name(
-            structured.get("region_name") if isinstance(structured.get("region_name"), str) else "",
-            extracted.get("region_name") if isinstance(extracted.get("region_name"), str) else self._extract_region(cleaned),
-        ) or (str((context or {}).get("region_name") or "") if reuse_region_from_context else "")
+        future_window = semantic_parse.future_window or self._extract_future_window(cleaned) or structured.get("future_window") or extracted.get("future_window")
+        region_primary = semantic_parse.region_name or (
+            structured.get("region_name") if isinstance(structured.get("region_name"), str) else ""
+        )
+        region_secondary = (
+            extracted.get("region_name") if isinstance(extracted.get("region_name"), str) else self._extract_region(cleaned)
+        )
+        region_name = self._coalesce_region_name(region_primary, region_secondary) or (
+            str((context or {}).get("region_name") or "") if reuse_region_from_context else ""
+        )
         region_level = self._resolve_region_level(
             text=cleaned,
             region_name=region_name,
-            structured_level=str(structured.get("region_level") or ""),
+            structured_level=semantic_parse.region_level or str(structured.get("region_level") or ""),
             extracted_level=str(extracted.get("region_level") or ""),
             context_level=str(((context or {}).get("route") or {}).get("region_level") or "") if reuse_region_from_context else "",
         )
@@ -185,15 +191,17 @@ class RequestUnderstanding:
         if structured.get("needs_advice") is True:
             needs_advice_flag = True
 
-        task_type = structured.get("task_type") or infer_task_type(
-            cleaned,
-            domain,
-            region_name,
-            needs_explanation_flag,
-            needs_advice_flag,
-            self.COMPARE_HINTS,
-            CITY_ALIASES,
-            normalize_city_mentions,
+        task_type = semantic_parse.task_type if semantic_parse.task_type != "unknown" else (
+            structured.get("task_type") or infer_task_type(
+                cleaned,
+                domain,
+                region_name,
+                needs_explanation_flag,
+                needs_advice_flag,
+                self.COMPARE_HINTS,
+                CITY_ALIASES,
+                normalize_city_mentions,
+            )
         )
         needs_forecast_flag = needs_forecast(cleaned, future_window, needs_advice_flag)
         needs_historical = needs_historical_data(cleaned, historical_window, future_window, domain, task_type, region_name)
@@ -237,6 +245,8 @@ class RequestUnderstanding:
             "future_window": future_window,
             "region_name": region_name,
             "region_level": region_level,
+            "followup_type": semantic_parse.followup_type,
+            "needs_clarification": semantic_parse.needs_clarification,
             "needs_historical": needs_historical,
             "needs_forecast": needs_forecast_flag,
             "needs_explanation": needs_explanation_flag,
