@@ -86,6 +86,34 @@ class IntentRouterTests(unittest.TestCase):
         self.assertEqual(route["threshold"], 150)
         self.assertEqual(route["until"], "2026-04-10 00:00:00")
 
+    def test_router_emits_unified_semantic_fields(self):
+        class UnifiedSchemaLLMClient:
+            def complete_json(self, model, system_prompt, user_prompt):
+                return {
+                    "intent": "data_query",
+                    "domain": "pest",
+                    "task_type": "ranking",
+                    "region_name": "苏州市",
+                    "region_level": "city",
+                    "historical_window": {"window_type": "months", "window_value": 3},
+                    "future_window": {"window_type": "weeks", "window_value": 2, "horizon_days": 14},
+                    "query_type": "pest_top",
+                    "field": "city",
+                    "top_n": 3,
+                    "since": "2026-01-01 00:00:00",
+                }
+
+        router = IntentRouter(UnifiedSchemaLLMClient(), "gpt-4.1-mini")
+        route = router.route("最近3个月苏州虫情最严重的城市有哪些？")
+
+        self.assertEqual(route["intent"], "data_query")
+        self.assertEqual(route.get("domain"), "pest")
+        self.assertEqual(route.get("task_type"), "ranking")
+        self.assertEqual(route.get("region_name"), "苏州市")
+        self.assertEqual(route.get("region_level"), "city")
+        self.assertEqual(route.get("historical_window"), {"window_type": "months", "window_value": 3})
+        self.assertEqual(route.get("future_window"), {"window_type": "weeks", "window_value": 2, "horizon_days": 14})
+
 
 if __name__ == "__main__":
     unittest.main()

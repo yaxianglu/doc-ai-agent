@@ -10,6 +10,19 @@ from __future__ import annotations
 class IntentRouter:
     """意图路由器：调用 LLM 并输出受限字段的路由结果。"""
 
+    ALLOWED_INTENTS = {"data_query", "advice"}
+    ALLOWED_DOMAINS = {"", "pest", "soil", "mixed"}
+    ALLOWED_TASK_TYPES = {
+        "unknown",
+        "ranking",
+        "trend",
+        "region_overview",
+        "joint_risk",
+        "data_detail",
+        "compare",
+        "cross_domain_compare",
+    }
+    ALLOWED_WINDOW_TYPES = {"all", "months", "weeks", "days", "year_since"}
     ALLOWED_QUERY_TYPES = {
         "count",
         "active_devices",
@@ -37,6 +50,28 @@ class IntentRouter:
     }
     ALLOWED_FIELDS = {"city", "county", "alert_type", "alert_level", "region_level"}
     ALLOWED_REGION_LEVELS = {"city", "county"}
+    QUERY_TYPE_DOMAIN_HINTS = {
+        "pest_top": "pest",
+        "pest_overview": "pest",
+        "pest_trend": "pest",
+        "soil_top": "soil",
+        "soil_overview": "soil",
+        "soil_trend": "soil",
+        "joint_risk": "mixed",
+    }
+    QUERY_TYPE_TASK_HINTS = {
+        "top": "ranking",
+        "active_devices": "ranking",
+        "consecutive_devices": "ranking",
+        "pest_top": "ranking",
+        "soil_top": "ranking",
+        "city_day_change": "trend",
+        "pest_trend": "trend",
+        "soil_trend": "trend",
+        "joint_risk": "joint_risk",
+        "pest_overview": "region_overview",
+        "soil_overview": "region_overview",
+    }
 
     def __init__(self, llm_client, model: str):
         """初始化路由器。"""
@@ -58,10 +93,49 @@ class IntentRouter:
         )
         user_prompt = f"问题: {question}"
         data = self.llm_client.complete_json(self.model, system_prompt, user_prompt)
+        if not isinstance(data, dict):
+            data = {}
         intent = str(data.get("intent", "advice"))
-        if intent not in {"data_query", "advice"}:
+        if intent not in self.ALLOWED_INTENTS:
             intent = "advice"
-        result = {"intent": intent}
+        query_type = str(data.get("query_type", "count"))
+        if query_type not in self.ALLOWED_QUERY_TYPES:
+            query_type = "count"
+        region_level = str(data.get("region_level") or "")
+        if region_level not in self.ALLOWED_REGION_LEVELS:
+            region_level = ""
+
+        city = str(data.get("city") or "")
+        county = str(data.get("county") or "")
+        region_name = str(data.get("region_name") or "")
+        if not region_name:
+            if region_level == "county" and county:
+                region_name = county
+            elif city:
+                region_name = city
+            elif county:
+                region_name = county
+
+        domain = str(data.get("domain") or "")
+        if domain not in self.ALLOWED_DOMAINS:
+            domain = self.QUERY_TYPE_DOMAIN_HINTS.get(query_type, "")
+        task_type = str(data.get("task_type") or "")
+        if task_type not in self.ALLOWED_TASK_TYPES:
+            task_type = self.QUERY_TYPE_TASK_HINTS.get(query_type, "unknown")
+
+        historical_window = self._normalize_window(data.get("historical_window")) or {"window_type": "all", "window_value": None}
+        future_window = self._normalize_window(data.get("future_window"))
+
+        result = {
+            "intent": intent,
+            "domain": domain,
+            "task_type": task_type,
+            "region_name": region_name,
+            "region_level": region_level,
+            "historical_window": historical_window,
+        }
+        if future_window:
+            result["future_window"] = future_window
         if intent == "data_query":
             top_n_raw = data.get("top_n", 5)
             try:
@@ -74,10 +148,6 @@ class IntentRouter:
             except (TypeError, ValueError):
                 min_days = 2
             since = data.get("since") or "1970-01-01 00:00:00"
-            query_type = str(data.get("query_type", "count"))
-            if query_type not in self.ALLOWED_QUERY_TYPES:
-                # 不在白名单内的 query_type 一律降级为 count，避免越权字段影响执行层。
-                query_type = "count"
             field = str(data.get("field", "city"))
             if field not in self.ALLOWED_FIELDS:
                 field = "city"
@@ -93,9 +163,6 @@ class IntentRouter:
             until = data.get("until")
             if until not in {None, ""}:
                 result["until"] = str(until)
-            region_level = str(data.get("region_level") or "")
-            if region_level in self.ALLOWED_REGION_LEVELS:
-                result["region_level"] = region_level
             for key in ("city", "county", "device_code"):
                 value = data.get(key)
                 if value not in {None, ""}:
@@ -107,3 +174,22 @@ class IntentRouter:
                 except (TypeError, ValueError):
                     pass
         return result
+
+    @classmethod
+    def _normalize_window(cls, payload: object) -> dict | None:
+        if not isinstance(payload, dict):
+            return None
+        window_type = str(payload.get("window_type") or "")
+        if window_type not in cls.ALLOWED_WINDOW_TYPES:
+            return None
+        normalized = {
+            "window_type": window_type,
+            "window_value": payload.get("window_value"),
+        }
+        horizon_days = payload.get("horizon_days")
+        if horizon_days not in {None, ""}:
+            try:
+                normalized["horizon_days"] = int(horizon_days)
+            except (TypeError, ValueError):
+                pass
+        return normalized
