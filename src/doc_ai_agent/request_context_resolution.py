@@ -158,7 +158,26 @@ def is_contextual_follow_up(text: str, greeting_patterns: set[str]) -> bool:
         return False
     if re.search(r"(SNS\d+|设备|预警时间|等级|最近一次|这条预警|哪个|多少|Top|TOP|20\d{2}年)", stripped):
         return False
-    if len(stripped) <= 8:
+    explicit_follow_up_cues = (
+        "呢",
+        "原因",
+        "为什么",
+        "为啥",
+        "建议",
+        "处置",
+        "怎么办",
+        "怎么做",
+        "怎么处理",
+        "未来",
+        "过去",
+        "近",
+        "今年以来",
+        "换成",
+        "改成",
+        "切到",
+        "切换",
+    )
+    if len(stripped) <= 8 and any(token in stripped for token in explicit_follow_up_cues):
         return True
     return stripped in {"未来两周呢", "未来两周", "给建议", "建议", "处置建议", "原因呢", "为什么呢", "怎么办", "怎么做"}
 
