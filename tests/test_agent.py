@@ -381,6 +381,45 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], "out_of_scope_weather")
         self.assertIn("虫情", result["answer"])
 
+    def test_low_semantic_confidence_uses_clarification_response_meta(self):
+        class NeutralSemanticJudger:
+            def judge(self, _question: str):
+                return {
+                    "reason": "",
+                    "intent": "advice",
+                    "confidence": 0.0,
+                    "needs_clarification": False,
+                    "clarification": None,
+                }
+
+        class ForcedLowConfidenceSemanticParser:
+            def parse(self, question: str, context: dict | None = None):
+                del context
+                from doc_ai_agent.semantic_parse import SemanticParseResult
+
+                return SemanticParseResult(
+                    normalized_query=str(question or "").strip(),
+                    intent="data_query",
+                    domain="pest",
+                    task_type="trend",
+                    confidence=0.22,
+                    trace=["normalize", "slots"],
+                )
+
+        agent = DocAIAgent(
+            AlertRepository(self.db),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            semantic_parser=ForcedLowConfidenceSemanticParser(),
+        )
+        agent.query_planner.semantic_judger = NeutralSemanticJudger()
+
+        result = agent.answer("过去5个月虫情趋势如何", thread_id="thread-semantic-low-confidence")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertEqual(result["evidence"]["generation_mode"], "clarification")
+        self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], "semantic_low_confidence")
+        self.assertLess(result["evidence"]["response_meta"]["confidence"], 0.4)
+
     def test_identity_question_returns_capability_intro(self):
         agent = DocAIAgent(
             AlertRepository(self.db),

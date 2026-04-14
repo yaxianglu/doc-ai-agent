@@ -57,8 +57,24 @@ class ForcedOutOfScopeSemanticParser:
             normalized_query=str(question or "").strip(),
             intent="advice",
             is_out_of_scope=True,
+            confidence=0.97,
             fallback_reason="out_of_scope_weather",
             trace=["normalize", "ood", "ood:out_of_scope_weather"],
+        )
+
+
+class ForcedLowConfidenceSemanticParser:
+    def parse(self, question: str, context: dict | None = None):
+        del context
+        from doc_ai_agent.semantic_parse import SemanticParseResult
+
+        return SemanticParseResult(
+            normalized_query=str(question or "").strip(),
+            intent="data_query",
+            domain="pest",
+            task_type="trend",
+            confidence=0.24,
+            trace=["normalize", "slots"],
         )
 
 
@@ -76,6 +92,20 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["query_type"], "count")
         self.assertEqual(plan["intent"], "advice")
         self.assertIn("ood:out_of_scope_weather", plan["context_trace"])
+        self.assertGreaterEqual(plan["confidence"], 0.95)
+
+    def test_low_semantic_confidence_routes_to_clarification(self):
+        planner = QueryPlanner(
+            None,
+            semantic_judger=NeutralSemanticJudger(),
+            semantic_parser=ForcedLowConfidenceSemanticParser(),
+        )
+
+        plan = planner.plan("过去5个月徐州虫情趋势如何")
+
+        self.assertTrue(plan["needs_clarification"])
+        self.assertEqual(plan["reason"], "semantic_low_confidence")
+        self.assertIn("请补充", plan["clarification"])
 
     def test_planner_respects_semantic_judger_decision_for_generic_explanation(self):
         planner = QueryPlanner(None, semantic_judger=ForcedGenericExplanationJudger())

@@ -240,6 +240,27 @@ class QueryPlanner:
                 trace.append(edge_tag)
         return trace
 
+    @staticmethod
+    def _safe_confidence(value: object) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            numeric = 0.0
+        return max(0.0, min(0.99, round(numeric, 2)))
+
+    @classmethod
+    def _semantic_confidence(cls, parse_result: SemanticParseResult, semantic_decision: dict, default: float = 0.0) -> float:
+        parse_confidence = cls._safe_confidence(parse_result.confidence)
+        decision_confidence = cls._safe_confidence((semantic_decision or {}).get("confidence"))
+        if parse_confidence > 0 and decision_confidence > 0:
+            blended = round((parse_confidence * 0.7) + (decision_confidence * 0.3), 2)
+            return cls._safe_confidence(max(parse_confidence, blended))
+        if parse_confidence > 0:
+            return parse_confidence
+        if decision_confidence > 0:
+            return decision_confidence
+        return cls._safe_confidence(default)
+
     def _needs_agri_domain_clarification(self, question: str) -> bool:
         return needs_agri_domain_clarification(question, build_route=self._build_route)
 
@@ -446,6 +467,7 @@ class QueryPlanner:
         if parse_result.normalized_query:
             question = parse_result.normalized_query
         semantic_decision = self.semantic_judger.judge(question)
+        semantic_confidence = self._semantic_confidence(parse_result, semantic_decision)
         semantic_reason = str(parse_result.fallback_reason or semantic_decision.get("fallback_reason") or semantic_decision.get("reason") or "")
         if parse_result.is_out_of_scope:
             out_of_scope_reason = semantic_reason if self._is_out_of_scope_reason(semantic_reason) else "out_of_scope_capability"
@@ -456,7 +478,7 @@ class QueryPlanner:
             )
             return self._finalize_plan({
                 "intent": str(parse_result.intent or semantic_decision.get("intent") or "advice"),
-                "confidence": max(float(semantic_decision.get("confidence") or 0.0), 0.92),
+                "confidence": self._semantic_confidence(parse_result, semantic_decision, default=0.9),
                 "route": self._build_route(question, "count"),
                 "needs_clarification": True,
                 "clarification": clarification,
@@ -466,12 +488,22 @@ class QueryPlanner:
         if semantic_reason == SemanticJudger.REASON_GREETING:
             return self._finalize_plan({
                 "intent": str(semantic_decision.get("intent") or "advice"),
-                "confidence": float(semantic_decision.get("confidence") or 0.98),
+                "confidence": self._semantic_confidence(parse_result, semantic_decision, default=0.95),
                 "route": self._build_route(question, "count"),
                 "needs_clarification": bool(semantic_decision.get("needs_clarification")),
                 "clarification": semantic_decision.get("clarification"),
                 "reason": SemanticJudger.REASON_GREETING,
                 "context_trace": self._semantic_context_trace(SemanticJudger.REASON_GREETING, parse_result.trace),
+            }, question, context=context, understanding=understanding)
+        if parse_result.needs_clarification or semantic_confidence < 0.35:
+            return self._finalize_plan({
+                "intent": "advice",
+                "confidence": semantic_confidence,
+                "route": self._build_route(question, "structured_agri"),
+                "needs_clarification": True,
+                "clarification": "请补充你要查询的领域、地区或时间范围，我再继续查询。",
+                "reason": "semantic_low_confidence",
+                "context_trace": list(parse_result.trace),
             }, question, context=context, understanding=understanding)
         if context_follow_up := self._context_follow_up_plan(original_question, context):
             # 若识别为上下文追问，优先复用线程状态，避免重复抽取和重复提问。
@@ -479,7 +511,7 @@ class QueryPlanner:
         if semantic_reason == SemanticJudger.REASON_IDENTITY:
             return self._finalize_plan({
                 "intent": str(semantic_decision.get("intent") or "advice"),
-                "confidence": float(semantic_decision.get("confidence") or 0.95),
+                "confidence": self._semantic_confidence(parse_result, semantic_decision, default=0.92),
                 "route": self._build_route(question, "count"),
                 "needs_clarification": bool(semantic_decision.get("needs_clarification")),
                 "clarification": semantic_decision.get("clarification"),
@@ -489,7 +521,7 @@ class QueryPlanner:
         if self._is_out_of_scope_reason(semantic_reason):
             return self._finalize_plan({
                 "intent": str(semantic_decision.get("intent") or "advice"),
-                "confidence": float(semantic_decision.get("confidence") or 0.92),
+                "confidence": self._semantic_confidence(parse_result, semantic_decision, default=0.9),
                 "route": self._build_route(question, "count"),
                 "needs_clarification": bool(semantic_decision.get("needs_clarification")),
                 "clarification": semantic_decision.get("clarification"),
@@ -499,7 +531,7 @@ class QueryPlanner:
         if semantic_reason == SemanticJudger.REASON_GENERIC_EXPLANATION:
             return self._finalize_plan({
                 "intent": str(semantic_decision.get("intent") or "advice"),
-                "confidence": float(semantic_decision.get("confidence") or 0.78),
+                "confidence": self._semantic_confidence(parse_result, semantic_decision, default=0.72),
                 "route": self._build_route(question, "count"),
                 "needs_clarification": bool(semantic_decision.get("needs_clarification")),
                 "clarification": semantic_decision.get("clarification"),

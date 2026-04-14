@@ -95,6 +95,7 @@ class SemanticParser:
     def __init__(self, backend=None, extractor: EntityExtractionService | None = None):
         self.backend = backend
         self.extractor = extractor or EntityExtractionService()
+        self.semantic_judger = SemanticJudger()
 
     def parse(self, question: str, context: dict | None = None) -> SemanticParseResult:
         """把原始问题解析为统一语义结果。"""
@@ -105,27 +106,50 @@ class SemanticParser:
         if followup_type != "none":
             trace.append(f"followup:{followup_type}")
 
-        semantic_decision = SemanticJudger().judge(normalized)
+        semantic_decision = self.semantic_judger.judge(normalized)
+        backend_signal = self._semantic_backend_signal(normalized, context)
         semantic_reason = str(semantic_decision.get("fallback_reason") or semantic_decision.get("reason") or "")
 
-        if SemanticJudger.is_out_of_scope_reason(semantic_reason):
+        if self.semantic_judger.is_out_of_scope_reason(semantic_reason):
             trace.extend(["ood", f"ood:{semantic_reason}"])
             return SemanticParseResult(
                 normalized_query=normalized,
                 intent=str(semantic_decision.get("intent") or "advice"),
-                confidence=0.92,
+                confidence=self._confidence_score(
+                    domain="",
+                    task_type="unknown",
+                    region_name="",
+                    historical_window={"window_type": "all", "window_value": None},
+                    future_window=None,
+                    followup_type=followup_type,
+                    needs_clarification=True,
+                    semantic_reason=semantic_reason,
+                    semantic_confidence=semantic_decision.get("confidence"),
+                    backend_signal=backend_signal,
+                ),
                 is_out_of_scope=True,
                 fallback_reason=semantic_reason,
                 followup_type=followup_type,
                 needs_clarification=True,
                 trace=trace,
             )
-        if semantic_reason in {SemanticJudger.REASON_GREETING, SemanticJudger.REASON_IDENTITY}:
+        if semantic_reason in {self.semantic_judger.REASON_GREETING, self.semantic_judger.REASON_IDENTITY}:
             trace.extend(["edge", f"edge:{semantic_reason}"])
             return SemanticParseResult(
                 normalized_query=normalized,
                 intent=str(semantic_decision.get("intent") or "advice"),
-                confidence=float(semantic_decision.get("confidence") or 0.0),
+                confidence=self._confidence_score(
+                    domain="",
+                    task_type="unknown",
+                    region_name="",
+                    historical_window={"window_type": "all", "window_value": None},
+                    future_window=None,
+                    followup_type=followup_type,
+                    needs_clarification=bool(semantic_decision.get("needs_clarification")),
+                    semantic_reason=semantic_reason,
+                    semantic_confidence=semantic_decision.get("confidence"),
+                    backend_signal=backend_signal,
+                ),
                 is_out_of_scope=False,
                 fallback_reason=semantic_reason,
                 followup_type=followup_type,
@@ -164,7 +188,18 @@ class SemanticParser:
             future_window=future_window,
             followup_type=followup_type,
             needs_clarification=needs_clarification,
-            confidence=self._confidence_score(domain, task_type, needs_clarification),
+            confidence=self._confidence_score(
+                domain=domain,
+                task_type=task_type,
+                region_name=region_name,
+                historical_window=historical_window,
+                future_window=future_window,
+                followup_type=followup_type,
+                needs_clarification=needs_clarification,
+                semantic_reason=semantic_reason,
+                semantic_confidence=semantic_decision.get("confidence"),
+                backend_signal=backend_signal,
+            ),
             trace=trace,
         )
 
@@ -179,15 +214,100 @@ class SemanticParser:
         return future_window is not None
 
     @classmethod
-    def _confidence_score(cls, domain: str, task_type: str, needs_clarification: bool) -> float:
-        score = 0.52
+    def _safe_confidence(cls, value: object) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            numeric = 0.0
+        return max(0.0, min(0.99, numeric))
+
+    def _semantic_backend_signal(self, text: str, context: dict) -> dict:
+        if self.backend is None:
+            return {}
+        for method_name in ("semantic_evidence", "semantic_judge", "extract"):
+            method = getattr(self.backend, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                payload = method(text, context=context)
+            except TypeError:
+                try:
+                    payload = method(text)
+                except Exception:
+                    return {}
+            except Exception:
+                return {}
+            if not isinstance(payload, dict):
+                return {}
+            domain = str(payload.get("domain") or "")
+            if domain not in {"pest", "soil", "mixed"}:
+                domain = ""
+            return {
+                "domain": domain,
+                "reason": str(payload.get("fallback_reason") or payload.get("reason") or ""),
+                "confidence": self._safe_confidence(payload.get("confidence")),
+            }
+        return {}
+
+    @classmethod
+    def _semantic_agreement_delta(cls, domain: str, semantic_reason: str, backend_signal: dict) -> float:
+        backend_domain = str((backend_signal or {}).get("domain") or "")
+        backend_reason = str((backend_signal or {}).get("reason") or "")
+        if SemanticJudger.is_out_of_scope_reason(semantic_reason):
+            if backend_reason == semantic_reason:
+                return 0.08
+            if SemanticJudger.is_out_of_scope_reason(backend_reason) and backend_reason != semantic_reason:
+                return -0.12
+            return 0.0
+        if SemanticJudger.is_out_of_scope_reason(backend_reason):
+            return -0.18
+        if domain and backend_domain:
+            return 0.08 if domain == backend_domain else -0.18
+        return 0.0
+
+    @classmethod
+    def _confidence_score(
+        cls,
+        *,
+        domain: str,
+        task_type: str,
+        region_name: str,
+        historical_window: dict,
+        future_window: dict | None,
+        followup_type: str,
+        needs_clarification: bool,
+        semantic_reason: str,
+        semantic_confidence: object,
+        backend_signal: dict,
+    ) -> float:
+        score = 0.44
         if domain:
-            score += 0.1
+            score += 0.14
         if task_type != "unknown":
             score += 0.08
+        if region_name:
+            score += 0.06
+        if isinstance(historical_window, dict) and str(historical_window.get("window_type") or "all") != "all":
+            score += 0.06
+        if isinstance(future_window, dict):
+            score += 0.06
+        if followup_type in {"contextual", "window_only", "domain_switch"}:
+            score += 0.03
         if needs_clarification:
-            score -= 0.2
-        return max(0.0, min(0.95, score))
+            score -= 0.27
+        score += cls._semantic_agreement_delta(domain, semantic_reason, backend_signal)
+
+        semantic_confidence_score = cls._safe_confidence(semantic_confidence)
+        if semantic_reason in {SemanticJudger.REASON_GREETING, SemanticJudger.REASON_IDENTITY}:
+            score = max(score, semantic_confidence_score or 0.9)
+        elif semantic_confidence_score > 0:
+            score = (score * 0.7) + (semantic_confidence_score * 0.3)
+
+        if SemanticJudger.is_out_of_scope_reason(semantic_reason):
+            score = max(score, 0.9)
+            if str((backend_signal or {}).get("reason") or "") == semantic_reason:
+                score += 0.07
+        return max(0.0, min(0.99, round(score, 2)))
 
     @classmethod
     def _infer_followup_type(cls, text: str, context: dict) -> str:
