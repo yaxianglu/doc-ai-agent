@@ -23,6 +23,8 @@ class FakePlaybookRouter:
         self.payload = payload
 
     def route(self, _question: str, context: dict | None = None):
+        if isinstance(self.payload, list):
+            return dict(self.payload[0]) if self.payload else {}
         return self.payload
 
 
@@ -1240,6 +1242,29 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["query_type"], "soil_top")
         self.assertEqual(plan["route"]["window"]["window_type"], "months")
         self.assertEqual(plan["route"]["window"]["window_value"], 5)
+
+    def test_playbook_router_trace_includes_rerank_metadata(self):
+        planner = QueryPlanner(
+            None,
+            playbook_router=FakePlaybookRouter(
+                {
+                    "intent": "data_query",
+                    "query_type": "soil_top",
+                    "domain": "soil",
+                    "reason": "semantic soil top",
+                    "retrieval_engine": "llamaindex",
+                    "retrieval_reranked": True,
+                    "recall_rank": 2,
+                    "matched_terms": ["缺水", "最厉害"],
+                }
+            ),
+        )
+
+        plan = planner.plan("过去5个月缺水最厉害的地方是哪里？")
+
+        self.assertEqual(plan["route"]["query_type"], "soil_top")
+        self.assertIn("playbook_router=llamaindex", plan["context_trace"])
+        self.assertIn("playbook_reranked", plan["context_trace"])
 
     def test_deterministic_rule_beats_playbook_router_guess(self):
         planner = QueryPlanner(
