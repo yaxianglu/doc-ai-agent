@@ -2,6 +2,7 @@ import unittest
 
 from doc_ai_agent.entity_extraction import EntityExtractionService
 from doc_ai_agent.request_understanding import RequestUnderstanding
+from doc_ai_agent.semantic_parse import SemanticParseResult
 
 
 class FakeBackend:
@@ -24,6 +25,25 @@ class FutureWindowBackend:
             "region_name": "南京市",
             "future_window": {"window_type": "weeks", "window_value": 2},
         }
+
+
+class ParseBackboneSemanticParser:
+    def parse(self, question: str, context: dict | None = None) -> SemanticParseResult:
+        del question, context
+        return SemanticParseResult(
+            normalized_query="mock-normalized",
+            intent="data_query",
+            confidence=0.73,
+            domain="soil",
+            task_type="trend",
+            region_name="南京市",
+            region_level="city",
+            historical_window={"window_type": "months", "window_value": 2},
+            future_window={"window_type": "weeks", "window_value": 1, "horizon_days": 7},
+            followup_type="contextual",
+            needs_clarification=True,
+            trace=["normalize", "slots", "mock"],
+        )
 
 
 class RequestUnderstandingTests(unittest.TestCase):
@@ -533,6 +553,22 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["region_level"], "county")
         self.assertTrue(result["needs_advice"])
         self.assertTrue(result["needs_historical"])
+
+    def test_analyze_consumes_semantic_parse_backbone_slots(self):
+        understanding = RequestUnderstanding()
+        understanding.semantic_parser = ParseBackboneSemanticParser()
+
+        result = understanding.analyze("虫情")
+
+        self.assertEqual(result["domain"], "soil")
+        self.assertEqual(result["task_type"], "trend")
+        self.assertEqual(result["region_name"], "南京市")
+        self.assertEqual(result["region_level"], "city")
+        self.assertEqual(result["window"], {"window_type": "months", "window_value": 2})
+        self.assertEqual(result["future_window"], {"window_type": "weeks", "window_value": 1, "horizon_days": 7})
+        self.assertEqual(result["semantic_parse"]["followup_type"], "contextual")
+        self.assertTrue(result["semantic_parse"]["needs_clarification"])
+        self.assertEqual(result["trace"], ["normalize", "slots", "mock"])
 
 
 if __name__ == "__main__":
