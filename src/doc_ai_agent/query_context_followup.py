@@ -32,6 +32,28 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None) -
     previous_query_type = str(previous_route.get("query_type") or context.get("query_type") or "")
     domain = str(context.get("domain") or planner._domain_from_query_type(previous_query_type) or "")
     trace = [f"reused thread context domain={domain or 'unknown'}"]
+    previous_region_name = str(context.get("region_name") or "")
+    previous_region_level = str(previous_route.get("region_level") or "")
+    if any(token in question for token in ["这个县", "该县", "这个区", "该区"]) and previous_region_level != "county":
+        return {
+            "intent": "advice",
+            "confidence": 0.3,
+            "route": dict(previous_route),
+            "needs_clarification": True,
+            "clarification": "请补充具体对象，比如县名、区名或设备编码，我再继续分析。",
+            "reason": "context_placeholder_county_clarification",
+            "context_trace": trace + ["county placeholder cannot safely reuse non-county context"],
+        }
+    if any(token in question for token in ["这个市", "该市", "这个地区", "该地区", "这个区域", "该区域"]) and not previous_region_name:
+        return {
+            "intent": "advice",
+            "confidence": 0.3,
+            "route": dict(previous_route),
+            "needs_clarification": True,
+            "clarification": "请补充具体对象，比如市名、地区名或设备编码，我再继续分析。",
+            "reason": "context_placeholder_region_clarification",
+            "context_trace": trace + ["placeholder region missing concrete context"],
+        }
     future_window = planner._extract_future_window(question)
     explicit_domain = explicit_domain_from_text(question, context_domain=domain)
     relative_since, relative_until, relative_window = planner._extract_relative_window(question)

@@ -181,6 +181,24 @@ class QueryEngineTests(unittest.TestCase):
         self.assertEqual(self.repo.last_soil_top_kwargs["city"], "苏州市")
         self.assertEqual(self.repo.last_soil_top_kwargs["region_level"], "county")
 
+    def test_pest_top_can_answer_city_then_county_breakdown(self):
+        result = self.engine.answer(
+            "江苏范围内，虫情最高的是哪些市？再细到县。",
+            plan={
+                "query_type": "pest_top",
+                "since": "1970-01-01 00:00:00",
+                "region_level": "county",
+                "city": None,
+                "county": None,
+                "top_n": 5,
+            },
+        )
+
+        self.assertIn("Top", result.answer)
+        self.assertIn("市为", result.answer)
+        self.assertIn("再细到县", result.answer)
+        self.assertIn("区县", result.answer)
+
 
 if __name__ == "__main__":
     unittest.main()

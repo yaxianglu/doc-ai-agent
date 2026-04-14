@@ -5,6 +5,7 @@ from typing import Optional
 
 from .agri_semantics import (
     has_detail_intent,
+    has_ranking_intent,
     infer_domain_from_text,
     needs_advice,
     needs_explanation,
@@ -53,6 +54,7 @@ class QueryPlanner:
     DETERMINISTIC_QUERY_TYPES = {
         "avg_by_level",
         "active_devices",
+        "alerts_trend",
         "consecutive_devices",
         "empty_county_records",
         "latest_device",
@@ -318,7 +320,51 @@ class QueryPlanner:
     @staticmethod
     def _has_placeholder_entity(question: str) -> bool:
         q = question or ""
-        return any(token in q for token in ["某设备", "某县", "某市", "某地区", "某区域", "某个设备", "某个县"])
+        return any(
+            token in q
+            for token in [
+                "某设备",
+                "某县",
+                "某市",
+                "某地区",
+                "某区域",
+                "某个设备",
+                "某个县",
+                "这个县",
+                "该县",
+                "这个市",
+                "该市",
+                "这个地区",
+                "该地区",
+                "这个区域",
+                "该区域",
+            ]
+        )
+
+    @staticmethod
+    def _refine_structured_agri_route(route: dict, understanding: dict | None) -> dict:
+        refined = dict(route or {})
+        understanding = dict(understanding or {})
+        if str(refined.get("query_type") or "") != "structured_agri":
+            return refined
+        domain = str(understanding.get("domain") or "")
+        task_type = str(understanding.get("task_type") or "")
+        region_name = str(understanding.get("region_name") or "")
+        if domain not in {"pest", "soil"}:
+            return refined
+        if task_type == "data_detail":
+            refined["query_type"] = f"{domain}_detail"
+        elif task_type == "trend":
+            refined["query_type"] = f"{domain}_trend"
+        elif task_type == "ranking":
+            refined["query_type"] = f"{domain}_top"
+        elif task_type == "joint_risk":
+            refined["query_type"] = "joint_risk"
+        elif region_name:
+            refined["query_type"] = f"{domain}_overview"
+        else:
+            refined["query_type"] = f"{domain}_top"
+        return refined
 
     def plan(self, question: str, history: object = None, context: dict | None = None, understanding: dict | None = None) -> dict:
         original_question = question
@@ -409,19 +455,24 @@ class QueryPlanner:
                         "reason": "router_data_query",
                         "context_trace": [],
                     }, question, context=context, understanding=understanding)
-                return self._finalize_plan({
-                    "intent": "advice",
-                    "confidence": 0.9,
-                    "route": route,
-                    "needs_clarification": False,
-                    "clarification": None,
-                    "reason": "router_advice",
-                    "context_trace": [],
-                }, question, context=context, understanding=understanding)
+                if not (
+                    isinstance(understanding, dict)
+                    and understanding.get("needs_historical")
+                    and str(understanding.get("domain") or "") in {"pest", "soil", "mixed"}
+                ):
+                    return self._finalize_plan({
+                        "intent": "advice",
+                        "confidence": 0.9,
+                        "route": route,
+                        "needs_clarification": False,
+                        "clarification": None,
+                        "reason": "router_advice",
+                        "context_trace": [],
+                    }, question, context=context, understanding=understanding)
             except Exception:
                 pass
 
-        route = self._build_route(question, heuristic_query_type)
+        route = self._refine_structured_agri_route(self._build_route(question, heuristic_query_type), understanding)
 
         if "处置建议" in question and ("镇" in question or "街道" in question or re.search(r"SNS\d+", question)):
             return self._finalize_plan({
@@ -434,8 +485,73 @@ class QueryPlanner:
                 "context_trace": [],
             }, question, context=context, understanding=understanding)
 
+        inferred_domain = self._infer_domain_from_text(question, context)
+        relative_since, _, relative_window = self._extract_relative_window(question)
+        day_since, _ = self._extract_day_range(question)
+        future_window = self._extract_future_window(question)
+        has_historical_scope = bool(
+            day_since
+            or relative_since
+            or relative_window.get("window_type") == "year_since"
+            or "今年以来" in question
+            or route.get("city")
+            or route.get("county")
+            or (isinstance(understanding, dict) and understanding.get("needs_historical"))
+        )
+        if (
+            needs_explanation(question)
+            and inferred_domain in {"pest", "soil"}
+            and has_historical_scope
+            and not needs_advice(question)
+            and not future_window
+            and not has_ranking_intent(question)
+        ):
+            explanation_route = self._build_route(question, f"{inferred_domain}_overview")
+            return self._finalize_plan({
+                "intent": "data_query",
+                "confidence": 0.87,
+                "route": explanation_route,
+                "needs_clarification": False,
+                "clarification": None,
+                "reason": "explanation_grounded_data_query",
+                "context_trace": [],
+            }, question, context=context, understanding=understanding)
+
+        if (
+            isinstance(understanding, dict)
+            and understanding.get("needs_advice")
+            and not understanding.get("needs_historical")
+            and not understanding.get("needs_forecast")
+            and not understanding.get("needs_explanation")
+        ):
+            return self._finalize_plan({
+                "intent": "advice",
+                "confidence": 0.88,
+                "route": route,
+                "needs_clarification": False,
+                "clarification": None,
+                "reason": "understanding_advice_follow_up",
+                "context_trace": [],
+            }, question, context=context, understanding=understanding)
+
+        if (
+            isinstance(understanding, dict)
+            and understanding.get("needs_historical")
+            and str(understanding.get("domain") or "") in {"pest", "soil", "mixed"}
+        ):
+            return self._finalize_plan({
+                "intent": "data_query",
+                "confidence": 0.88,
+                "route": route,
+                "needs_clarification": False,
+                "clarification": None,
+                "reason": "understanding_historical_data_query",
+                "context_trace": [],
+            }, question, context=context, understanding=understanding)
+
         if route.get("query_type") in {
             "active_devices",
+            "alerts_trend",
             "empty_county_records",
             "pest_top",
             "pest_detail",

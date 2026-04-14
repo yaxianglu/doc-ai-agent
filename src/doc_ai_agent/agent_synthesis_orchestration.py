@@ -62,6 +62,8 @@ def build_explanation_payload(
 ) -> tuple[str, list]:
     if not understanding.get("needs_explanation"):
         return "", []
+    historical_evidence = dict(query_result.get("evidence") or {})
+    no_data_reasons = list(historical_evidence.get("no_data_reasons") or [])
     explanation_text = build_data_grounded_explanation(
         plan_context=plan_context,
         query_result=query_result,
@@ -70,6 +72,13 @@ def build_explanation_payload(
     )
     if explanation_text:
         return explanation_text, knowledge
+    if no_data_reasons:
+        region_name = str(plan_context.get("region_name") or "当前地区")
+        return (
+            f"当前证据不足：缺少足够的结构化监测证据，暂时不能可靠判断{region_name}这段时间异常背后的主要原因；"
+            "建议先确认该地区在所问时间窗内是否存在有效监测记录，再继续分析。",
+            knowledge,
+        )
     explanation_result = advice_engine.answer("为什么", context=plan_context)
     return explanation_result.answer, explanation_result.sources
 

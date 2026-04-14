@@ -80,6 +80,18 @@ def parse_number_token(token: str) -> int:
 
 
 def extract_day_range(question: str) -> tuple[Optional[str], Optional[str]]:
+    range_match = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日到(?:(20\d{2})年)?(\d{1,2})月(\d{1,2})日", question)
+    if range_match:
+        start_year = int(range_match.group(1))
+        start_month = int(range_match.group(2))
+        start_day = int(range_match.group(3))
+        end_year = int(range_match.group(4) or start_year)
+        end_month = int(range_match.group(5))
+        end_day = int(range_match.group(6))
+        start = datetime(start_year, start_month, start_day)
+        end = datetime(end_year, end_month, end_day) + timedelta(days=1)
+        return start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")
+
     match = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", question)
     if not match:
         return None, None
@@ -172,6 +184,8 @@ def default_top_n(question: str, query_type: str) -> Optional[int]:
 
 def extract_relative_window(question: str) -> tuple[Optional[str], Optional[str], dict]:
     now = datetime.now()
+    if "今年以来" in question:
+        return f"{now.year}-01-01 00:00:00", None, {"window_type": "year_since", "window_value": now.year}
     if re.search(r"(?:过去|最近|近|这)半年", question) or "半年内" in question:
         since = now - timedelta(days=30 * 6)
         return since.strftime("%Y-%m-%d 00:00:00"), None, {"window_type": "months", "window_value": 6}

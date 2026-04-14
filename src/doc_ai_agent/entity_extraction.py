@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime
 from dataclasses import dataclass
 
 CITY_ALIASES = {
@@ -169,6 +170,9 @@ class EntityExtractionService:
 
     @classmethod
     def _extract_past_window(cls, text: str) -> dict:
+        if "今年以来" in text:
+            current_year = datetime.now().year
+            return {"window_type": "year_since", "window_value": current_year}
         if m := re.search(r"(?:过去|最近|近)(\d+|[一二两三四五六七八九十])个?月", text):
             months = max(1, cls._parse_number_token(m.group(1)) or 1)
             return {"window_type": "months", "window_value": months}

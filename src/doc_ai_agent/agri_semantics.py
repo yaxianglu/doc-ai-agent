@@ -64,6 +64,8 @@ def asks_county_scope(text: str) -> bool:
     normalized = str(text or "")
     if not normalized:
         return False
+    if re.search(r"(最严重|最高|最突出|风险最高).*(县|区|区县)", normalized):
+        return True
     if re.search(r"(再细到|细到|细分到)(?:区|县|区县)", normalized):
         return True
     if re.search(r"(县|区).*(不是).*(市)", normalized):
@@ -85,7 +87,16 @@ def has_ranking_intent(text: str) -> bool:
 
 def has_trend_intent(text: str) -> bool:
     normalized = str(text or "")
-    return any(token in normalized for token in TREND_HINTS)
+    if any(token in normalized for token in TREND_HINTS):
+        return True
+    return bool(
+        re.search(r"(上升|下降).*(吗|还是|趋势|原因)?", normalized)
+        or re.search(r"(增加|减少).*(吗|还是|趋势|变化)?", normalized)
+        or re.search(r"(有没有|是否).*(缓解|好转)", normalized)
+        or re.search(r"(继续).*(恶化|变严重)", normalized)
+        or re.search(r"(变严重|变糟|加重了?)", normalized)
+        or "缓解" in normalized
+    )
 
 
 def has_overview_intent(text: str) -> bool:
