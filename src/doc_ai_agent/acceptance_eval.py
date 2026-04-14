@@ -18,14 +18,17 @@ SUITE_BY_CATEGORY = {
 def load_question_bank(path: Path) -> list[dict]:
     """加载题库并规范化字段类型。"""
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return [
-        {
+    normalized = []
+    for item in payload:
+        entry = {
             "index": int(item["index"]),
             "category": str(item["category"]),
             "question": str(item["question"]),
         }
-        for item in payload
-    ]
+        if isinstance(item.get("turns"), list):
+            entry["turns"] = [str(turn) for turn in item["turns"] if str(turn).strip()]
+        normalized.append(entry)
+    return normalized
 
 
 def _contains_any(text: str, tokens: list[str]) -> bool:
@@ -141,6 +144,42 @@ def _score_boundary_response(question: str, answer: str, score: float, failed: l
 
 def _score_item(item: dict) -> dict:
     """按规则评估单条问答结果并输出分数与失败项。"""
+    if isinstance(item.get("turn_results"), list):
+        turns = list(item.get("turn_results") or [])
+        scored_turns = [
+            _score_item(
+                {
+                    "index": int(item["index"]),
+                    "category": "多轮上下文",
+                    "suite": "context",
+                    "question": str(turn.get("question") or ""),
+                    "ok": bool(turn.get("ok", True)),
+                    "mode": str(turn.get("mode") or ""),
+                    "seconds": float(turn.get("seconds") or 0),
+                    "answer": str(turn.get("answer") or ""),
+                }
+            )
+            for turn in turns
+        ]
+        average_score = round(sum(float(turn["score"]) for turn in scored_turns) / len(scored_turns), 1) if scored_turns else 0.0
+        checks_failed: list[str] = []
+        for turn in scored_turns:
+            for failed in list(turn.get("checks_failed") or []):
+                if failed not in checks_failed:
+                    checks_failed.append(failed)
+        return {
+            "index": int(item["index"]),
+            "category": str(item.get("category") or "多轮上下文"),
+            "suite": "context",
+            "question": str(item.get("question") or ""),
+            "mode": str(item.get("mode") or ""),
+            "score": average_score,
+            "checks_failed": checks_failed,
+            "seconds": float(item.get("seconds") or 0),
+            "answer": str(item.get("answer") or ""),
+            "turn_scores": scored_turns,
+        }
+
     question = str(item.get("question") or "")
     answer = str(item.get("answer") or "")
     mode = str(item.get("mode") or "")

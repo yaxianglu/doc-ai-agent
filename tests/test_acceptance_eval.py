@@ -7,14 +7,16 @@ from doc_ai_agent.acceptance_eval import compare_scored_runs, load_question_bank
 
 
 class AcceptanceEvalTests(unittest.TestCase):
-    def test_load_question_bank_reads_fixed_60_questions(self):
+    def test_load_question_bank_reads_fixed_140_cases(self):
         question_bank = load_question_bank(
-            Path(__file__).resolve().parents[1] / "evals" / "strict_acceptance_60.json"
+            Path(__file__).resolve().parents[1] / "evals" / "strict_acceptance_140.json"
         )
 
-        self.assertEqual(len(question_bank), 60)
+        self.assertEqual(len(question_bank), 140)
         self.assertEqual(question_bank[0]["index"], 1)
-        self.assertEqual(question_bank[-1]["index"], 60)
+        self.assertEqual(question_bank[-1]["index"], 140)
+        self.assertIn("turns", question_bank[-1])
+        self.assertTrue(question_bank[-1]["turns"])
 
     def test_score_run_penalizes_alert_misroute_and_rewards_grounded_forecast(self):
         raw = [
