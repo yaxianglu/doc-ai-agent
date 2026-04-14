@@ -155,6 +155,56 @@ class AcceptanceEvalTests(unittest.TestCase):
         self.assertIn("boundary_hijacked_by_agri", by_index[54]["checks_failed"])
         self.assertGreaterEqual(by_index[58]["score"], 8.5)
 
+    def test_score_run_reports_subsuite_scores(self):
+        raw = [
+            {
+                "index": 21,
+                "category": "预测能力",
+                "question": "未来两周虫情会怎样？",
+                "ok": True,
+                "mode": "data_query",
+                "seconds": 0.8,
+                "answer": "未来两周虫情风险预计为高（置信度0.62，样本覆盖 12 个观测日）。依据：最近值仍高于窗口均值、预测结果仍接近历史高位。",
+            },
+            {
+                "index": 26,
+                "category": "原因解释",
+                "question": "为什么最近虫情变严重了？",
+                "ok": True,
+                "mode": "analysis",
+                "seconds": 2.0,
+                "answer": "结论：当前判断，整体虫情上升。原因：从数据看，峰值86，最近值80。待核查项包括监测点位和阈值口径。依据：参考 虫情监测与绿色防控技术。",
+            },
+            {
+                "index": 47,
+                "category": "多轮上下文",
+                "question": "其中虫情的呢？",
+                "ok": True,
+                "mode": "data_query",
+                "seconds": 0.2,
+                "answer": "过去5个月虫情最严重的县包括铜山区、睢宁县。",
+            },
+            {
+                "index": 51,
+                "category": "边界能力",
+                "question": "浙江天气",
+                "ok": True,
+                "mode": "advice",
+                "seconds": 0.3,
+                "answer": "我目前主要支持农业虫情、墒情、预警数据分析，暂不直接提供天气查询。你如果要看农情，我可以继续帮你查浙江相关风险。",
+            },
+        ]
+
+        scored = score_run(raw)
+
+        suite_scores = scored["summary"]["suite_scores"]
+        self.assertIn("forecast", suite_scores)
+        self.assertIn("explanation", suite_scores)
+        self.assertIn("context", suite_scores)
+        self.assertIn("ood", suite_scores)
+        self.assertGreaterEqual(suite_scores["forecast"], 8.0)
+        self.assertGreaterEqual(suite_scores["ood"], 8.5)
+
 
 if __name__ == "__main__":
     unittest.main()

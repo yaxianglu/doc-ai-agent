@@ -1,0 +1,12 @@
+[
+  {"index": 51, "category": "边界能力", "question": "浙江天气"},
+  {"index": 52, "category": "边界能力", "question": "杭州明天会下雨吗？"},
+  {"index": 53, "category": "边界能力", "question": "北京气温多少？"},
+  {"index": 54, "category": "边界能力", "question": "上海天气预报"},
+  {"index": 55, "category": "边界能力", "question": "浙江最近有台风吗？"},
+  {"index": 56, "category": "边界能力", "question": "江苏新闻"},
+  {"index": 57, "category": "边界能力", "question": "帮我查一下高铁票"},
+  {"index": 58, "category": "边界能力", "question": "你是谁？"},
+  {"index": 59, "category": "边界能力", "question": "你好，浙江天气"},
+  {"index": 60, "category": "边界能力", "question": "那杭州天气呢？"}
+]
