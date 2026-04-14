@@ -64,6 +64,8 @@ def build_soil_row(raw: dict, source_file: str, source_sheet: str, source_row: i
     """将单行原始数据转换为墒情事实表记录。"""
     water20cm = to_float(raw.get("water20cm"))
     t20cm = to_float(raw.get("t20cm"))
+    longitude = to_float(raw.get("lon")) if raw.get("lon") not in (None, "") else to_float(raw.get("longitude"))
+    latitude = to_float(raw.get("lat")) if raw.get("lat") not in (None, "") else to_float(raw.get("latitude"))
     anomaly_type, anomaly_score = classify_soil_anomaly(water20cm)
     quality_flag = data_quality_flag(water20cm, t20cm)
     water20cm_valid = 1 if water20cm is not None and 0 <= water20cm <= 300 else 0
@@ -76,6 +78,12 @@ def build_soil_row(raw: dict, source_file: str, source_sheet: str, source_row: i
         "gateway_id": raw.get("gatewayid"),
         "sensor_id": raw.get("sensorid"),
         "unit_id": raw.get("unitid"),
+        "city_name": raw.get("city"),
+        "county_name": raw.get("county"),
+        "town_name": raw.get("town"),
+        "device_name": raw.get("device_name") or raw.get("name"),
+        "longitude": longitude,
+        "latitude": latitude,
         "sample_time": excel_serial_to_datetime(raw.get("time")),
         "water20cm": water20cm,
         "water40cm": to_float(raw.get("water40cm")),
