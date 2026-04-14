@@ -13,7 +13,7 @@ from doc_ai_agent.server import AgentApp
 
 
 ROOT = Path(__file__).resolve().parents[1]
-QUESTION_BANK = ROOT / "evals" / "strict_acceptance_60.json"
+QUESTION_BANK = ROOT / "evals" / "strict_acceptance_140.json"
 EVAL_ROOT = ROOT / "output" / "evals"
 SUITE_BANKS = {
     "ood": ROOT / "evals" / "ood_eval.json",
@@ -51,6 +51,44 @@ def run_eval() -> list[dict]:
     thread_ids: dict[str, str] = {}
     results: list[dict] = []
     for item in questions:
+        turns = list(item.get("turns") or [])
+        if turns:
+            thread_id = f"strict-eval-multi-{int(item['index'])}"
+            turn_results: list[dict] = []
+            final_response: dict = {}
+            total_seconds = 0.0
+            for turn in turns:
+                response = app.chat(turn, thread_id=thread_id)
+                elapsed = float(response.get("processing", {}).get("elapsed_seconds", 0) or 0)
+                total_seconds += elapsed
+                final_response = response
+                turn_results.append(
+                    {
+                        "question": turn,
+                        "ok": True,
+                        "mode": response.get("mode"),
+                        "seconds": elapsed,
+                        "answer": response.get("answer", ""),
+                    }
+                )
+            results.append(
+                {
+                    "index": item["index"],
+                    "category": item["category"],
+                    "suite": "context",
+                    "question": item["question"],
+                    "turns": turns,
+                    "turn_results": turn_results,
+                    "ok": True,
+                    "mode": final_response.get("mode"),
+                    "seconds": round(total_seconds, 2),
+                    "answer": final_response.get("answer", ""),
+                    "evidence": final_response.get("evidence", {}),
+                    "processing": final_response.get("processing", {}),
+                }
+            )
+            continue
+
         response = app.chat(item["question"], thread_id=_thread_id_for(item["category"], thread_ids))
         results.append(
             {

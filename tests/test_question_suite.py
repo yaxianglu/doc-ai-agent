@@ -12,7 +12,11 @@ from doc_ai_agent.server import build_app
 class QuestionSuiteTests(unittest.TestCase):
     @staticmethod
     def _strict_question_bank_path() -> Path:
-        return Path(__file__).resolve().parents[1] / "evals" / "strict_acceptance_60.json"
+        return Path(__file__).resolve().parents[1] / "evals" / "strict_acceptance_140.json"
+
+    @staticmethod
+    def _multi_turn_question_bank_path() -> Path:
+        return Path(__file__).resolve().parents[1] / "evals" / "multi_turn_eval_20.json"
 
     @staticmethod
     def _acceptance_artifact_candidates() -> list[Path]:
@@ -50,9 +54,19 @@ class QuestionSuiteTests(unittest.TestCase):
         path = self._strict_question_bank_path()
         self.assertTrue(path.exists(), msg=str(path))
         payload = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(len(payload), 60)
-        self.assertEqual([int(item["index"]) for item in payload], list(range(1, 61)))
+        self.assertEqual(len(payload), 140)
+        self.assertEqual([int(item["index"]) for item in payload], list(range(1, 141)))
         self.assertTrue(all(str(item["question"]).strip() for item in payload))
+        self.assertEqual(sum(1 for item in payload if isinstance(item.get("turns"), list)), 20)
+
+    def test_multi_turn_question_bank_is_stable(self):
+        path = self._multi_turn_question_bank_path()
+        self.assertTrue(path.exists(), msg=str(path))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(len(payload), 20)
+        self.assertEqual([int(item["group"]) for item in payload], list(range(1, 21)))
+        self.assertTrue(all(isinstance(item.get("turns"), list) and item["turns"] for item in payload))
+        self.assertTrue(all(str(turn).strip() for item in payload for turn in item["turns"]))
 
     def test_recommended_questions(self):
         repo_root = os.path.dirname(os.path.dirname(__file__))

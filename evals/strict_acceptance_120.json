@@ -1,0 +1,602 @@
+[
+  {
+    "index": 1,
+    "category": "基础查询",
+    "question": "过去5个月虫情最严重的是哪些县？"
+  },
+  {
+    "index": 2,
+    "category": "基础查询",
+    "question": "过去5个月墒情最严重的是哪些县？"
+  },
+  {
+    "index": 3,
+    "category": "基础查询",
+    "question": "最近30天预警最多的是哪些地区？"
+  },
+  {
+    "index": 4,
+    "category": "基础查询",
+    "question": "今年以来虫情最高的是哪些县？"
+  },
+  {
+    "index": 5,
+    "category": "基础查询",
+    "question": "最近两周墒情异常最多的是哪些地区？"
+  },
+  {
+    "index": 6,
+    "category": "区域粒度",
+    "question": "我问的是县，不是市，过去5个月虫情最高的县有哪些？"
+  },
+  {
+    "index": 7,
+    "category": "区域粒度",
+    "question": "常州市下面虫情最严重的县有哪些？"
+  },
+  {
+    "index": 8,
+    "category": "区域粒度",
+    "question": "苏州市下面墒情异常最多的县有哪些？"
+  },
+  {
+    "index": 9,
+    "category": "区域粒度",
+    "question": "请按县一级返回最近30天风险最高的地区。"
+  },
+  {
+    "index": 10,
+    "category": "区域粒度",
+    "question": "江苏范围内，虫情最高的是哪些市？再细到县。"
+  },
+  {
+    "index": 11,
+    "category": "时间理解",
+    "question": "近3个月虫情最严重的是哪些县？"
+  },
+  {
+    "index": 12,
+    "category": "时间理解",
+    "question": "近8周墒情最异常的是哪些县？"
+  },
+  {
+    "index": 13,
+    "category": "时间理解",
+    "question": "最近10天报警最多的是哪里？"
+  },
+  {
+    "index": 14,
+    "category": "时间理解",
+    "question": "今年以来哪些地方虫情最高？"
+  },
+  {
+    "index": 15,
+    "category": "时间理解",
+    "question": "过去半年风险最高的是哪些地区？"
+  },
+  {
+    "index": 16,
+    "category": "趋势分析",
+    "question": "过去5个月虫情总体是上升还是下降？"
+  },
+  {
+    "index": 17,
+    "category": "趋势分析",
+    "question": "最近8周墒情趋势怎么样？"
+  },
+  {
+    "index": 18,
+    "category": "趋势分析",
+    "question": "常州市近3个月虫情趋势如何？"
+  },
+  {
+    "index": 19,
+    "category": "趋势分析",
+    "question": "最近30天预警数量是增加还是减少？"
+  },
+  {
+    "index": 20,
+    "category": "趋势分析",
+    "question": "近两个月墒情有没有缓解？"
+  },
+  {
+    "index": 21,
+    "category": "预测能力",
+    "question": "未来两周虫情会怎样？"
+  },
+  {
+    "index": 22,
+    "category": "预测能力",
+    "question": "未来7天墒情是否会继续恶化？"
+  },
+  {
+    "index": 23,
+    "category": "预测能力",
+    "question": "常州市未来两周虫情趋势如何？"
+  },
+  {
+    "index": 24,
+    "category": "预测能力",
+    "question": "未来10天哪些县风险最高？"
+  },
+  {
+    "index": 25,
+    "category": "预测能力",
+    "question": "下周哪些地方最值得重点巡查？"
+  },
+  {
+    "index": 26,
+    "category": "原因解释",
+    "question": "为什么最近虫情变严重了？"
+  },
+  {
+    "index": 27,
+    "category": "原因解释",
+    "question": "为什么这个县的墒情异常最多？"
+  },
+  {
+    "index": 28,
+    "category": "原因解释",
+    "question": "过去两个月虫情上升的主要原因是什么？"
+  },
+  {
+    "index": 29,
+    "category": "原因解释",
+    "question": "为什么同一个市里不同县差异这么明显？"
+  },
+  {
+    "index": 30,
+    "category": "原因解释",
+    "question": "从数据看，这次异常最可能的原因是什么？"
+  },
+  {
+    "index": 31,
+    "category": "建议能力",
+    "question": "对当前虫情最严重的县有什么建议？"
+  },
+  {
+    "index": 32,
+    "category": "建议能力",
+    "question": "对墒情偏低最严重的区域应该怎么处理？"
+  },
+  {
+    "index": 33,
+    "category": "建议能力",
+    "question": "如果未来两周虫情继续加重，建议怎么做？"
+  },
+  {
+    "index": 34,
+    "category": "建议能力",
+    "question": "如果只能安排有限人手，应该先盯哪里？"
+  },
+  {
+    "index": 35,
+    "category": "建议能力",
+    "question": "给我一个分轻重缓急的行动建议。"
+  },
+  {
+    "index": 36,
+    "category": "设备明细",
+    "question": "设备 SNS00204659 最近一次预警是什么？"
+  },
+  {
+    "index": 37,
+    "category": "设备明细",
+    "question": "某设备最近7天触发了几次预警？"
+  },
+  {
+    "index": 38,
+    "category": "设备明细",
+    "question": "哪些设备最近一个月报警最频繁？"
+  },
+  {
+    "index": 39,
+    "category": "设备明细",
+    "question": "某县下面有哪些设备出现过异常？"
+  },
+  {
+    "index": 40,
+    "category": "设备明细",
+    "question": "给我列出最近最活跃的10台设备。"
+  },
+  {
+    "index": 41,
+    "category": "异常与空数据",
+    "question": "为什么会出现“未知区域”？"
+  },
+  {
+    "index": 42,
+    "category": "异常与空数据",
+    "question": "未知区域对应的是哪些设备？"
+  },
+  {
+    "index": 43,
+    "category": "异常与空数据",
+    "question": "哪些记录的县字段为空？"
+  },
+  {
+    "index": 44,
+    "category": "异常与空数据",
+    "question": "哪些数据没有匹配到区域？"
+  },
+  {
+    "index": 45,
+    "category": "异常与空数据",
+    "question": "这些空数据更像是采集问题还是映射问题？"
+  },
+  {
+    "index": 46,
+    "category": "多轮上下文",
+    "question": "过去5个月最严重的是哪里？"
+  },
+  {
+    "index": 47,
+    "category": "多轮上下文",
+    "question": "其中虫情的呢？"
+  },
+  {
+    "index": 48,
+    "category": "多轮上下文",
+    "question": "最高的县有哪些？"
+  },
+  {
+    "index": 49,
+    "category": "多轮上下文",
+    "question": "为什么会这样？"
+  },
+  {
+    "index": 50,
+    "category": "多轮上下文",
+    "question": "那未来两周呢？"
+  },
+  {
+    "index": 51,
+    "category": "边界能力",
+    "question": "浙江天气"
+  },
+  {
+    "index": 52,
+    "category": "边界能力",
+    "question": "杭州明天会下雨吗？"
+  },
+  {
+    "index": 53,
+    "category": "边界能力",
+    "question": "北京气温多少？"
+  },
+  {
+    "index": 54,
+    "category": "边界能力",
+    "question": "上海天气预报"
+  },
+  {
+    "index": 55,
+    "category": "边界能力",
+    "question": "浙江最近有台风吗？"
+  },
+  {
+    "index": 56,
+    "category": "边界能力",
+    "question": "江苏新闻"
+  },
+  {
+    "index": 57,
+    "category": "边界能力",
+    "question": "帮我查一下高铁票"
+  },
+  {
+    "index": 58,
+    "category": "边界能力",
+    "question": "你是谁？"
+  },
+  {
+    "index": 59,
+    "category": "边界能力",
+    "question": "你好，浙江天气"
+  },
+  {
+    "index": 60,
+    "category": "边界能力",
+    "question": "那杭州天气呢？"
+  },
+  {
+    "index": 61,
+    "category": "基础查询",
+    "question": "最近90天虫情最高的前5个县？"
+  },
+  {
+    "index": 62,
+    "category": "基础查询",
+    "question": "最近90天墒情异常最高的前5个县？"
+  },
+  {
+    "index": 63,
+    "category": "基础查询",
+    "question": "过去12周预警最多的是哪些县？"
+  },
+  {
+    "index": 64,
+    "category": "基础查询",
+    "question": "近一个月虫情最严重的是哪个县？"
+  },
+  {
+    "index": 65,
+    "category": "基础查询",
+    "question": "近45天墒情异常最严重的是哪个县？"
+  },
+  {
+    "index": 66,
+    "category": "时间理解",
+    "question": "去年12月以来虫情最高的地区有哪些？"
+  },
+  {
+    "index": 67,
+    "category": "时间理解",
+    "question": "今年二季度以来墒情异常最多的是哪些县？"
+  },
+  {
+    "index": 68,
+    "category": "时间理解",
+    "question": "上个月报警最多的是哪些地区？"
+  },
+  {
+    "index": 69,
+    "category": "区域粒度",
+    "question": "最近7天风险最高的是哪些县？"
+  },
+  {
+    "index": 70,
+    "category": "区域粒度",
+    "question": "最近6周虫情和墒情叠加风险最高的是哪些县？"
+  },
+  {
+    "index": 71,
+    "category": "基础查询",
+    "question": "我只看预警，不看虫情和墒情，最近30天哪里最多？"
+  },
+  {
+    "index": 72,
+    "category": "基础查询",
+    "question": "报警和预警是一回事吗？最近30天你按预警给我排一下"
+  },
+  {
+    "index": 73,
+    "category": "区域粒度",
+    "question": "最近30天高等级预警最多的是哪些县？"
+  },
+  {
+    "index": 74,
+    "category": "区域粒度",
+    "question": "最近30天红色预警最多的是哪里？"
+  },
+  {
+    "index": 75,
+    "category": "设备明细",
+    "question": "最近30天同一设备重复报警最多的是哪几台？"
+  },
+  {
+    "index": 76,
+    "category": "区域粒度",
+    "question": "最近30天哪些县报警次数多但设备数少？"
+  },
+  {
+    "index": 77,
+    "category": "区域粒度",
+    "question": "最近14天哪些地方预警密度最高？"
+  },
+  {
+    "index": 78,
+    "category": "区域粒度",
+    "question": "最近30天哪些地区是“少设备高报警”？"
+  },
+  {
+    "index": 79,
+    "category": "趋势分析",
+    "question": "过去8周预警是上升还是下降？"
+  },
+  {
+    "index": 80,
+    "category": "趋势分析",
+    "question": "过去1个月报警趋势有没有缓解？"
+  },
+  {
+    "index": 81,
+    "category": "基础查询",
+    "question": "最近8周低墒最严重的是哪些县？"
+  },
+  {
+    "index": 82,
+    "category": "基础查询",
+    "question": "最近8周高墒最严重的是哪些县？"
+  },
+  {
+    "index": 83,
+    "category": "基础查询",
+    "question": "最近30天低墒异常最多的是哪里？"
+  },
+  {
+    "index": 84,
+    "category": "基础查询",
+    "question": "最近30天高墒异常最多的是哪里？"
+  },
+  {
+    "index": 85,
+    "category": "基础查询",
+    "question": "过去两个月墒情异常里，偏低和偏高分别最多的是哪些县？"
+  },
+  {
+    "index": 86,
+    "category": "区域粒度",
+    "question": "常州市最近8周是低墒为主还是高墒为主？"
+  },
+  {
+    "index": 87,
+    "category": "区域粒度",
+    "question": "苏州市最近一个月墒情异常到底是偏低还是偏高？"
+  },
+  {
+    "index": 88,
+    "category": "预测能力",
+    "question": "未来7天低墒风险最高的是哪些县？"
+  },
+  {
+    "index": 89,
+    "category": "预测能力",
+    "question": "未来7天高墒风险最高的是哪些县？"
+  },
+  {
+    "index": 90,
+    "category": "原因解释",
+    "question": "为什么最近低墒异常变多了？"
+  },
+  {
+    "index": 91,
+    "category": "边界能力",
+    "question": "浙江天气怎么样"
+  },
+  {
+    "index": 92,
+    "category": "边界能力",
+    "question": "帮我看看杭州天气"
+  },
+  {
+    "index": 93,
+    "category": "边界能力",
+    "question": "现在江苏新闻有什么"
+  },
+  {
+    "index": 94,
+    "category": "边界能力",
+    "question": "帮我订一张明天去北京的高铁票"
+  },
+  {
+    "index": 95,
+    "category": "边界能力",
+    "question": "你能联网查天气吗"
+  },
+  {
+    "index": 96,
+    "category": "边界能力",
+    "question": "你支持查股价吗"
+  },
+  {
+    "index": 97,
+    "category": "边界能力",
+    "question": "你主要能回答什么问题"
+  },
+  {
+    "index": 98,
+    "category": "边界能力",
+    "question": "不是农情，我想问体育新闻"
+  },
+  {
+    "index": 99,
+    "category": "边界能力",
+    "question": "常州天气和虫情分别怎么样"
+  },
+  {
+    "index": 100,
+    "category": "边界能力",
+    "question": "先别查农情，告诉我你是谁"
+  },
+  {
+    "index": 101,
+    "category": "设备明细",
+    "question": "设备 SNS00204333 最近一次墒情记录是什么时候？"
+  },
+  {
+    "index": 102,
+    "category": "设备明细",
+    "question": "设备 SNS00204333 最近30天出现过几次异常？"
+  },
+  {
+    "index": 103,
+    "category": "设备明细",
+    "question": "南通市如东县有哪些墒情设备出现过异常？"
+  },
+  {
+    "index": 104,
+    "category": "异常与空数据",
+    "question": "未知区域对应的设备里，哪几台最活跃？"
+  },
+  {
+    "index": 105,
+    "category": "异常与空数据",
+    "question": "哪些墒情记录只有经纬度但没有县？"
+  },
+  {
+    "index": 106,
+    "category": "异常与空数据",
+    "question": "哪些墒情记录有县但没有经纬度？"
+  },
+  {
+    "index": 107,
+    "category": "设备明细",
+    "question": "哪些设备最近一个月没有任何预警但有墒情异常？"
+  },
+  {
+    "index": 108,
+    "category": "设备明细",
+    "question": "同一个县里，哪几台设备的异常最频繁？"
+  },
+  {
+    "index": 109,
+    "category": "设备明细",
+    "question": "最近30天最活跃的10台墒情设备是哪些？"
+  },
+  {
+    "index": 110,
+    "category": "设备明细",
+    "question": "最近30天虫情设备和墒情设备重合最多的是哪些县？"
+  },
+  {
+    "index": 111,
+    "category": "综合能力",
+    "question": "请按县返回最近60天虫情、墒情、预警综合风险 Top10"
+  },
+  {
+    "index": 112,
+    "category": "建议能力",
+    "question": "如果只允许巡查3个县，最近两周应该优先去哪3个？"
+  },
+  {
+    "index": 113,
+    "category": "综合能力",
+    "question": "先给我过去5个月最严重的县，再解释原因，再给建议"
+  },
+  {
+    "index": 114,
+    "category": "综合能力",
+    "question": "过去3个月常州哪个县虫情最重，未来两周会不会继续升高？"
+  },
+  {
+    "index": 115,
+    "category": "综合能力",
+    "question": "过去8周苏州哪个县墒情最异常，主要是低墒还是高墒，为什么？"
+  },
+  {
+    "index": 116,
+    "category": "综合能力",
+    "question": "最近30天哪些县预警多但虫情并不高？"
+  },
+  {
+    "index": 117,
+    "category": "综合能力",
+    "question": "最近30天哪些县虫情高但预警并不多？"
+  },
+  {
+    "index": 118,
+    "category": "建议能力",
+    "question": "如果一个县同时虫情高、低墒多、预警也多，应该怎么分优先级？"
+  },
+  {
+    "index": 119,
+    "category": "建议能力",
+    "question": "从数据看，最近一个月最值得重点盯防的5个县是哪些？"
+  },
+  {
+    "index": 120,
+    "category": "综合能力",
+    "question": "你先按县给我排虫情，再按同一批县给我看未来两周风险"
+  }
+]

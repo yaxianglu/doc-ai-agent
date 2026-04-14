@@ -12,7 +12,7 @@ from doc_ai_agent.server import AgentApp
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "output" / "acceptance_run_after_data_refresh.json"
-QUESTION_BANK = ROOT / "evals" / "strict_acceptance_60.json"
+QUESTION_BANK = ROOT / "evals" / "strict_acceptance_140.json"
 
 
 def _load_questions() -> list[dict]:
@@ -24,6 +24,7 @@ def _load_questions() -> list[dict]:
             "index": int(item["index"]),
             "category": str(item["category"]),
             "question": str(item["question"]),
+            "turns": [str(turn) for turn in item.get("turns", [])] if isinstance(item.get("turns"), list) else [],
         }
         for item in payload
     ]
@@ -47,15 +48,34 @@ def main() -> int:
     for item in questions:
         question = item["question"]
         category = item["category"]
+        turns = list(item.get("turns") or [])
         started = time.perf_counter()
         try:
-            response = app.chat(question, thread_id=_thread_id_for(category, thread_ids))
+            if turns:
+                thread_id = f"acceptance-multi-{int(item['index'])}"
+                turn_results: list[dict] = []
+                response = {}
+                for turn in turns:
+                    response = app.chat(turn, thread_id=thread_id)
+                    turn_results.append(
+                        {
+                            "question": turn,
+                            "ok": True,
+                            "mode": response.get("mode"),
+                            "seconds": float(response.get("processing", {}).get("elapsed_seconds", 0) or 0),
+                            "answer": response.get("answer", ""),
+                        }
+                    )
+            else:
+                response = app.chat(question, thread_id=_thread_id_for(category, thread_ids))
             elapsed = round(time.perf_counter() - started, 2)
             results.append(
                 {
                     "index": item["index"],
                     "category": category,
                     "question": question,
+                    "turns": turns,
+                    "turn_results": turn_results if turns else [],
                     "ok": True,
                     "mode": response.get("mode"),
                     "seconds": elapsed,
@@ -75,7 +95,7 @@ def main() -> int:
                     "error": f"{type(exc).__name__}: {exc}",
                 }
             )
-        print(f"[{item['index']:02d}/60] {category} - {question}")
+        print(f"[{item['index']:02d}/{len(questions)}] {category} - {question}")
 
     OUTPUT.write_text(json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"output": str(OUTPUT), "count": len(results)}, ensure_ascii=False))
