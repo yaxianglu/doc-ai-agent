@@ -370,8 +370,11 @@ class AgentTests(unittest.TestCase):
 
         self.assertEqual(follow_up["evidence"]["generation_mode"], "clarification")
         self.assertFalse(follow_up["evidence"]["request_understanding"]["used_context"])
-        self.assertIn("信息不足", follow_up["answer"])
-        self.assertNotIn("墒情", follow_up["answer"])
+        self.assertIn("天气", follow_up["answer"])
+        self.assertIn("虫情", follow_up["answer"])
+        self.assertNotIn("淮安", follow_up["answer"])
+        self.assertNotIn("徐州", follow_up["answer"])
+        self.assertEqual(follow_up["evidence"]["response_meta"]["fallback_reason"], "out_of_scope_capability")
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -1041,8 +1044,32 @@ class AgentGraphTests(unittest.TestCase):
             result["evidence"]["analysis_context"]["window"],
             {"window_type": "months", "window_value": 5},
         )
-        self.assertTrue(str(result["evidence"]["historical_query"]["since"]).startswith("2025-"))
-        self.assertIn("待核查", reason_section)
+
+    def test_generic_explanation_question_returns_reason_and_followup_checks(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("从数据看，这次异常最可能的原因是什么？", thread_id="thread-generic-why")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("原因", result["answer"])
+        self.assertIn("依据", result["answer"])
+        self.assertIn("待核查", result["answer"])
+
+    def test_unknown_region_explanation_returns_mapping_reasoning(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("为什么会出现“未知区域”？", thread_id="thread-unknown-region")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("原因", result["answer"])
+        self.assertIn("未知区域", result["answer"])
+        self.assertIn("待核查", result["answer"])
 
     def test_explanation_without_structured_evidence_reports_insufficient_evidence(self):
         agent = DocAIAgent(

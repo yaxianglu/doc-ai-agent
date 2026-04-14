@@ -7,14 +7,14 @@ from doc_ai_agent.acceptance_eval import compare_scored_runs, load_question_bank
 
 
 class AcceptanceEvalTests(unittest.TestCase):
-    def test_load_question_bank_reads_fixed_50_questions(self):
+    def test_load_question_bank_reads_fixed_60_questions(self):
         question_bank = load_question_bank(
             Path(__file__).resolve().parents[1] / "evals" / "strict_acceptance_50.json"
         )
 
-        self.assertEqual(len(question_bank), 50)
+        self.assertEqual(len(question_bank), 60)
         self.assertEqual(question_bank[0]["index"], 1)
-        self.assertEqual(question_bank[-1]["index"], 50)
+        self.assertEqual(question_bank[-1]["index"], 60)
 
     def test_score_run_penalizes_alert_misroute_and_rewards_grounded_forecast(self):
         raw = [
@@ -116,6 +116,44 @@ class AcceptanceEvalTests(unittest.TestCase):
 
         self.assertEqual(loaded["summary"]["count"], 1)
         self.assertEqual(loaded["items"][0]["index"], 26)
+
+    def test_score_run_rewards_boundary_guard_and_penalizes_agri_hijack(self):
+        raw = [
+            {
+                "index": 51,
+                "category": "边界能力",
+                "question": "浙江天气",
+                "ok": True,
+                "mode": "advice",
+                "seconds": 0.3,
+                "answer": "我目前主要支持农业虫情、墒情、预警数据分析，暂不直接提供天气查询。你如果要看农情，我可以继续帮你查浙江相关风险。",
+            },
+            {
+                "index": 54,
+                "category": "边界能力",
+                "question": "上海天气预报",
+                "ok": True,
+                "mode": "data_query",
+                "seconds": 0.5,
+                "answer": "从2026-03-14起，墒情异常最多的地区为：1.淮安市。",
+            },
+            {
+                "index": 58,
+                "category": "边界能力",
+                "question": "你是谁？",
+                "ok": True,
+                "mode": "advice",
+                "seconds": 0.1,
+                "answer": "我是 AI农情工作台 助手，可以基于虫情、墒情历史数据做问答、趋势分析、预测判断，并给出处置建议。",
+            },
+        ]
+
+        scored = score_run(raw)
+        by_index = {item["index"]: item for item in scored["items"]}
+        self.assertGreaterEqual(by_index[51]["score"], 8.5)
+        self.assertLessEqual(by_index[54]["score"], 3.0)
+        self.assertIn("boundary_hijacked_by_agri", by_index[54]["checks_failed"])
+        self.assertGreaterEqual(by_index[58]["score"], 8.5)
 
 
 if __name__ == "__main__":

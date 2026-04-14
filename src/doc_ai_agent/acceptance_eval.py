@@ -41,6 +41,48 @@ def _is_domain_ambiguous_question(question: str) -> bool:
     return "最严重的是哪里" in question and not _contains_any(question, ["虫情", "墒情", "预警", "设备"])
 
 
+def _is_boundary_question(item: dict, question: str) -> bool:
+    """识别新增的边界能力题目。"""
+    category = str(item.get("category") or "")
+    return category == "边界能力" or _contains_any(question, ["天气", "下雨", "气温", "天气预报", "台风", "新闻", "高铁票", "火车票", "你是谁"])
+
+
+def _is_identity_boundary_question(question: str) -> bool:
+    """识别身份说明类边界题。"""
+    stripped = question.strip().rstrip("？?")
+    return stripped in {"你是谁", "你是干什么的", "你能做什么", "你可以做什么"}
+
+
+def _score_boundary_response(question: str, answer: str, score: float, failed: list[str]) -> tuple[float, list[str]]:
+    """对越界/边界能力问题做专项评分。"""
+    if _is_identity_boundary_question(question):
+        if _contains_any(answer, ["我是", "AI农情工作台", "助手"]):
+            return max(score, 8.5), failed
+        score -= 3.0
+        failed.append("identity_answer_unhelpful")
+        return score, failed
+
+    boundary_ok = _contains_any(answer, ["我目前", "我主要", "暂不", "不能", "无法", "不直接提供", "支持农业", "农情"])
+    helpful_redirect = _contains_any(answer, ["虫情", "墒情", "预警", "如果你要看农情", "可以继续帮你查"])
+    agri_hijack = _contains_any(answer, ["异常最多", "风险最高", "观测日", "地区为：", "Top", "TOP", "从202", "从1970"]) and _contains_any(
+        answer,
+        ["虫情", "墒情", "预警", "报警", "设备", "风险"],
+    )
+
+    if agri_hijack and not boundary_ok:
+        score -= 8.0
+        failed.append("boundary_hijacked_by_agri")
+    elif not boundary_ok:
+        score -= 3.0
+        failed.append("boundary_missing_scope_statement")
+
+    if boundary_ok and not helpful_redirect:
+        score -= 1.0
+        failed.append("boundary_missing_redirect")
+
+    return score, failed
+
+
 def _score_item(item: dict) -> dict:
     """按规则评估单条问答结果并输出分数与失败项。"""
     question = str(item.get("question") or "")
@@ -68,6 +110,7 @@ def _score_item(item: dict) -> dict:
         and not _is_advice_or_explanation_question(question)
         and not _is_placeholder_question(question)
         and not _is_domain_ambiguous_question(question)
+        and not _is_boundary_question(item, question)
     ):
         score -= 3.0
         failed.append("misrouted_to_advice")
@@ -95,6 +138,9 @@ def _score_item(item: dict) -> dict:
             "seconds": seconds,
             "answer": answer,
         }
+
+    if _is_boundary_question(item, question):
+        score, failed = _score_boundary_response(question, answer, score, failed)
 
     if _contains_any(question, ["预警", "报警"]) and "墒情异常最多" in answer and "预警" not in answer:
         score -= 3.5

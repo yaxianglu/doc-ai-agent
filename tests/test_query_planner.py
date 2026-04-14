@@ -468,6 +468,14 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertTrue(plan["needs_clarification"])
         self.assertIn("统计", plan["clarification"])
 
+    def test_generic_explanation_question_does_not_fall_back_to_generic_clarification(self):
+        planner = QueryPlanner(None)
+        plan = planner.plan("从数据看，这次异常最可能的原因是什么？")
+
+        self.assertEqual(plan["intent"], "advice")
+        self.assertFalse(plan["needs_clarification"])
+        self.assertEqual(plan["reason"], "generic_explanation")
+
     def test_extract_device_slot(self):
         planner = QueryPlanner(None)
         plan = planner.plan("设备SNS00204659最近一次预警时间是什么？")
@@ -635,6 +643,17 @@ class QueryPlannerTests(unittest.TestCase):
         plan = planner.plan("123456")
         self.assertTrue(plan["needs_clarification"])
         self.assertEqual(plan["reason"], "low_signal")
+
+    def test_out_of_scope_weather_question_returns_capability_boundary(self):
+        planner = QueryPlanner(None)
+        plan = planner.plan("浙江天气")
+
+        self.assertEqual(plan["intent"], "advice")
+        self.assertTrue(plan["needs_clarification"])
+        self.assertEqual(plan["reason"], "out_of_scope_capability")
+        self.assertIn("天气", plan["clarification"])
+        self.assertIn("虫情", plan["clarification"])
+        self.assertIn("墒情", plan["clarification"])
 
     def test_greeting_routes_to_intro_instead_of_clarification(self):
         planner = QueryPlanner(None)
