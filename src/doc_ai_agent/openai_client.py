@@ -14,6 +14,31 @@ class OpenAIClient:
     base_url: str
     timeout_seconds: int = 30
 
+    @staticmethod
+    def normalize_rerank_order(raw_order: object, candidate_count: int) -> list[int]:
+        """规范化模型返回的 rerank 顺序，仅保留有效且不重复的索引。"""
+        if candidate_count <= 0:
+            return []
+        if isinstance(raw_order, dict):
+            raw_order = raw_order.get("order") or raw_order.get("indices") or []
+        if not isinstance(raw_order, list):
+            return list(range(candidate_count))
+        normalized: list[int] = []
+        for item in raw_order:
+            if isinstance(item, bool):
+                continue
+            if not isinstance(item, int):
+                continue
+            if item < 0 or item >= candidate_count:
+                continue
+            if item in normalized:
+                continue
+            normalized.append(item)
+        for index in range(candidate_count):
+            if index not in normalized:
+                normalized.append(index)
+        return normalized
+
     def _chat(self, model: str, system_prompt: str, user_prompt: str, response_format: dict | None = None) -> str:
         """发送一次聊天补全请求并返回文本内容。"""
         payload = {
