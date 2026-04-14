@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+from datetime import datetime
 from typing import Protocol
 
 from .agent_memory import query_family_from_type
@@ -229,13 +231,25 @@ class LocalMemoryStore:
     def __init__(self, path: str):
         self.path = path
 
+    def _backup_corrupted_store(self) -> None:
+        """为损坏的记忆文件留一份备份，避免静默丢失原始内容。"""
+        if not self.path or not os.path.exists(self.path):
+            return
+        backup_path = f"{self.path}.corrupt-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        try:
+            shutil.copy2(self.path, backup_path)
+        except OSError:
+            return
+
     def _load_all(self) -> dict:
         if not self.path or not os.path.exists(self.path):
             return {}
         try:
             with open(self.path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
-        except (json.JSONDecodeError, OSError):
+        except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+            # 线上文件一旦被非 UTF-8 内容污染，后续对话不应该整体 500。
+            self._backup_corrupted_store()
             return {}
         return data if isinstance(data, dict) else {}
 

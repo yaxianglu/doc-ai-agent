@@ -116,6 +116,23 @@ class MemoryStoreTests(unittest.TestCase):
             self.assertEqual(snapshot["region_name"], "淮安市")
             self.assertIn("conversation_state", snapshot)
 
+    def test_local_memory_store_recovers_from_corrupted_utf8_payload(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "agent-memory.json")
+            with open(path, "wb") as handle:
+                handle.write(b'{"thread-bad": "\x83"}')
+
+            store = LocalMemoryStore(path)
+
+            snapshot = store.load("thread-bad")
+
+            self.assertEqual(snapshot["memory_version"], 2)
+            self.assertEqual(snapshot["domain"], "")
+            store.remember("thread-good", {"domain": "pest", "region_name": "常州市"})
+            repaired = store.load("thread-good")
+            self.assertEqual(repaired["domain"], "pest")
+            self.assertEqual(repaired["region_name"], "常州市")
+
     def test_letta_memory_store_normalizes_sparse_payload_on_load(self):
         client = FakeLettaClient()
         store = LettaMemoryStore(client, block_prefix="doc-cloud-test")
