@@ -643,6 +643,27 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["window"], {"window_type": "months", "window_value": 3})
         self.assertEqual(result["future_window"], {"window_type": "weeks", "window_value": 2, "horizon_days": 14})
 
+    def test_emits_canonical_understanding_payload(self):
+        understanding = RequestUnderstanding(backend=UnifiedSchemaBackend())
+        understanding.semantic_parser = AdviceSemanticParser()
+
+        result = understanding.analyze("请解释并给我建议")
+
+        self.assertEqual(
+            result["canonical_understanding"],
+            {
+                "intent": "data_query",
+                "domain": "pest",
+                "task_type": "ranking",
+                "region_name": "苏州市",
+                "region_level": "city",
+                "historical_window": {"window_type": "months", "window_value": 3},
+                "future_window": {"window_type": "weeks", "window_value": 2, "horizon_days": 14},
+                "followup_type": "none",
+                "needs_clarification": False,
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

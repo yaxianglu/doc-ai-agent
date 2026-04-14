@@ -1350,6 +1350,43 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["query_type"], "pest_top")
         self.assertEqual(plan["route"]["region_level"], "county")
 
+    def test_canonical_understanding_can_drive_route_for_weak_question(self):
+        planner = QueryPlanner(None)
+
+        understanding = {
+            "intent": "data_query",
+            "domain": "pest",
+            "task_type": "trend",
+            "region_name": "徐州市",
+            "region_level": "city",
+            "window": {"window_type": "months", "window_value": 3},
+            "canonical_understanding": {
+                "intent": "data_query",
+                "domain": "pest",
+                "task_type": "trend",
+                "region_name": "徐州市",
+                "region_level": "city",
+                "historical_window": {"window_type": "months", "window_value": 3},
+                "future_window": None,
+                "followup_type": "none",
+                "needs_clarification": False,
+            },
+            "needs_historical": True,
+            "needs_forecast": False,
+            "needs_advice": False,
+            "needs_explanation": False,
+        }
+
+        plan = planner.plan("过去三个月情况如何", understanding=understanding)
+
+        self.assertFalse(plan["needs_clarification"])
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_trend")
+        self.assertEqual(plan["route"]["city"], "徐州市")
+        self.assertEqual(plan["route"]["region_level"], "city")
+        self.assertEqual(plan["route"]["window"], {"window_type": "months", "window_value": 3})
+        self.assertEqual(plan["reason"], "understanding_historical_data_query")
+
 
 if __name__ == "__main__":
     unittest.main()

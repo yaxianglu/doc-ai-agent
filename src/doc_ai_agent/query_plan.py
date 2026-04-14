@@ -6,6 +6,127 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
+
+def _normalize_historical_window(payload: object) -> dict:
+    """规范化历史窗口结构。"""
+    if not isinstance(payload, dict):
+        return {"window_type": "all", "window_value": None}
+    window_type = str(payload.get("window_type") or "")
+    if window_type not in {"all", "months", "weeks", "days", "year_since", "none"}:
+        return {"window_type": "all", "window_value": None}
+    if window_type == "none":
+        return {"window_type": "all", "window_value": None}
+    return {
+        "window_type": window_type,
+        "window_value": payload.get("window_value"),
+    }
+
+
+def _normalize_future_window(payload: object) -> dict | None:
+    """规范化未来窗口结构。"""
+    if not isinstance(payload, dict):
+        return None
+    window_type = str(payload.get("window_type") or "")
+    if window_type not in {"months", "weeks", "days", "year_since"}:
+        return None
+    normalized = {
+        "window_type": window_type,
+        "window_value": payload.get("window_value"),
+    }
+    if payload.get("horizon_days") not in {None, ""}:
+        normalized["horizon_days"] = int(payload["horizon_days"])
+    return normalized
+
+
+def canonical_understanding_payload(understanding: dict | None) -> dict:
+    """把理解层输出规整为单一 canonical understanding 结构。"""
+    raw = dict(understanding or {})
+    canonical = raw.get("canonical_understanding")
+    source = dict(canonical) if isinstance(canonical, dict) else raw
+    historical_window = _normalize_historical_window(
+        source.get("historical_window") or source.get("window")
+    )
+    future_window = _normalize_future_window(source.get("future_window"))
+    return {
+        "intent": str(source.get("intent") or raw.get("intent") or "advice"),
+        "domain": str(source.get("domain") or raw.get("domain") or ""),
+        "task_type": str(source.get("task_type") or raw.get("task_type") or "unknown"),
+        "region_name": str(source.get("region_name") or raw.get("region_name") or ""),
+        "region_level": str(source.get("region_level") or raw.get("region_level") or ""),
+        "historical_window": historical_window,
+        "future_window": future_window,
+        "followup_type": str(source.get("followup_type") or raw.get("followup_type") or "none"),
+        "needs_clarification": bool(source.get("needs_clarification") or raw.get("needs_clarification")),
+    }
+
+
+def _query_type_from_canonical_understanding(canonical: dict, fallback_query_type: str) -> str:
+    """根据 canonical understanding 决定 query_type。"""
+    domain = str(canonical.get("domain") or "")
+    task_type = str(canonical.get("task_type") or "")
+    future_window = canonical.get("future_window")
+    historical_window = canonical.get("historical_window") or {}
+    if domain not in {"pest", "soil", "mixed"}:
+        return fallback_query_type
+    if task_type == "joint_risk" or domain == "mixed":
+        return "joint_risk"
+    if future_window and historical_window.get("window_type") in {"all", "none", ""}:
+        return f"{domain}_forecast"
+    if task_type == "trend":
+        return f"{domain}_trend"
+    if task_type == "ranking":
+        return f"{domain}_top"
+    if task_type == "data_detail":
+        return f"{domain}_detail"
+    if task_type == "region_overview":
+        return f"{domain}_overview"
+    return fallback_query_type
+
+
+def _since_from_historical_window(window: dict) -> str:
+    """把历史窗口还原为 since 时间。"""
+    normalized = _normalize_historical_window(window)
+    window_type = str(normalized.get("window_type") or "")
+    window_value = normalized.get("window_value")
+    now = datetime.now()
+    if window_type == "year_since" and window_value not in {None, ""}:
+        return f"{int(window_value)}-01-01 00:00:00"
+    if window_type == "months" and window_value not in {None, ""}:
+        return (now - timedelta(days=30 * int(window_value))).strftime("%Y-%m-%d 00:00:00")
+    if window_type == "weeks" and window_value not in {None, ""}:
+        return (now - timedelta(days=7 * int(window_value))).strftime("%Y-%m-%d 00:00:00")
+    if window_type == "days" and window_value not in {None, ""}:
+        return (now - timedelta(days=int(window_value))).strftime("%Y-%m-%d 00:00:00")
+    return "1970-01-01 00:00:00"
+
+
+def route_from_canonical_understanding(understanding: dict | None, fallback_route: dict | None = None) -> dict:
+    """基于 canonical understanding 构造 route，并保留 fallback 的补充字段。"""
+    canonical = canonical_understanding_payload(understanding)
+    route = _normalized_route(fallback_route)
+    route["query_type"] = _query_type_from_canonical_understanding(canonical, route.get("query_type", ""))
+    historical_window = canonical.get("historical_window") or {"window_type": "all", "window_value": None}
+    route["window"] = dict(historical_window)
+    route["since"] = _since_from_historical_window(historical_window)
+    route["forecast_window"] = _normalize_future_window(canonical.get("future_window"))
+
+    region_name = str(canonical.get("region_name") or "")
+    region_level = str(canonical.get("region_level") or route.get("region_level") or "")
+    if region_level:
+        route["region_level"] = region_level
+    if region_name:
+        if route["region_level"] == "county":
+            route["county"] = region_name
+            route["city"] = route.get("city")
+        else:
+            route["city"] = region_name
+            route["county"] = None
+    if route["query_type"].endswith("_top") and route.get("top_n") in {None, ""}:
+        route["top_n"] = 5
+    return route
+
 
 def _normalized_route(route: dict | None) -> dict:
     """标准化 route 字段，补齐默认值并做基础类型修正。"""

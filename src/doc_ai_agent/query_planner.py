@@ -59,6 +59,7 @@ from .query_intent_routing import (
     score_advice,
     score_data,
 )
+from .query_plan import canonical_understanding_payload, route_from_canonical_understanding
 from .semantic_parse import SemanticParseResult
 from .semantic_parser import SemanticParser
 
@@ -302,6 +303,15 @@ class QueryPlanner:
             is_scope_correction_follow_up=self._is_scope_correction_follow_up,
         )
 
+    @staticmethod
+    def _has_actionable_canonical_understanding(understanding: dict | None) -> bool:
+        canonical = canonical_understanding_payload(understanding)
+        return bool(
+            canonical.get("domain")
+            and canonical.get("task_type") not in {"", "unknown"}
+            and not canonical.get("needs_clarification")
+        )
+
     def _context_follow_up_plan(self, question: str, context: dict | None, understanding: dict | None = None) -> dict | None:
         return build_context_follow_up_plan(self, question, context, understanding)
 
@@ -508,6 +518,56 @@ class QueryPlanner:
         if context_follow_up := self._context_follow_up_plan(original_question, context, understanding):
             # 若识别为上下文追问，优先复用线程状态，避免重复抽取和重复提问。
             return self._finalize_plan(context_follow_up, question, context=context, understanding=understanding)
+        if self._has_actionable_canonical_understanding(understanding):
+            canonical = canonical_understanding_payload(understanding)
+            route = route_from_canonical_understanding(
+                understanding,
+                self._build_route(question, self._infer_query_type(question)),
+            )
+            if (
+                isinstance(understanding, dict)
+                and understanding.get("needs_advice")
+                and not understanding.get("needs_historical")
+                and not understanding.get("needs_forecast")
+                and not understanding.get("needs_explanation")
+            ):
+                return self._finalize_plan({
+                    "intent": "advice",
+                    "confidence": max(semantic_confidence, 0.88),
+                    "route": route,
+                    "needs_clarification": False,
+                    "clarification": None,
+                    "reason": "understanding_advice_follow_up",
+                    "context_trace": ["canonical understanding reused"],
+                }, question, context=context, understanding=understanding)
+            if (
+                isinstance(understanding, dict)
+                and understanding.get("needs_historical")
+                and canonical.get("domain") in {"pest", "soil", "mixed"}
+            ):
+                return self._finalize_plan({
+                    "intent": "data_query",
+                    "confidence": max(semantic_confidence, 0.88),
+                    "route": route,
+                    "needs_clarification": False,
+                    "clarification": None,
+                    "reason": "understanding_historical_data_query",
+                    "context_trace": ["canonical understanding reused"],
+                }, question, context=context, understanding=understanding)
+            if (
+                isinstance(understanding, dict)
+                and understanding.get("needs_forecast")
+                and canonical.get("domain") in {"pest", "soil"}
+            ):
+                return self._finalize_plan({
+                    "intent": "data_query",
+                    "confidence": max(semantic_confidence, 0.88),
+                    "route": route,
+                    "needs_clarification": False,
+                    "clarification": None,
+                    "reason": "understanding_forecast_data_query",
+                    "context_trace": ["canonical understanding reused"],
+                }, question, context=context, understanding=understanding)
         if semantic_reason == SemanticJudger.REASON_IDENTITY:
             return self._finalize_plan({
                 "intent": str(semantic_decision.get("intent") or "advice"),

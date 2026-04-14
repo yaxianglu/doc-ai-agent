@@ -48,6 +48,7 @@ from .request_understanding_reasoning import (
     infer_task_type,
     needs_historical_data,
 )
+from .query_plan import canonical_understanding_payload
 from .semantic_parser import SemanticParser
 
 CITY_ALIASES = {
@@ -243,7 +244,7 @@ class RequestUnderstanding:
         )
         historical_query_text = build_historical_query_text(domain, historical_window, cleaned, task_type, region_name, region_level)
 
-        return {
+        result = {
             "original_question": text,
             "resolved_question": resolved_question,
             "normalized_question": normalized_question,
@@ -272,6 +273,20 @@ class RequestUnderstanding:
             "trace": list(semantic_parse.trace),
             "semantic_parse": semantic_parse.to_dict(),
         }
+        result["canonical_understanding"] = canonical_understanding_payload(
+            {
+                "intent": intent,
+                "domain": domain,
+                "task_type": task_type,
+                "region_name": region_name,
+                "region_level": region_level,
+                "historical_window": historical_window,
+                "future_window": future_window,
+                "followup_type": semantic_parse.followup_type,
+                "needs_clarification": semantic_parse.needs_clarification,
+            }
+        )
+        return result
 
     def _extract_with_entity_service(self, cleaned: str) -> dict:
         """调用实体抽取服务，异常时安全降级为空结果。"""
