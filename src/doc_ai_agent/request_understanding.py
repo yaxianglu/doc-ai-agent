@@ -242,6 +242,9 @@ class RequestUnderstanding:
             "needs_explanation": needs_explanation_flag,
             "needs_advice": needs_advice_flag,
             "execution_plan": execution_plan,
+            "confidence": semantic_parse.confidence,
+            "fallback_reason": semantic_parse.fallback_reason,
+            "trace": list(semantic_parse.trace),
             "semantic_parse": semantic_parse.to_dict(),
         }
 

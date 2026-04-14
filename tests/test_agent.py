@@ -425,6 +425,9 @@ class AgentTests(unittest.TestCase):
         self.assertIn("虫情", follow_up["answer"])
         self.assertNotIn("淮安", follow_up["answer"])
         self.assertNotIn("徐州", follow_up["answer"])
+        self.assertGreaterEqual(follow_up["evidence"]["request_understanding"]["confidence"], 0.8)
+        self.assertEqual(follow_up["evidence"]["request_understanding"]["fallback_reason"], "out_of_scope_capability")
+        self.assertIn("ood", follow_up["evidence"]["request_understanding"]["trace"])
         self.assertEqual(follow_up["evidence"]["response_meta"]["fallback_reason"], "out_of_scope_capability")
 
     def setUp(self):
