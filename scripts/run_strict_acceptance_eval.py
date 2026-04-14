@@ -13,7 +13,7 @@ from doc_ai_agent.server import AgentApp
 
 
 ROOT = Path(__file__).resolve().parents[1]
-QUESTION_BANK = ROOT / "evals" / "strict_acceptance_50.json"
+QUESTION_BANK = ROOT / "evals" / "strict_acceptance_60.json"
 EVAL_ROOT = ROOT / "output" / "evals"
 SUITE_BANKS = {
     "ood": ROOT / "evals" / "ood_eval.json",
