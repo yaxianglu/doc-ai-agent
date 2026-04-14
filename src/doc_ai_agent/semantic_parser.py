@@ -14,6 +14,8 @@ from datetime import datetime
 from .agri_semantics import infer_domain_from_text, infer_region_scope, needs_advice, needs_explanation
 from .entity_extraction import EntityExtractionService
 from .request_context_resolution import (
+    contains_pest,
+    contains_soil,
     extract_region,
     is_contextual_follow_up,
     is_domain_switch_follow_up,
@@ -174,7 +176,7 @@ class SemanticParser:
             self.CITY_ALIASES,
             normalize_city_mentions,
         )
-        needs_clarification = bool(followup_type in {"contextual", "window_only"} and not domain and not region_name)
+        needs_clarification = bool(followup_type in {"contextual", "time_follow_up"} and not domain and not region_name)
         trace.append("slots")
 
         return SemanticParseResult(
@@ -291,7 +293,7 @@ class SemanticParser:
             score += 0.06
         if isinstance(future_window, dict):
             score += 0.06
-        if followup_type in {"contextual", "window_only", "domain_switch"}:
+        if followup_type != "none":
             score += 0.03
         if needs_clarification:
             score -= 0.27
@@ -314,9 +316,11 @@ class SemanticParser:
         normalized = str(text or "").strip()
         if not normalized:
             return "none"
+        if str(context.get("pending_clarification") or "") == "agri_domain" and (contains_pest(normalized) or contains_soil(normalized)):
+            return "domain_follow_up"
         has_context_memory = bool(str(context.get("domain") or "").strip() or str(context.get("region_name") or "").strip())
-        if is_domain_switch_follow_up(normalized):
-            return "domain_switch"
+        if has_context_memory and is_domain_switch_follow_up(normalized):
+            return "domain_follow_up"
         if (
             has_context_memory
             and len(normalized) <= 10
@@ -327,7 +331,15 @@ class SemanticParser:
                 invalid_region_phrases=cls.INVALID_REGION_PHRASES,
             )
         ):
-            return "window_only"
+            return "time_follow_up"
+        if has_context_memory and cls._extract_future_window(normalized) and is_contextual_follow_up(normalized, cls.GREETING_PATTERNS):
+            return "forecast_follow_up"
+        if has_context_memory and needs_explanation(normalized) and is_contextual_follow_up(normalized, cls.GREETING_PATTERNS):
+            return "explanation_follow_up"
+        if has_context_memory and extract_region(normalized, cls.CITY_ALIASES, cls.INVALID_REGION_PHRASES) and len(normalized) <= 12:
+            return "region_follow_up"
+        if has_context_memory and needs_advice(normalized) and is_contextual_follow_up(normalized, cls.GREETING_PATTERNS):
+            return "advice_follow_up"
         if has_context_memory and is_contextual_follow_up(normalized, cls.GREETING_PATTERNS):
             return "contextual"
         return "none"
@@ -335,7 +347,14 @@ class SemanticParser:
     @staticmethod
     def _infer_domain(text: str, context: dict, followup_type: str) -> str:
         context_domain = str(context.get("domain") or "")
-        if followup_type in {"contextual", "window_only"}:
+        if followup_type in {
+            "contextual",
+            "time_follow_up",
+            "region_follow_up",
+            "explanation_follow_up",
+            "forecast_follow_up",
+            "advice_follow_up",
+        }:
             return infer_domain_from_text(text, context_domain)
         return infer_domain_from_text(text, "")
 
@@ -344,7 +363,7 @@ class SemanticParser:
         region_name = str(extract_region(text, cls.CITY_ALIASES, cls.INVALID_REGION_PHRASES) or "")
         if region_name:
             return region_name
-        if followup_type == "contextual" and should_reuse_context_region(text, cls.GREETING_PATTERNS):
+        if followup_type in {"contextual", "explanation_follow_up", "forecast_follow_up", "advice_follow_up"} and should_reuse_context_region(text, cls.GREETING_PATTERNS):
             return str(context.get("region_name") or "").strip()
         return ""
 

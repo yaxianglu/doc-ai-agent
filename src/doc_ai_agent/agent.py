@@ -647,7 +647,7 @@ class DocAIAgent:
         return first_region_name(response)
 
     def _build_memory_snapshot(self, state: AgentState) -> dict:
-        return build_memory_snapshot(
+        snapshot = build_memory_snapshot(
             question=state.get("question", ""),
             plan=state.get("plan") or {},
             response=state.get("response") or {},
@@ -657,6 +657,13 @@ class DocAIAgent:
             first_region_name=self._first_region_name,
             derive_domain=lambda question, route, previous_context: derive_domain(question, route, previous_context),
         )
+        understanding = dict(state.get("understanding") or {})
+        followup_type = str(understanding.get("followup_type") or "none")
+        snapshot["followup_type"] = followup_type
+        conversation_state = dict(snapshot.get("conversation_state") or {})
+        conversation_state["last_followup_type"] = followup_type
+        snapshot["conversation_state"] = conversation_state
+        return snapshot
 
     def _persist_node(self, state: AgentState) -> dict:
         thread_id = str(state.get("thread_id") or "default")

@@ -1197,6 +1197,11 @@ class AgentGraphTests(unittest.TestCase):
 
         self.assertEqual(result["mode"], "advice")
         self.assertTrue(result["evidence"]["request_understanding"]["used_context"])
+        self.assertEqual(result["evidence"]["request_understanding"]["followup_type"], "explanation_follow_up")
+        self.assertEqual(
+            result["evidence"]["memory_state"]["conversation_state"]["last_followup_type"],
+            "explanation_follow_up",
+        )
         self.assertEqual(result["evidence"]["analysis_context"]["domain"], "soil")
         self.assertIn("原因", result["answer"])
         self.assertIn(result["evidence"]["analysis_context"]["region_name"], result["answer"])
@@ -1414,6 +1419,11 @@ class AgentGraphTests(unittest.TestCase):
         result = agent.answer("南京呢", thread_id="thread-short-city")
 
         self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(result["evidence"]["request_understanding"]["followup_type"], "region_follow_up")
+        self.assertEqual(
+            result["evidence"]["memory_state"]["conversation_state"]["last_followup_type"],
+            "region_follow_up",
+        )
         self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "南京市")
         self.assertIn("南京市", result["answer"])
         self.assertIn("未来两周", result["answer"])

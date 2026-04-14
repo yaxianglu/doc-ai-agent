@@ -30,17 +30,31 @@ def _asks_region_ranking(planner, question: str) -> bool:
     return any(token in normalized for token in ["哪里", "哪儿", "哪些地区", "哪些地方", "最高的县", "最高的区", "最严重的地方", "风险最高"])
 
 
-def build_context_follow_up_plan(planner, question: str, context: dict | None) -> dict | None:
+def build_context_follow_up_plan(planner, question: str, context: dict | None, understanding: dict | None = None) -> dict | None:
     """基于线程上下文构造追问计划。
 
     返回 `None` 表示当前问题不适合走“上下文追问复用”链路。
     """
     context = dict(context or {})
+    understanding = dict(understanding or {})
     if not context:
         return None
     if planner._is_greeting_question(question):
         return None
-    if not looks_like_contextual_follow_up(question, is_greeting_question=planner._is_greeting_question):
+    followup_type = str(
+        understanding.get("followup_type")
+        or ((understanding.get("semantic_parse") or {}).get("followup_type") if isinstance(understanding.get("semantic_parse"), dict) else "")
+        or "none"
+    )
+    explicit_followup = followup_type in {
+        "domain_follow_up",
+        "time_follow_up",
+        "region_follow_up",
+        "explanation_follow_up",
+        "forecast_follow_up",
+        "advice_follow_up",
+    }
+    if not explicit_followup and not looks_like_contextual_follow_up(question, is_greeting_question=planner._is_greeting_question):
         return None
 
     previous_route = dict(context.get("route") or {})
@@ -117,7 +131,7 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None) -
             "context_trace": trace + ["reused previous analysis context for concrete data"],
         }
 
-    if is_advice_follow_up(question) and domain in {"pest", "soil"}:
+    if (followup_type == "advice_follow_up" or is_advice_follow_up(question)) and domain in {"pest", "soil"}:
         return {
             "intent": "advice",
             "confidence": 0.9,
@@ -128,7 +142,7 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None) -
             "context_trace": trace + ["reused previous analysis context for advice"],
         }
 
-    if is_explanation_follow_up(question) and domain in {"pest", "soil"}:
+    if (followup_type == "explanation_follow_up" or is_explanation_follow_up(question)) and domain in {"pest", "soil"}:
         return {
             "intent": "advice",
             "confidence": 0.91,
@@ -156,7 +170,7 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None) -
         }
 
     if explicit_domain in {"pest", "soil"} and domain in {"pest", "soil"} and (
-        explicit_domain != domain or has_domain_switch_verb(question)
+        followup_type == "domain_follow_up" or explicit_domain != domain or has_domain_switch_verb(question)
     ):
         next_query_type = planner._query_type_for_domain_switch(previous_query_type, explicit_domain)
         route = dict(previous_route)
@@ -178,10 +192,10 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None) -
             "context_trace": trace + [f"switch domain={explicit_domain} and preserve scope"],
         }
 
-    if future_window and domain in {"pest", "soil"}:
+    if (followup_type == "forecast_follow_up" or future_window) and domain in {"pest", "soil"}:
         route = dict(previous_route)
         route["query_type"] = f"{domain}_forecast"
-        route["forecast_window"] = future_window
+        route["forecast_window"] = future_window or dict(context.get("forecast") or {}).get("window") or {"window_type": "days", "window_value": 14, "horizon_days": 14}
         forecast_ranking_follow_up = ranking_follow_up or (
             previous_query_type in {"pest_top", "soil_top"}
             and str(previous_route.get("region_level") or "") == "county"
@@ -210,12 +224,13 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None) -
             "context_trace": trace + [f"forecast horizon={future_window['horizon_days']}d"],
         }
 
-    if relative_window.get("window_type") != "none" and domain in {"pest", "soil"} and not (city or county):
+    if (followup_type == "time_follow_up" or relative_window.get("window_type") != "none") and domain in {"pest", "soil"} and not (city or county):
         route = dict(previous_route)
         route["query_type"] = planner._query_type_for_window_follow_up(previous_query_type, domain)
-        route["since"] = relative_since
-        route["until"] = relative_until
-        route["window"] = relative_window
+        if relative_window.get("window_type") != "none":
+            route["since"] = relative_since
+            route["until"] = relative_until
+            route["window"] = relative_window
         if not route.get("city") and not route.get("county") and context.get("region_name"):
             route["city"] = context.get("region_name")
             route["region_level"] = "city"
@@ -229,7 +244,7 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None) -
             "context_trace": trace + [f"switch window={relative_window['window_type']}:{relative_window['window_value']}"],
         }
 
-    if (city or county) and domain in {"pest", "soil"} and len(question.strip()) <= 12:
+    if (followup_type == "region_follow_up" or (city or county)) and domain in {"pest", "soil"} and len(question.strip()) <= 12:
         route = dict(previous_route)
         route["city"] = city
         route["county"] = county

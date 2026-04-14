@@ -57,7 +57,7 @@ class SemanticParserTests(unittest.TestCase):
         self.assertEqual(result.domain, "pest")
         self.assertEqual(result.region_name, "徐州市")
         self.assertEqual(result.future_window, {"window_type": "weeks", "window_value": 2, "horizon_days": 14})
-        self.assertEqual(result.followup_type, "contextual")
+        self.assertEqual(result.followup_type, "forecast_follow_up")
         self.assertFalse(result.needs_clarification)
 
     def test_confidence_increases_when_rule_and_backend_agree(self):
@@ -81,7 +81,7 @@ class SemanticParserTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(result.followup_type, "window_only")
+        self.assertEqual(result.followup_type, "time_follow_up")
         self.assertTrue(result.needs_clarification)
         self.assertLess(result.confidence, 0.3)
 

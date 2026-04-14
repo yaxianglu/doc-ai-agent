@@ -302,8 +302,8 @@ class QueryPlanner:
             is_scope_correction_follow_up=self._is_scope_correction_follow_up,
         )
 
-    def _context_follow_up_plan(self, question: str, context: dict | None) -> dict | None:
-        return build_context_follow_up_plan(self, question, context)
+    def _context_follow_up_plan(self, question: str, context: dict | None, understanding: dict | None = None) -> dict | None:
+        return build_context_follow_up_plan(self, question, context, understanding)
 
     @staticmethod
     def _looks_like_contextual_follow_up(question: str) -> bool:
@@ -505,7 +505,7 @@ class QueryPlanner:
                 "reason": "semantic_low_confidence",
                 "context_trace": list(parse_result.trace),
             }, question, context=context, understanding=understanding)
-        if context_follow_up := self._context_follow_up_plan(original_question, context):
+        if context_follow_up := self._context_follow_up_plan(original_question, context, understanding):
             # 若识别为上下文追问，优先复用线程状态，避免重复抽取和重复提问。
             return self._finalize_plan(context_follow_up, question, context=context, understanding=understanding)
         if semantic_reason == SemanticJudger.REASON_IDENTITY:
