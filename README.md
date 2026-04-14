@@ -101,9 +101,9 @@ cd /Users/mac/Desktop/code/service/doc-ai-agent
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-## 严格 50 题评测
+## 严格 60 题评测
 
-- 固定题库：`evals/strict_acceptance_50.json`
+- 固定题库：`evals/strict_acceptance_60.json`
 - 专项子集：
   - `evals/ood_eval.json`（15 题，覆盖天气/新闻/票务/身份等越界硬例）
   - `evals/explanation_eval.json`（10 题，覆盖原因解释与证据充分性）

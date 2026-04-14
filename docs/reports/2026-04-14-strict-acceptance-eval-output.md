@@ -1,8 +1,8 @@
-# 严格 50 题评测输出说明
+# 严格 60 题评测输出说明
 
 ## 目标
 
-本文档用于说明当前 `doc-ai-agent` 严格 50 题评测的：
+本文档用于说明当前 `doc-ai-agent` 严格 60 题评测的：
 
 - 题库来源
 - 运行方式
@@ -16,8 +16,8 @@
 
 ## 题库
 
-- 固定题库文件：`evals/strict_acceptance_50.json`
-- 当前题库规模：`50` 题
+- 固定题库文件：`evals/strict_acceptance_60.json`
+- 当前题库规模：`60` 题
 - 题目分组：
   - 基础查询
   - 区域粒度
@@ -48,7 +48,7 @@ PYTHONPATH=src python3.11 scripts/run_strict_acceptance_eval.py --score --compar
 说明：
 
 - 会读取固定题库
-- 会执行 50 题
+- 会执行 60 题
 - 会自动生成原始结果、评分结果、markdown 报告
 - 如果 baseline 存在，会自动生成 comparison 报告
 
@@ -245,7 +245,7 @@ CI workflow：
 
 ### 题库与评分
 
-- 题库：`evals/strict_acceptance_50.json`
+- 题库：`evals/strict_acceptance_60.json`
 - 评分模块：`src/doc_ai_agent/acceptance_eval.py`
 
 ### 脚本
@@ -276,4 +276,4 @@ CI workflow：
 1. 继续修 `报警/预警` 残留串线
 2. 修预测类 `sample coverage / evidence` 缺失
 3. 统一解释类 `待核查项` 模板
-4. 再跑一次 live 50 题，刷新 `latest`
+4. 再跑一次 live 60 题，刷新 `latest`

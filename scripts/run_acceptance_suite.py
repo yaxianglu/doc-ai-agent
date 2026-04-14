@@ -12,7 +12,7 @@ from doc_ai_agent.server import AgentApp
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "output" / "acceptance_run_after_data_refresh.json"
-QUESTION_BANK = ROOT / "evals" / "strict_acceptance_50.json"
+QUESTION_BANK = ROOT / "evals" / "strict_acceptance_60.json"
 
 
 def _load_questions() -> list[dict]:
@@ -75,7 +75,7 @@ def main() -> int:
                     "error": f"{type(exc).__name__}: {exc}",
                 }
             )
-        print(f"[{item['index']:02d}/50] {category} - {question}")
+        print(f"[{item['index']:02d}/60] {category} - {question}")
 
     OUTPUT.write_text(json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"output": str(OUTPUT), "count": len(results)}, ensure_ascii=False))

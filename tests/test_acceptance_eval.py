@@ -9,7 +9,7 @@ from doc_ai_agent.acceptance_eval import compare_scored_runs, load_question_bank
 class AcceptanceEvalTests(unittest.TestCase):
     def test_load_question_bank_reads_fixed_60_questions(self):
         question_bank = load_question_bank(
-            Path(__file__).resolve().parents[1] / "evals" / "strict_acceptance_50.json"
+            Path(__file__).resolve().parents[1] / "evals" / "strict_acceptance_60.json"
         )
 
         self.assertEqual(len(question_bank), 60)
