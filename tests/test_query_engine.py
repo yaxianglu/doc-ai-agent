@@ -107,6 +107,45 @@ class FakeAlertRepo:
         ][:limit]
 
 
+class TrendRepo(FakeAlertRepo):
+    def pest_trend(self, since, until, region_name, region_level="city"):
+        return [
+            {"date": "2026-03-28", "severity_score": 58},
+            {"date": "2026-03-29", "severity_score": 64},
+            {"date": "2026-03-30", "severity_score": 70},
+            {"date": "2026-03-31", "severity_score": 78},
+            {"date": "2026-04-01", "severity_score": 86},
+        ]
+
+    def soil_trend(self, since, until, region_name, region_level="city"):
+        return [
+            {"date": "2026-03-28", "avg_anomaly_score": 45},
+            {"date": "2026-03-29", "avg_anomaly_score": 56},
+            {"date": "2026-03-30", "avg_anomaly_score": 70},
+            {"date": "2026-03-31", "avg_anomaly_score": 81},
+        ]
+
+
+class EmptyTrendRepo(TrendRepo):
+    def available_pest_time_range(self):
+        return {
+            "min_time": "2026-01-05 00:00:00",
+            "max_time": "2026-04-08 00:00:00",
+        }
+
+    def pest_trend(self, since, until, region_name, region_level="city"):
+        return []
+
+    def available_soil_time_range(self, anomaly_direction=None):
+        return {
+            "min_time": "2026-01-07 00:00:00",
+            "max_time": "2026-04-09 00:00:00",
+        }
+
+    def soil_trend(self, since, until, region_name, region_level="city"):
+        return []
+
+
 class QueryEngineTests(unittest.TestCase):
     def setUp(self):
         self.repo = FakeAlertRepo()
@@ -214,6 +253,53 @@ class QueryEngineTests(unittest.TestCase):
         self.assertIn("市为", result.answer)
         self.assertIn("再细到县", result.answer)
         self.assertIn("区县", result.answer)
+
+    def test_pest_trend_answers_direction_with_metrics(self):
+        engine = QueryEngine(TrendRepo())
+
+        result = engine.answer(
+            "过去5个月虫情总体是上升还是下降？",
+            plan={"query_type": "pest_trend", "since": "2025-11-14 00:00:00"},
+        )
+
+        self.assertIn("虫情趋势：整体上升", result.answer)
+        self.assertIn("起点", result.answer)
+        self.assertIn("最近", result.answer)
+        self.assertIn("峰值", result.answer)
+        self.assertIn("共覆盖5个观测日", result.answer)
+
+    def test_soil_trend_answers_relief_question_with_clear_judgment(self):
+        engine = QueryEngine(TrendRepo())
+
+        result = engine.answer(
+            "近两个月墒情有没有缓解？",
+            plan={"query_type": "soil_trend", "since": "2026-02-14 00:00:00"},
+        )
+
+        self.assertIn("墒情趋势：整体上升", result.answer)
+        self.assertIn("暂未缓解", result.answer)
+        self.assertIn("起点", result.answer)
+        self.assertIn("最近", result.answer)
+        self.assertIn("峰值", result.answer)
+
+    def test_pest_trend_no_data_answer_includes_reason_range_and_retry(self):
+        engine = QueryEngine(EmptyTrendRepo())
+
+        result = engine.answer(
+            "南京近三周虫害走势怎么样？",
+            plan={
+                "query_type": "pest_trend",
+                "since": "2026-03-20 00:00:00",
+                "city": "南京市",
+                "region_level": "city",
+            },
+        )
+
+        self.assertIn("暂无可用虫情趋势数据", result.answer)
+        self.assertIn("原因：南京市在当前时间窗内暂无虫情监测数据样本", result.answer)
+        self.assertIn("当前可用虫情监测数据范围为 2026-01-05 至 2026-04-08", result.answer)
+        self.assertIn("建议：先去掉南京市", result.answer)
+        self.assertNotIn("1970-01-01", result.answer)
 
 
 if __name__ == "__main__":
