@@ -25,6 +25,32 @@ from .task_dsl import task_dsl_from_task_graph
 from .task_decomposition import build_task_graph
 
 
+def input_guard_decision(question: str) -> dict:
+    """返回统一的输入闸门决策。"""
+    decision = dict(classify_input_quality(question))
+    return {
+        "is_valid_input": bool(decision.get("is_valid_input", True)),
+        "reason": str(decision.get("reason") or ""),
+        "should_clarify": bool(decision.get("should_clarify")),
+        "clarification": decision.get("clarification"),
+        "confidence": float(decision.get("confidence") or 0.0),
+    }
+
+
+def should_accept_router_advice(question: str, *, understanding: dict | None = None) -> bool:
+    """`router_advice` 只能作为候选信号，不能直接越权放行。"""
+    if needs_advice(question):
+        return True
+    if not isinstance(understanding, dict):
+        return False
+    return bool(
+        understanding.get("needs_advice")
+        and not understanding.get("needs_historical")
+        and not understanding.get("needs_forecast")
+        and not understanding.get("needs_explanation")
+    )
+
+
 def score_data(question: str) -> float:
     """评估问题属于“数据查询”意图的置信分数。"""
     q = question.lower()
