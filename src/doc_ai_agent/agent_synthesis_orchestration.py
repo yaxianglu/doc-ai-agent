@@ -63,6 +63,7 @@ def build_explanation_payload(
     knowledge: list[dict],
     build_data_grounded_explanation,
     advice_engine,
+    reasoning_capability=None,
 ) -> tuple[str, list]:
     """优先使用数据驱动解释，必要时回退到 advice 引擎。"""
     if not understanding.get("needs_explanation"):
@@ -76,6 +77,15 @@ def build_explanation_payload(
         knowledge=knowledge,
     )
     if explanation_text:
+        if reasoning_capability is not None:
+            capability = reasoning_capability.execute(
+                plan_context=plan_context,
+                query_result=query_result,
+                forecast_result=forecast_result,
+                knowledge=knowledge,
+                grounded_answer=explanation_text,
+            )
+            return str(capability.data.get("answer") or ""), list(capability.data.get("sources") or knowledge)
         return explanation_text, knowledge
     if no_data_reasons:
         region_name = str(plan_context.get("region_name") or "当前地区")
@@ -84,6 +94,14 @@ def build_explanation_payload(
             "建议先确认该地区在所问时间窗内是否存在有效监测记录，再继续分析。",
             knowledge,
         )
+    if reasoning_capability is not None:
+        capability = reasoning_capability.execute(
+            plan_context=plan_context,
+            query_result=query_result,
+            forecast_result=forecast_result,
+            knowledge=knowledge,
+        )
+        return str(capability.data.get("answer") or ""), list(capability.data.get("sources") or [])
     explanation_result = advice_engine.answer("为什么", context=plan_context)
     return explanation_result.answer, explanation_result.sources
 
@@ -97,6 +115,7 @@ def build_advice_payload(
     knowledge: list[dict],
     build_data_grounded_advice,
     advice_engine,
+    advice_capability=None,
 ) -> tuple[str, list]:
     """优先使用数据驱动建议，必要时回退到 advice 引擎。"""
     if not understanding.get("needs_advice"):
@@ -107,7 +126,24 @@ def build_advice_payload(
         forecast_result=forecast_result,
     )
     if advice_text:
+        if advice_capability is not None:
+            capability = advice_capability.execute(
+                plan_context=plan_context,
+                query_result=query_result,
+                forecast_result=forecast_result,
+                knowledge=knowledge,
+                grounded_answer=advice_text,
+            )
+            return str(capability.data.get("answer") or ""), list(capability.data.get("sources") or knowledge)
         return advice_text, knowledge
+    if advice_capability is not None:
+        capability = advice_capability.execute(
+            plan_context=plan_context,
+            query_result=query_result,
+            forecast_result=forecast_result,
+            knowledge=knowledge,
+        )
+        return str(capability.data.get("answer") or ""), list(capability.data.get("sources") or [])
     advice_result = advice_engine.answer("给建议", context=plan_context)
     return advice_result.answer, advice_result.sources
 

@@ -16,7 +16,9 @@ from .agent_contracts import FinalResponseEvidence, ForecastExecutionContext
 from .agent_contracts import OrchestrationStateEnvelope
 from .answer_guard import AnswerGuard
 from .capabilities.data_query import DataQueryCapability
+from .capabilities.advice import AdviceCapability
 from .capabilities.forecast import ForecastCapability
+from .capabilities.reasoning import ReasoningCapability
 from .agent_execution_nodes import (
     build_advice_response,
     build_clarification_response,
@@ -91,6 +93,8 @@ class DocAIAgent:
             model=advice_model,
             source_provider=source_provider,
         )
+        self.reasoning_capability = ReasoningCapability(self.advice_engine)
+        self.advice_capability = AdviceCapability(self.advice_engine)
         self.intent_router = None
         if llm_client and router_model:
             self.intent_router = IntentRouter(llm_client, router_model)
@@ -674,6 +678,7 @@ class DocAIAgent:
             knowledge=knowledge,
             build_data_grounded_explanation=self._build_data_grounded_explanation,
             advice_engine=self.advice_engine,
+            reasoning_capability=self.reasoning_capability,
         )
         advice_text, advice_sources = build_advice_payload(
             understanding=understanding,
@@ -683,6 +688,7 @@ class DocAIAgent:
             knowledge=knowledge,
             build_data_grounded_advice=self._build_data_grounded_advice,
             advice_engine=self.advice_engine,
+            advice_capability=self.advice_capability,
         )
         result = synthesize_analysis_response(
             execution_plan=self._execution_plan(state),
