@@ -18,6 +18,7 @@ from .agri_semantics import (
     needs_explanation,
     needs_forecast,
 )
+from .input_guard import classify_input_quality
 from .query_dsl import QueryDSL, capabilities_from_semantics, infer_answer_form, normalize_answer_form, query_dsl_from_understanding
 from .query_plan import build_query_plan, execution_route
 from .task_dsl import task_dsl_from_task_graph
@@ -261,6 +262,8 @@ def merge_router_route(question: str, route: dict, *, build_route) -> dict:
 def is_low_signal(question: str, *, is_greeting_question) -> bool:
     """判断输入是否“信息量过低”，需要先澄清。"""
     q = (question or "").strip()
+    if not classify_input_quality(q)["is_valid_input"]:
+        return True
     if not q:
         return True
     if is_greeting_question(q):
