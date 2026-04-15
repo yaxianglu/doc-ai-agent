@@ -23,7 +23,7 @@ tests/
 ## 快速启动
 
 ```bash
-cd /Users/mac/Desktop/code/service/doc-ai-agent
+cd /Users/mac/Desktop/gago-cloud/code/doc-ai-agent
 PYTHONPATH=src python3.11 scripts/run_server.py
 ```
 
@@ -107,7 +107,7 @@ curl -s -X POST http://127.0.0.1:8000/chat \
 ## 测试
 
 ```bash
-cd /Users/mac/Desktop/code/service/doc-ai-agent
+cd /Users/mac/Desktop/gago-cloud/code/doc-ai-agent
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
@@ -125,14 +125,14 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 - 一键运行：
 
 ```bash
-cd /Users/mac/Desktop/personal/doc-cloud/doc-ai-agent
+cd /Users/mac/Desktop/gago-cloud/code/doc-ai-agent
 PYTHONPATH=src python3.11 scripts/run_strict_acceptance_eval.py --score --compare
 ```
 
 - 如果只想基于已有 raw 结果重新评分：
 
 ```bash
-cd /Users/mac/Desktop/personal/doc-cloud/doc-ai-agent
+cd /Users/mac/Desktop/gago-cloud/code/doc-ai-agent
 PYTHONPATH=src python3.11 scripts/run_strict_acceptance_eval.py \
   --score \
   --from-raw output/acceptance_run_final_2026-04-14.json

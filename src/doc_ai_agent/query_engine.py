@@ -10,7 +10,15 @@ from typing import Dict, Optional
 from .query_extractors import extract_city as shared_extract_city
 from .query_extractors import extract_day_range as shared_extract_day_range
 from .capability_result import CapabilityResult
-from .repository_contracts import AlertQueryRepository, MonitoringRepository
+from .repository_contracts import (
+    AlertQueryRepository,
+    JointRiskRepository,
+    MonitoringRepository,
+    PestAvailabilityRepository,
+    PestQueryRepository,
+    SoilAvailabilityRepository,
+    SoilQueryRepository,
+)
 
 
 @dataclass
@@ -50,6 +58,39 @@ class QueryEngine:
         repo = self._monitoring_repo()
         if repo is None:
             raise RuntimeError("monitoring repository contract is required for structured agri query flows")
+        return repo
+
+    def _pest_query_repo(self) -> PestQueryRepository | None:
+        if isinstance(self.repo, PestQueryRepository):
+            return self.repo
+        return None
+
+    def _require_pest_query_repo(self) -> PestQueryRepository:
+        repo = self._pest_query_repo()
+        if repo is None:
+            raise RuntimeError("pest query repository contract is required for pest query flows")
+        return repo
+
+    def _soil_query_repo(self) -> SoilQueryRepository | None:
+        if isinstance(self.repo, SoilQueryRepository):
+            return self.repo
+        return None
+
+    def _require_soil_query_repo(self) -> SoilQueryRepository:
+        repo = self._soil_query_repo()
+        if repo is None:
+            raise RuntimeError("soil query repository contract is required for soil query flows")
+        return repo
+
+    def _joint_risk_repo(self) -> JointRiskRepository | None:
+        if isinstance(self.repo, JointRiskRepository):
+            return self.repo
+        return None
+
+    def _require_joint_risk_repo(self) -> JointRiskRepository:
+        repo = self._joint_risk_repo()
+        if repo is None:
+            raise RuntimeError("joint risk repository contract is required for joint risk query flows")
         return repo
 
     def _parse_timestamp(self, value: Optional[str]) -> Optional[datetime]:
@@ -319,13 +360,13 @@ class QueryEngine:
         }
 
     def _available_pest_range_suffix(self) -> str:
-        repo = self._monitoring_repo()
+        repo = self.repo if isinstance(self.repo, PestAvailabilityRepository) else None
         if repo is None:
             return ""
         return self._format_time_range_suffix("虫情监测数据", repo.available_pest_time_range())
 
     def _available_pest_time_range(self) -> Optional[dict]:
-        repo = self._monitoring_repo()
+        repo = self.repo if isinstance(self.repo, PestAvailabilityRepository) else None
         if repo is None:
             return None
         return repo.available_pest_time_range()
@@ -335,7 +376,7 @@ class QueryEngine:
         return [item] if item else []
 
     def _available_soil_range_suffix(self, anomaly_direction: Optional[str] = None) -> str:
-        repo = self._monitoring_repo()
+        repo = self.repo if isinstance(self.repo, SoilAvailabilityRepository) else None
         if repo is None:
             return ""
         try:
@@ -345,7 +386,7 @@ class QueryEngine:
         return self._format_time_range_suffix("墒情监测数据", time_range)
 
     def _available_soil_ranges(self, anomaly_direction: Optional[str] = None) -> list[dict]:
-        repo = self._monitoring_repo()
+        repo = self.repo if isinstance(self.repo, SoilAvailabilityRepository) else None
         if repo is None:
             return []
         try:
@@ -356,7 +397,7 @@ class QueryEngine:
         return [item] if item else []
 
     def _available_soil_time_range(self, anomaly_direction: Optional[str] = None) -> Optional[dict]:
-        repo = self._monitoring_repo()
+        repo = self.repo if isinstance(self.repo, SoilAvailabilityRepository) else None
         if repo is None:
             return None
         try:
@@ -514,7 +555,7 @@ class QueryEngine:
         return detail_line
 
     def _answer_pest_top(self, question: str, plan: dict) -> QueryResult:
-        repo = self._require_monitoring_repo()
+        repo = self._require_pest_query_repo()
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_level = str(plan.get("region_level") or "city")
@@ -609,7 +650,7 @@ class QueryEngine:
         )
 
     def _answer_soil_top(self, question: str, plan: dict) -> QueryResult:
-        repo = self._require_monitoring_repo()
+        repo = self._require_soil_query_repo()
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_level = str(plan.get("region_level") or "city")
@@ -690,7 +731,7 @@ class QueryEngine:
         )
 
     def _answer_pest_trend(self, question: str, plan: dict) -> QueryResult:
-        repo = self._require_monitoring_repo()
+        repo = self._require_pest_query_repo()
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_name, region_level = self._extract_region(question, plan)
@@ -959,7 +1000,7 @@ class QueryEngine:
         )
 
     def _answer_soil_trend(self, question: str, plan: dict) -> QueryResult:
-        repo = self._require_monitoring_repo()
+        repo = self._require_soil_query_repo()
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_name, region_level = self._extract_region(question, plan)
@@ -1161,6 +1202,7 @@ class QueryEngine:
         )
 
     def _answer_joint_risk(self, question: str, plan: dict) -> QueryResult:
+        repo = self._require_joint_risk_repo()
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_level = str(plan.get("region_level") or "city")
@@ -1168,7 +1210,7 @@ class QueryEngine:
         county = plan.get("county")
         answer_form = str(plan.get("answer_form") or "")
         target_region = str(county or city or "")
-        data = self.repo.joint_risk_regions(
+        data = repo.joint_risk_regions(
             since,
             until,
             region_level=region_level,
@@ -1471,9 +1513,12 @@ class QueryEngine:
         plan = plan or {}
         query_type = str(plan.get("query_type") or "count")
         monitoring_repo = self._monitoring_repo()
+        pest_repo = self._pest_query_repo()
+        soil_repo = self._soil_query_repo()
+        joint_risk_repo = self._joint_risk_repo()
         analytics_repo = self._alert_query_repo()
 
-        if monitoring_repo is not None:
+        if monitoring_repo is not None or pest_repo is not None or soil_repo is not None or joint_risk_repo is not None:
             # 新版结构化仓储路径：优先命中细分查询分支。
             if query_type == "alerts_top":
                 return self._answer_alerts_top(question, plan)
@@ -1481,30 +1526,31 @@ class QueryEngine:
                 return self._answer_alerts_high_pest_low(question, plan)
             if query_type == "alerts_trend":
                 return self._answer_alerts_trend(question, plan)
-            if query_type == "pest_top":
+            if query_type == "pest_top" and pest_repo is not None:
                 return self._answer_pest_top(question, plan)
             if query_type == "pest_high_alerts_low":
                 return self._answer_pest_high_alerts_low(question, plan)
-            if query_type == "soil_top":
+            if query_type == "soil_top" and soil_repo is not None:
                 return self._answer_soil_top(question, plan)
-            if query_type == "pest_detail":
+            if query_type == "pest_detail" and pest_repo is not None:
                 return self._answer_pest_detail(question, plan)
-            if query_type == "pest_overview":
+            if query_type == "pest_overview" and pest_repo is not None:
                 return self._answer_pest_overview(question, plan)
-            if query_type == "soil_detail":
+            if query_type == "soil_detail" and soil_repo is not None:
                 return self._answer_soil_detail(question, plan)
-            if query_type == "soil_overview":
+            if query_type == "soil_overview" and soil_repo is not None:
                 return self._answer_soil_overview(question, plan)
-            if query_type == "pest_trend":
+            if query_type == "pest_trend" and pest_repo is not None:
                 return self._answer_pest_trend(question, plan)
-            if query_type == "soil_trend":
+            if query_type == "soil_trend" and soil_repo is not None:
                 return self._answer_soil_trend(question, plan)
-            if query_type == "joint_risk":
+            if query_type == "joint_risk" and joint_risk_repo is not None:
                 return self._answer_joint_risk(question, plan)
             if query_type == "structured_agri":
-                if "虫" in question:
+                if "虫" in question and pest_repo is not None:
                     return self._answer_pest_top(question, plan)
-                return self._answer_soil_top(question, plan)
+                if soil_repo is not None:
+                    return self._answer_soil_top(question, plan)
 
         if query_type == "alerts_trend":
             return self._answer_alerts_trend(question, plan)
