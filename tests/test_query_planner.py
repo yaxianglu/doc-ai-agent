@@ -213,6 +213,7 @@ class QueryPlannerTests(unittest.TestCase):
                         "top_n": 1,
                         "forecast_window": None,
                         "forecast_mode": "",
+                        "answer_form": "unknown",
                     },
                     "domain": "pest",
                     "region_name": "",

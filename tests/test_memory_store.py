@@ -98,7 +98,9 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(snapshot["slots"]["region"]["value"], "徐州市")
         self.assertEqual(snapshot["slots"]["time_range"]["value"], {"mode": "relative", "value": "5_months"})
         self.assertEqual(snapshot["slots"]["intent"]["value"], "data_query")
-        for slot_name in ["domain", "region", "time_range", "intent"]:
+        self.assertEqual(snapshot["slots"]["answer_form"]["value"], "")
+        self.assertEqual(snapshot["slots"]["region_level"]["value"], "")
+        for slot_name in ["domain", "region", "time_range", "intent", "answer_form", "region_level"]:
             for field in ["value", "source", "priority", "ttl", "updated_at_turn"]:
                 self.assertIn(field, snapshot["slots"][slot_name])
 
@@ -108,6 +110,7 @@ class MemoryStoreTests(unittest.TestCase):
                 "domain": "pest",
                 "region_name": "徐州市",
                 "query_type": "pest_top",
+                "answer_form": "trend",
                 "window": {"window_type": "months", "window_value": 5},
                 "route": {"query_type": "pest_top", "region_level": "city"},
                 "user_preferences": {"answer_style": "concise"},
@@ -118,6 +121,8 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(snapshot["memory_layers"]["session_context"]["domain"], "pest")
         self.assertEqual(snapshot["memory_layers"]["session_context"]["region_name"], "徐州市")
         self.assertEqual(snapshot["memory_layers"]["task_context"]["query_type"], "pest_top")
+        self.assertEqual(snapshot["memory_layers"]["task_context"]["answer_form"], "trend")
+        self.assertEqual(snapshot["memory_layers"]["task_context"]["region_level"], "city")
         self.assertEqual(snapshot["memory_layers"]["task_context"]["time_range"]["value"], "5_months")
         self.assertEqual(snapshot["memory_layers"]["user_context"]["answer_style"], "concise")
 

@@ -1251,7 +1251,9 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(slots["region"]["value"], "苏州市")
         self.assertEqual(slots["time_range"]["value"], {"mode": "relative", "value": "5_months"})
         self.assertEqual(slots["intent"]["value"], "analysis")
-        for slot_name in ["domain", "region", "time_range", "intent"]:
+        self.assertEqual(slots["answer_form"]["value"], "unknown")
+        self.assertEqual(slots["region_level"]["value"], "city")
+        for slot_name in ["domain", "region", "time_range", "intent", "answer_form", "region_level"]:
             for field in ["value", "source", "priority", "ttl", "updated_at_turn"]:
                 self.assertIn(field, slots[slot_name])
 
@@ -1267,6 +1269,8 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(layers["session_context"]["domain"], "pest")
         self.assertEqual(layers["session_context"]["region_name"], "苏州市")
         self.assertEqual(layers["task_context"]["query_type"], "pest_overview")
+        self.assertEqual(layers["task_context"]["answer_form"], "unknown")
+        self.assertEqual(layers["task_context"]["region_level"], "city")
         self.assertEqual(layers["task_context"]["time_range"]["value"], "5_months")
         self.assertEqual(layers["user_context"], {})
 
@@ -1281,8 +1285,22 @@ class AgentGraphTests(unittest.TestCase):
         structured = result["evidence"]["structured_answer"]
         self.assertEqual(structured["question"], "给我过去5个月苏州市的虫害情况")
         self.assertEqual(structured["summary"], result["answer"])
+        self.assertEqual(structured["answer_form"], "unknown")
         self.assertEqual(structured["analysis_context"]["domain"], "pest")
         self.assertTrue(structured["historical_data"])
+
+    def test_follow_up_trend_inherits_answer_form_into_memory(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("过去5个月虫情总体是上升还是下降？", thread_id="thread-answer-form-followup")
+        result = agent.answer("常州呢？", thread_id="thread-answer-form-followup")
+
+        self.assertEqual(result["evidence"]["request_understanding"]["answer_form"], "trend")
+        self.assertEqual(result["evidence"]["memory_state"]["slots"]["answer_form"]["value"], "trend")
+        self.assertEqual(result["evidence"]["memory_state"]["conversation_state"]["last_answer_form"], "trend")
 
     def test_greeting_does_not_overwrite_business_slots(self):
         agent = DocAIAgent(

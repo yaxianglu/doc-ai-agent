@@ -435,6 +435,25 @@ class QueryEngine:
             return "暂无法判断是否缓解"
         return ""
 
+    @staticmethod
+    def _trend_direction_label(trend: str) -> str:
+        if trend == "整体上升":
+            return "上升"
+        if trend == "整体下降":
+            return "下降"
+        if trend == "整体波动平稳":
+            return "波动平稳"
+        return "暂无法判断"
+
+    def _leading_trend_judgment(self, *, question: str, trend: str, domain: str, answer_form: str = "") -> str:
+        extra_judgment = self._trend_extra_judgment(question, trend=trend, domain=domain)
+        if extra_judgment:
+            return f"{extra_judgment}。"
+        normalized_question = str(question or "")
+        if answer_form == "trend" or any(token in normalized_question for token in ["上升还是下降", "增加还是减少", "减少还是增加", "下降还是上升", "趋势", "走势", "走向"]):
+            return f"{self._trend_direction_label(trend)}。"
+        return ""
+
     def _build_trend_answer(
         self,
         *,
@@ -447,16 +466,22 @@ class QueryEngine:
         peak: float,
         coverage_days: int,
         domain: str,
+        answer_form: str = "",
     ) -> str:
-        answer = (
+        detail_line = (
             f"{scope_prefix}{topic_label}趋势：{trend}，"
             f"起点{self._format_metric_value(first)}，最近{self._format_metric_value(latest)}，"
             f"峰值{self._format_metric_value(peak)}，共覆盖{coverage_days}个观测日。"
         )
-        extra_judgment = self._trend_extra_judgment(question, trend=trend, domain=domain)
-        if extra_judgment:
-            answer = f"{answer}{extra_judgment}。"
-        return answer
+        leading_judgment = self._leading_trend_judgment(
+            question=question,
+            trend=trend,
+            domain=domain,
+            answer_form=answer_form,
+        )
+        if leading_judgment:
+            return f"{leading_judgment}\n{detail_line}"
+        return detail_line
 
     def _answer_pest_top(self, question: str, plan: dict) -> QueryResult:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
@@ -687,6 +712,7 @@ class QueryEngine:
             peak=self._peak_metric(data, "severity_score"),
             coverage_days=len(data),
             domain="pest",
+            answer_form=str(plan.get("answer_form") or ""),
         )
         return QueryResult(
             answer=answer,
@@ -954,6 +980,7 @@ class QueryEngine:
             peak=self._peak_metric(data, "avg_anomaly_score"),
             coverage_days=len(data),
             domain="soil",
+            answer_form=str(plan.get("answer_form") or ""),
         )
         return QueryResult(
             answer=answer,

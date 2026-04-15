@@ -40,6 +40,12 @@ def normalize_historical_route(
     region_level = str(understanding.get("region_level") or "")
     task_type = str(understanding.get("task_type") or "")
     explicit_window = understanding.get("window") if isinstance(understanding.get("window"), dict) else {}
+    answer_form = str(
+        understanding.get("answer_form")
+        or normalized.get("answer_form")
+        or previous_context.get("answer_form")
+        or (((previous_context.get("memory_layers") or {}).get("task_context") or {}).get("answer_form") or "")
+    )
 
     if normalized.get("query_type") == "structured_agri" and domain in {"pest", "soil"}:
         if task_type == "data_detail":
@@ -89,6 +95,8 @@ def normalize_historical_route(
         normalized["city"] = None
     if str(normalized.get("county") or "") in {"江苏", "江苏省"}:
         normalized["county"] = None
+    if answer_form:
+        normalized["answer_form"] = answer_form
     return normalized
 
 
@@ -130,6 +138,7 @@ def build_runtime_context(
         "region_name": route.get("county") or route.get("city") or inherited_region or "",
         "region_level": route.get("region_level") or str((previous_context.get("route") or {}).get("region_level") or ""),
         "query_type": route.get("query_type") or previous_context.get("query_type") or "",
+        "answer_form": route.get("answer_form") or previous_context.get("answer_form") or "",
         "window": route.get("window") or previous_context.get("window") or {},
         "route": route or previous_context.get("route") or {},
         "forecast": previous_context.get("forecast") or {},

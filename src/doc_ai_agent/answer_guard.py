@@ -106,6 +106,31 @@ class AnswerGuard:
             return f"{value:.0f}"
         return f"{value:.1f}"
 
+    @staticmethod
+    def _trend_direction_label(trend: str) -> str:
+        if trend == "整体上升":
+            return "上升"
+        if trend == "整体下降":
+            return "下降"
+        if trend == "整体波动平稳":
+            return "波动平稳"
+        return "暂无法判断"
+
+    @staticmethod
+    def _leading_trend_judgment(question: str, *, trend: str, domain: str, answer_form: str = "") -> str:
+        normalized_question = str(question or "")
+        if domain == "soil" and any(token in normalized_question for token in ["缓解", "好转"]):
+            if trend == "整体下降":
+                return "有缓解迹象。"
+            if trend == "整体上升":
+                return "暂未缓解。"
+            if trend == "整体波动平稳":
+                return "暂无明显缓解。"
+            return "暂无法判断是否缓解。"
+        if answer_form == "trend" or any(token in normalized_question for token in ["上升还是下降", "增加还是减少", "减少还是增加", "下降还是上升", "趋势", "走势", "走向"]):
+            return f"{AnswerGuard._trend_direction_label(trend)}。"
+        return ""
+
     def _rewrite_trend_answer(self, question: str, plan: dict, query_result: dict, response: dict) -> str:
         route = self._route(plan)
         query_type = str(route.get("query_type") or (query_result.get("evidence") or {}).get("query_type") or "")
@@ -127,20 +152,20 @@ class AnswerGuard:
         first = float(series[0].get(value_key) or 0)
         latest = float(series[-1].get(value_key) or 0)
         peak = max(float(item.get(value_key) or 0) for item in series)
-        answer = (
+        detail_line = (
             f"{label}趋势：{trend}，起点{self._format_metric(first)}，最近{self._format_metric(latest)}，"
             f"峰值{self._format_metric(peak)}，共覆盖{len(series)}个观测日。"
         )
-        if label == "墒情" and any(token in question for token in ["缓解", "好转"]):
-            if trend == "整体下降":
-                answer = f"{answer}有缓解迹象。"
-            elif trend == "整体上升":
-                answer = f"{answer}暂未缓解，异常还有加重迹象。"
-            elif trend == "整体波动平稳":
-                answer = f"{answer}暂无明显缓解。"
-            else:
-                answer = f"{answer}暂无法判断是否缓解。"
-        return answer
+        domain = "soil" if label == "墒情" else "alerts" if label == "预警数量" else "pest"
+        leading_judgment = self._leading_trend_judgment(
+            question,
+            trend=trend,
+            domain=domain,
+            answer_form=str(route.get("answer_form") or ""),
+        )
+        if leading_judgment:
+            return f"{leading_judgment}\n{detail_line}"
+        return detail_line
 
     @staticmethod
     def _rewrite_forecast_support(answer: str, forecast_result: dict) -> str:
