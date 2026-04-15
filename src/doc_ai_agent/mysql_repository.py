@@ -1435,11 +1435,26 @@ class MySQLRepository:
         """
         return self._fetch_json(sql)
 
-    def joint_risk_regions(self, since: str, until: Optional[str], region_level: str = "city", top_n: int = 5):
+    def joint_risk_regions(
+        self,
+        since: str,
+        until: Optional[str],
+        region_level: str = "city",
+        top_n: int = 5,
+        city: Optional[str] = None,
+        county: Optional[str] = None,
+    ):
         """计算虫情与低墒情的联合风险区域。"""
         region_col = "county_name" if region_level == "county" else "city_name"
         until_pest = f"AND monitor_time < {self._quote(until)}" if until else ""
         until_soil = f"AND sample_time < {self._quote(until)}" if until else ""
+        filter_sql = ""
+        if region_level == "county" and city:
+            filter_sql += f" AND city_name = {self._quote(city)}"
+        if county:
+            filter_sql += f" AND county_name = {self._quote(county)}"
+        if region_level == "city" and city:
+            filter_sql += f" AND city_name = {self._quote(city)}"
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -1461,6 +1476,7 @@ class MySQLRepository:
               WHERE severity_usable = 1
                 AND monitor_time >= {self._quote(since)}
                 {until_pest}
+                {filter_sql}
               GROUP BY COALESCE({region_col}, '未知地区')
             ) p
             JOIN (
@@ -1470,6 +1486,7 @@ class MySQLRepository:
                 AND soil_anomaly_type = 'low'
                 AND sample_time >= {self._quote(since)}
                 {until_soil}
+                {filter_sql}
               GROUP BY COALESCE({region_col}, '未知地区')
             ) s ON s.region_name = p.region_name
             ORDER BY joint_score DESC, p.region_name ASC

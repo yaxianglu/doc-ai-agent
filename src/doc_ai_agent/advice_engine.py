@@ -126,20 +126,24 @@ class AdviceEngine:
                 user_prompt = f"问题:{question}\n上下文:{context}"
             if source_text:
                 user_prompt = f"{question}\n可参考资料:\n{source_text}"
-            answer = self.llm_client.complete_text(self.model, system_prompt, user_prompt)
-            if is_explanation_question:
-                evidence_text = f"结合上下文与{sources[0].get('title', '检索资料') if sources else '监测数据'}综合判断。"
-                answer = self._format_explanation_answer(answer, evidence_text)
+            try:
+                answer = self.llm_client.complete_text(self.model, system_prompt, user_prompt)
+            except Exception:
+                answer = ""
             else:
-                answer = self._format_advice_answer(answer)
-            if not sources:
-                sources = [{"title": "OpenAI模型生成", "url": "", "published_at": "", "snippet": ""}]
-            return AdviceResult(
-                answer=answer,
-                sources=sources,
-                generation_mode="llm",
-                model=self.model,
-            )
+                if is_explanation_question:
+                    evidence_text = f"结合上下文与{sources[0].get('title', '检索资料') if sources else '监测数据'}综合判断。"
+                    answer = self._format_explanation_answer(answer, evidence_text)
+                else:
+                    answer = self._format_advice_answer(answer)
+                if not sources:
+                    sources = [{"title": "OpenAI模型生成", "url": "", "published_at": "", "snippet": ""}]
+                return AdviceResult(
+                    answer=answer,
+                    sources=sources,
+                    generation_mode="llm",
+                    model=self.model,
+                )
 
         q = question
         domain = str(context.get("domain") or "")
