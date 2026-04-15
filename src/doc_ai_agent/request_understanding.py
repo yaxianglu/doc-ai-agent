@@ -49,7 +49,7 @@ from .request_understanding_reasoning import (
     needs_historical_data,
 )
 from .query_plan import canonical_understanding_payload
-from .query_dsl import infer_answer_form, query_dsl_from_understanding
+from .query_dsl import infer_answer_form, normalize_answer_form, query_dsl_from_understanding
 from .semantic_parser import SemanticParser
 
 CITY_ALIASES = {
@@ -251,6 +251,14 @@ class RequestUnderstanding:
             needs_explanation=needs_explanation_flag,
             needs_advice=needs_advice_flag,
         )
+        context_answer_form = normalize_answer_form(
+            (context or {}).get("answer_form")
+            or (((context or {}).get("memory_layers") or {}).get("task_context") or {}).get("answer_form")
+            or (((context or {}).get("conversation_state") or {}).get("last_answer_form")
+            or "")
+        )
+        if answer_form == "unknown" and semantic_parse.followup_type != "none" and context_answer_form != "unknown":
+            answer_form = context_answer_form
 
         result = {
             "original_question": text,

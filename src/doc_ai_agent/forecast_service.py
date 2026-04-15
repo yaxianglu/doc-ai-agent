@@ -48,10 +48,21 @@ class StatsForecastBackend:
                 "unique_id": ["series-1"] * history_points,
             }
         ).sort_values("ds")
-        model = StatsForecast(models=[AutoETS(season_length=1)], freq="D")
-        predicted = model.forecast(df=frame, h=max(1, horizon_days))
-        projected_score = round(max(0.0, float(predicted["AutoETS"].iloc[-1])), 2)
-        return self._build_projection(projected_score, history_points=history_points, fallback=False, fallback_reason="")
+        try:
+            model = StatsForecast(models=[AutoETS(season_length=1)], freq="D")
+            predicted = model.forecast(df=frame, h=max(1, horizon_days))
+            projected_score = round(max(0.0, float(predicted["AutoETS"].iloc[-1])), 2)
+            return self._build_projection(projected_score, history_points=history_points, fallback=False, fallback_reason="")
+        except Exception:
+            projected_score = self._manual_projection(series, value_key=value_key, horizon_days=horizon_days)
+            return self._build_projection(
+                projected_score,
+                history_points=history_points,
+                fallback=True,
+                fallback_reason="backend_runtime_error",
+                forecast_backend="manual_trend",
+                model_name="rule_based",
+            )
         
     @staticmethod
     def _manual_projection(series: list[dict], *, value_key: str, horizon_days: int) -> float:
@@ -190,6 +201,8 @@ class ForecastService:
     def _fallback_reason_text(reason: str) -> str:
         if reason == "backend_unavailable":
             return "预测后端暂不可用，当前改用回退预测"
+        if reason == "backend_runtime_error":
+            return "预测模型在当前样本上运行失败，当前改用回退预测"
         if reason == "insufficient_history":
             return "历史样本不足，当前以回退预测为主"
         if reason == "aggregate_count_only":

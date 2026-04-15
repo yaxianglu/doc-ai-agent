@@ -670,6 +670,7 @@ class RequestUnderstandingTests(unittest.TestCase):
                 "intent": "data_query",
                 "domain": "pest",
                 "task_type": "ranking",
+                "answer_form": "composite",
                 "region_name": "苏州市",
                 "region_level": "city",
                 "historical_window": {"window_type": "months", "window_value": 3},

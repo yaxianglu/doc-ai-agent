@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from doc_ai_agent.forecast_service import ForecastService, StatsForecastBackend
 
@@ -56,7 +57,7 @@ class ForecastServiceTests(unittest.TestCase):
         self.assertIn(result["forecast"]["model_name"], {"AutoETS", "rule_based"})
         if result["forecast"]["forecast_backend"] == "manual_trend":
             self.assertTrue(result["forecast"]["fallback"])
-            self.assertEqual(result["forecast"]["fallback_reason"], "backend_unavailable")
+            self.assertIn(result["forecast"]["fallback_reason"], {"backend_unavailable", "backend_runtime_error"})
         else:
             self.assertFalse(result["forecast"]["fallback"])
         self.assertEqual(result["analysis_context"]["region_name"], "徐州市")
@@ -154,6 +155,56 @@ class ForecastServiceTests(unittest.TestCase):
 
         self.assertTrue(projection.fallback)
         self.assertEqual(projection.fallback_reason, "backend_unavailable")
+
+    def test_statsforecast_runtime_error_falls_back_to_manual_trend(self):
+        backend = StatsForecastBackend()
+
+        class FakeDataFrame:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def sort_values(self, key):
+                return self
+
+        class FakeStatsForecast:
+            def __init__(self, models, freq):
+                self.models = models
+                self.freq = freq
+
+            def forecast(self, df, h):
+                raise NotImplementedError("tiny datasets")
+
+        fake_pandas = SimpleNamespace(
+            DataFrame=lambda payload: FakeDataFrame(payload),
+            to_datetime=lambda values: values,
+        )
+        fake_statsforecast = SimpleNamespace(StatsForecast=FakeStatsForecast)
+        fake_models = SimpleNamespace(AutoETS=lambda season_length=1: {"season_length": season_length})
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "pandas": fake_pandas,
+                "statsforecast": fake_statsforecast,
+                "statsforecast.models": fake_models,
+            },
+        ):
+            projection = backend.forecast_series(
+                [
+                    {"date": "2026-03-28", "severity_score": 50},
+                    {"date": "2026-03-29", "severity_score": 60},
+                    {"date": "2026-03-30", "severity_score": 72},
+                    {"date": "2026-03-31", "severity_score": 84},
+                ],
+                date_key="date",
+                value_key="severity_score",
+                horizon_days=14,
+            )
+
+        self.assertTrue(projection.fallback)
+        self.assertEqual(projection.forecast_backend, "manual_trend")
+        self.assertEqual(projection.model_name, "rule_based")
+        self.assertEqual(projection.fallback_reason, "backend_runtime_error")
 
     def test_forecast_region_with_insufficient_history_uses_conservative_wording(self):
         class ShortHistoryRepo:

@@ -154,6 +154,22 @@ def _build_slots(payload: dict, turn_count: int) -> dict:
         "region": _normalize_slot("region", existing_slots.get("region"), payload.get("region_name") or "", turn_count),
         "time_range": _normalize_slot("time_range", existing_slots.get("time_range"), payload.get("window") or {}, turn_count),
         "intent": _normalize_slot("intent", existing_slots.get("intent"), intent_value, turn_count),
+        "answer_form": _normalize_slot(
+            "answer_form",
+            existing_slots.get("answer_form"),
+            payload.get("answer_form")
+            or (payload.get("conversation_state") or {}).get("last_answer_form")
+            or "",
+            turn_count,
+        ),
+        "region_level": _normalize_slot(
+            "region_level",
+            existing_slots.get("region_level"),
+            (payload.get("route") or {}).get("region_level")
+            or (payload.get("conversation_state") or {}).get("last_region_level")
+            or "",
+            turn_count,
+        ),
     }
 
 
@@ -170,6 +186,8 @@ def normalize_memory_snapshot(snapshot: dict | None) -> dict:
     slots = _build_slots(payload, turn_count)
     effective_domain = str(slots["domain"]["value"] or "") if _slot_is_fresh(slots["domain"], turn_count) else ""
     effective_region = str(slots["region"]["value"] or "") if _slot_is_fresh(slots["region"], turn_count) else ""
+    effective_answer_form = str(slots["answer_form"]["value"] or "") if _slot_is_fresh(slots["answer_form"], turn_count) else ""
+    effective_region_level = str(slots["region_level"]["value"] or "") if _slot_is_fresh(slots["region_level"], turn_count) else ""
     time_range_window = _window_from_time_range_slot(slots["time_range"]["value"]) if _slot_is_fresh(slots["time_range"], turn_count) else {}
     route = dict(payload.get("route") or {})
     last_query_family = str((payload.get("conversation_state") or {}).get("last_query_family") or "")
@@ -178,6 +196,8 @@ def normalize_memory_snapshot(snapshot: dict | None) -> dict:
         route["county"] = None
     if not time_range_window:
         route["window"] = {}
+    if effective_region_level:
+        route["region_level"] = effective_region_level
     query_type = str(payload.get("query_type") or route.get("query_type") or "")
     if not query_type and effective_domain and last_query_family:
         query_type = _query_type_from_family(effective_domain, last_query_family)
@@ -203,6 +223,8 @@ def normalize_memory_snapshot(snapshot: dict | None) -> dict:
             "query_type": str(task_context.get("query_type") or query_type),
             "query_family": str(task_context.get("query_family") or last_query_family or query_family_from_type(query_type)),
             "intent": str(task_context.get("intent") or (payload.get("conversation_state") or {}).get("last_intent") or payload.get("intent") or ""),
+            "answer_form": str(task_context.get("answer_form") or effective_answer_form),
+            "region_level": str(task_context.get("region_level") or effective_region_level or route.get("region_level") or ""),
             "time_range": dict(task_context.get("time_range") or time_range_value) if isinstance(task_context.get("time_range") or time_range_value, dict) else {"mode": "none", "value": None},
             "pending_clarification": task_context.get("pending_clarification") or payload.get("pending_clarification"),
         },
@@ -213,6 +235,7 @@ def normalize_memory_snapshot(snapshot: dict | None) -> dict:
         "turn_count": turn_count,
         "domain": effective_domain,
         "region_name": effective_region,
+        "answer_form": effective_answer_form,
         "query_type": query_type,
         "window": dict(time_range_window),
         "route": route,
@@ -229,7 +252,8 @@ def normalize_memory_snapshot(snapshot: dict | None) -> dict:
             "last_answer_mode": str((payload.get("conversation_state") or {}).get("last_answer_mode") or payload.get("answer_mode") or ""),
             "last_clarification_reason": str((payload.get("conversation_state") or {}).get("last_clarification_reason") or payload.get("pending_clarification") or ""),
             "last_query_family": str(last_query_family or query_family_from_type(query_type)),
-            "last_region_level": str((payload.get("conversation_state") or {}).get("last_region_level") or route.get("region_level") or ""),
+            "last_region_level": str((payload.get("conversation_state") or {}).get("last_region_level") or effective_region_level or route.get("region_level") or ""),
+            "last_answer_form": str((payload.get("conversation_state") or {}).get("last_answer_form") or effective_answer_form or ""),
         },
         "slots": slots,
     }

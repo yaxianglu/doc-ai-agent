@@ -29,6 +29,11 @@ def memory_time_range_value(window: dict | None) -> dict:
     return {"mode": "none", "value": None}
 
 
+def memory_scalar_value(value: object) -> str:
+    """把普通字符串槽位统一归一化。"""
+    return str(value or "").strip()
+
+
 def memory_slot_priority(source: str) -> int:
     """按来源类型给记忆槽位分配优先级。"""
     if source == "explicit":
@@ -127,6 +132,18 @@ def build_memory_snapshot(
     query_plan = dict(plan.get("query_plan") or {})
     query_plan_intent = str(query_plan.get("intent") or plan.get("intent") or "")
     query_type = analysis_context.get("query_type") or route.get("query_type") or previous_context.get("query_type") or ""
+    answer_form = memory_scalar_value(
+        understanding.get("answer_form")
+        or analysis_context.get("answer_form")
+        or previous_context.get("answer_form")
+        or ""
+    )
+    region_level = memory_scalar_value(
+        analysis_context.get("region_level")
+        or route.get("region_level")
+        or (previous_context.get("route") or {}).get("region_level")
+        or ""
+    )
 
     domain_source = "explicit" if understanding.get("domain") else ("carried" if preserve_thread_scope and previous_slots.get("domain") else ("inferred" if domain else "empty"))
     region_source = (
@@ -141,6 +158,16 @@ def build_memory_snapshot(
         else ("carried" if preserve_thread_scope and previous_slots.get("time_range") else ("inferred" if window else "empty"))
     )
     intent_source = "system" if query_plan_intent else "empty"
+    answer_form_source = (
+        "explicit"
+        if understanding.get("answer_form")
+        else ("carried" if previous_slots.get("answer_form") and answer_form else ("inferred" if answer_form else "empty"))
+    )
+    region_level_source = (
+        "explicit"
+        if understanding.get("region_level") or route.get("region_level")
+        else ("carried" if previous_slots.get("region_level") and region_level else ("inferred" if region_level else "empty"))
+    )
 
     slots = {
         "domain": build_memory_slot(
@@ -170,6 +197,20 @@ def build_memory_snapshot(
             turn_count=turn_count,
             previous_slot=previous_slots.get("intent"),
         ),
+        "answer_form": build_memory_slot(
+            value=answer_form,
+            source=answer_form_source,
+            turn_count=turn_count,
+            previous_slot=previous_slots.get("answer_form"),
+            preserve_previous=preserve_thread_scope,
+        ),
+        "region_level": build_memory_slot(
+            value=region_level,
+            source=region_level_source,
+            turn_count=turn_count,
+            previous_slot=previous_slots.get("region_level"),
+            preserve_previous=preserve_thread_scope,
+        ),
     }
 
     pending_user_question = None
@@ -195,6 +236,8 @@ def build_memory_snapshot(
             "query_type": query_type,
             "query_family": query_family_from_type(query_type),
             "intent": query_plan_intent,
+            "answer_form": answer_form,
+            "region_level": region_level,
             "time_range": dict(time_range_value) if isinstance(time_range_value, dict) else {"mode": "none", "value": None},
             "pending_clarification": pending_clarification,
         },
@@ -206,6 +249,7 @@ def build_memory_snapshot(
         "turn_count": turn_count,
         "domain": domain,
         "region_name": region_name,
+        "answer_form": answer_form,
         "query_type": query_type,
         "window": window,
         "route": route,
@@ -222,7 +266,8 @@ def build_memory_snapshot(
             "last_answer_mode": str(response.get("mode") or ""),
             "last_clarification_reason": str(plan.get("reason") or "") if plan.get("needs_clarification") else "",
             "last_query_family": query_family_from_type(query_type),
-            "last_region_level": str(analysis_context.get("region_level") or route.get("region_level") or ""),
+            "last_region_level": region_level,
+            "last_answer_form": answer_form,
         },
         "slots": slots,
     }

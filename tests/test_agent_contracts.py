@@ -135,6 +135,7 @@ class AgentContractsTests(unittest.TestCase):
             question="过去5个月徐州市虫情怎么样？",
             answer="结论：徐州市虫情偏高。",
             response_mode="analysis",
+            answer_form="trend",
             analysis_context={"domain": "pest", "region_name": "徐州市", "query_type": "pest_overview"},
             historical_data=[{"region_name": "徐州市", "severity_score": 86}],
             forecast_data=[{"risk_level": "high"}],
@@ -142,10 +143,12 @@ class AgentContractsTests(unittest.TestCase):
         )
 
         self.assertEqual(structured["summary"], "结论：徐州市虫情偏高。")
+        self.assertEqual(structured["answer_form"], "trend")
         self.assertEqual(structured["question"], "过去5个月徐州市虫情怎么样？")
         self.assertEqual(structured["analysis_context"]["domain"], "pest")
         self.assertEqual(structured["historical_data"][0]["severity_score"], 86)
         self.assertEqual(structured["evidence"], ["历史排行结果", "预测服务输出"])
+        self.assertEqual(structured["sections"]["conclusion"], "徐州市虫情偏高。")
 
 
 if __name__ == "__main__":

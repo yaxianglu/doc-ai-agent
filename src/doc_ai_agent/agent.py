@@ -833,6 +833,7 @@ class DocAIAgent:
             question=state.get("question", ""),
             answer=response.get("answer", ""),
             response_mode=response.get("mode", ""),
+            answer_form=str(understanding.get("answer_form") or snapshot.get("answer_form") or ""),
             analysis_context=dict(evidence.get("analysis_context") or {}),
             historical_data=response.get("data") if isinstance(response.get("data"), list) else (response.get("data") or {}).get("historical", []),
             forecast_data=(response.get("data") or {}).get("forecast", []) if isinstance(response.get("data"), dict) else [],

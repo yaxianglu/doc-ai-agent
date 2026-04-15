@@ -130,6 +130,7 @@ def route_from_canonical_understanding(understanding: dict | None, fallback_rout
     route["window"] = dict(historical_window)
     route["since"] = _since_from_historical_window(historical_window)
     route["forecast_window"] = _normalize_future_window(canonical.get("future_window"))
+    route["answer_form"] = str(canonical.get("answer_form") or route.get("answer_form") or "unknown")
 
     region_name = str(canonical.get("region_name") or "")
     region_level = str(canonical.get("region_level") or route.get("region_level") or "")
@@ -177,6 +178,7 @@ def _normalized_route(route: dict | None) -> dict:
         "top_n": top_n,
         "forecast_window": dict(raw.get("forecast_window") or {}) if isinstance(raw.get("forecast_window"), dict) else None,
         "forecast_mode": str(raw.get("forecast_mode") or ""),
+        "answer_form": str(raw.get("answer_form") or "unknown"),
     }
 
 
