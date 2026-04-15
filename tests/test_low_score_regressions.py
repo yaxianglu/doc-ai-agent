@@ -92,11 +92,17 @@ class RegressionStructuredRepo:
             {"date": "2026-03-31", "avg_anomaly_score": 81},
         ]
 
-    def joint_risk_regions(self, since, until, region_level="city", top_n=5):
-        return [
+    def joint_risk_regions(self, since, until, region_level="city", top_n=5, city=None, county=None):
+        rows = [
+            {"region_name": "宿迁市", "joint_score": 166, "pest_score": 98, "low_soil_score": 68},
             {"region_name": "徐州市", "joint_score": 156, "pest_score": 92, "low_soil_score": 64},
             {"region_name": "淮安市", "joint_score": 128, "pest_score": 75, "low_soil_score": 53},
-        ][:top_n]
+        ]
+        if city:
+            rows = [row for row in rows if row["region_name"] == city]
+        if county:
+            rows = [row for row in rows if row["region_name"] == county]
+        return rows[:top_n]
 
     def alerts_trend(self, since, until=None, city=None):
         if city == "常州市":
@@ -169,6 +175,14 @@ class LowScoreRegressionTests(unittest.TestCase):
         first_line = self._first_line(result["answer"])
         self.assertRegex(first_line, r"^(上升|下降|持平|波动平稳)")
         self.assertNotIn("虫情趋势：", first_line)
+
+    def test_joint_risk_boolean_question_uses_region_scope_and_yes_no_opening(self):
+        result = self._agent().answer("过去90天，宿迁同时出现高虫情和低墒情吗？", thread_id="reg-joint-risk-boolean")
+
+        first_line = self._first_line(result["answer"])
+        self.assertRegex(first_line, r"^(是|否|暂无法判断)")
+        self.assertIn("宿迁市", result["answer"])
+        self.assertNotIn("1.", first_line)
 
     def test_county_question_answers_county_rows_instead_of_city_fallback(self):
         result = self._agent().answer("常州市下面虫情最严重的县有哪些？", thread_id="reg-county")

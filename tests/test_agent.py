@@ -188,11 +188,16 @@ class FakeStructuredRepo:
             {"date": "2026-03-31", "avg_anomaly_score": 81},
         ]
 
-    def joint_risk_regions(self, since, until, region_level="city", top_n=5):
-        return [
+    def joint_risk_regions(self, since, until, region_level="city", top_n=5, city=None, county=None):
+        rows = [
             {"region_name": "徐州市", "joint_score": 156, "pest_score": 92, "low_soil_score": 64},
             {"region_name": "淮安市", "joint_score": 128, "pest_score": 75, "low_soil_score": 53},
-        ][:top_n]
+        ]
+        if city:
+            rows = [row for row in rows if row["region_name"] == city]
+        if county:
+            rows = [row for row in rows if row["region_name"] == county]
+        return rows[:top_n]
 
     def alerts_trend(self, since, until=None, city=None):
         if city == "徐州市":
@@ -357,7 +362,7 @@ class EmptyStructuredRepo:
     def soil_trend(self, since, until, region_name, region_level="city"):
         return []
 
-    def joint_risk_regions(self, since, until, region_level="city", top_n=5):
+    def joint_risk_regions(self, since, until, region_level="city", top_n=5, city=None, county=None):
         return []
 
 

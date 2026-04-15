@@ -1130,15 +1130,42 @@ class QueryEngine:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_level = str(plan.get("region_level") or "city")
-        data = self.repo.joint_risk_regions(since, until, region_level=region_level, top_n=5)
+        city = plan.get("city")
+        county = plan.get("county")
+        answer_form = str(plan.get("answer_form") or "")
+        target_region = str(county or city or "")
+        data = self.repo.joint_risk_regions(
+            since,
+            until,
+            region_level=region_level,
+            top_n=5,
+            city=city,
+            county=county,
+        )
+        since_scope = self._format_since_scope(since)
         if data:
-            answer = f"从{since[:10]}起，同时出现高虫情和低墒情的联合风险地区为："
-            answer += "；".join(
-                f"{idx+1}.{row['region_name']}（联合得分{row['joint_score']}，虫情{row['pest_score']}，低墒{row['low_soil_score']}）"
-                for idx, row in enumerate(data)
-            )
+            if answer_form == "boolean":
+                top_row = data[0]
+                lead_region = str(top_row.get("region_name") or target_region or "该地区")
+                lead_scope = f"{lead_region}{since_scope}" if since_scope else lead_region
+                answer = (
+                    f"是。{lead_scope}存在同时出现高虫情和低墒情的联合风险，"
+                    f"联合得分{self._format_metric_value(float(top_row.get('joint_score') or 0))}，"
+                    f"其中虫情{self._format_metric_value(float(top_row.get('pest_score') or 0))}，"
+                    f"低墒{self._format_metric_value(float(top_row.get('low_soil_score') or 0))}。"
+                )
+            else:
+                answer = f"从{since[:10]}起，同时出现高虫情和低墒情的联合风险地区为："
+                answer += "；".join(
+                    f"{idx+1}.{row['region_name']}（联合得分{row['joint_score']}，虫情{row['pest_score']}，低墒{row['low_soil_score']}）"
+                    for idx, row in enumerate(data)
+                )
         else:
-            answer = "暂无满足联合风险条件的地区。"
+            if answer_form == "boolean":
+                region_label = target_region or "当前范围内"
+                answer = f"否。{region_label}{since_scope}暂未发现同时出现高虫情和低墒情的联合风险。"
+            else:
+                answer = "暂无满足联合风险条件的地区。"
             pest_suffix = self._available_pest_range_suffix()
             soil_suffix = self._available_soil_range_suffix(anomaly_direction="low")
             if pest_suffix:
@@ -1154,6 +1181,8 @@ class QueryEngine:
                 "since": since,
                 "until": until,
                 "region_level": region_level,
+                "city": city,
+                "county": county,
                 "available_data_ranges": (self._available_pest_ranges() + self._available_soil_ranges(anomaly_direction="low")) if not data else [],
                 "no_data_reasons": [
                     {
