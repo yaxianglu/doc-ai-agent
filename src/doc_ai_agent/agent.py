@@ -15,6 +15,8 @@ from .agent_compare_execution import execute_compare_request
 from .agent_contracts import FinalResponseEvidence, ForecastExecutionContext
 from .agent_contracts import OrchestrationStateEnvelope
 from .answer_guard import AnswerGuard
+from .capabilities.data_query import DataQueryCapability
+from .capabilities.forecast import ForecastCapability
 from .agent_execution_nodes import (
     build_advice_response,
     build_clarification_response,
@@ -78,9 +80,11 @@ class DocAIAgent:
         self.router_model = router_model
         self.advice_model = advice_model
         self.query_engine = QueryEngine(repo)
+        self.data_query_capability = DataQueryCapability(self.query_engine)
         self.answer_guard = AnswerGuard()
         self.forecast_engine = ForecastEngine(repo)
         self.forecast_service = ForecastService(repo)
+        self.forecast_capability = ForecastCapability(self.forecast_service)
         self.source_provider = source_provider
         self.advice_engine = AdviceEngine(
             llm_client=llm_client,
@@ -415,6 +419,7 @@ class DocAIAgent:
             normalize_historical_route=self._normalize_historical_route,
             plan_route=self._plan_route,
             query_engine=self.query_engine,
+            data_query_capability=self.data_query_capability,
         )
         query_result = dict(result.get("query_result") or {})
         result["orchestration_state"] = self._orchestration_state(
@@ -446,17 +451,15 @@ class DocAIAgent:
         forecast_route = dict(forecast_context.route or {})
         runtime_context = dict(forecast_context.runtime_context)
         if forecast_route.get("forecast_mode") == "ranking":
-            result = self.forecast_service.forecast_top_regions(
-                domain=str(runtime_context.get("domain") or "pest"),
-                since=str(forecast_route.get("since") or "1970-01-01 00:00:00"),
-                horizon_days=int(forecast_route.get("forecast_window", {}).get("horizon_days") or 14),
-                region_level=str(forecast_route.get("region_level") or "city"),
-                top_n=max(1, int(forecast_route.get("top_n") or 1)),
-                city=forecast_route.get("city"),
-                county=forecast_route.get("county"),
-            )
-        else:
-            result = self.forecast_service.forecast_region(forecast_route, context=runtime_context)
+            pass
+        capability_result = self.forecast_capability.execute(forecast_route, runtime_context)
+        result = {
+            "answer": str(capability_result.meta.get("answer") or ""),
+            "data": capability_result.data,
+            "forecast": dict(capability_result.meta.get("forecast") or capability_result.evidence),
+            "analysis_context": dict(capability_result.meta.get("analysis_context") or {}),
+            "capability_result": capability_result.to_dict(),
+        }
         return {
             "forecast_result": result,
             "orchestration_state": self._orchestration_state(

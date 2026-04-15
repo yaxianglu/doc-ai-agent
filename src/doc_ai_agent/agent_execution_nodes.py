@@ -31,6 +31,7 @@ def run_query_node(
     normalize_historical_route,
     plan_route,
     query_engine,
+    data_query_capability=None,
 ) -> dict:
     """执行查询节点：调用查询引擎并补齐证据字段。"""
     compare_request = detect_compare_request(question, understanding, plan, memory_context)
@@ -42,6 +43,11 @@ def run_query_node(
     route = normalize_historical_route(question_for_query, plan_route(plan), understanding, memory_context)
     if route.get("query_type") in {"pest_forecast", "soil_forecast"}:
         return {"query_result": {}}
+    if data_query_capability is not None:
+        result, capability = data_query_capability.execute(question_for_query, route)
+        payload = build_query_result_payload(result, route)
+        payload["evidence"].setdefault("capability_result", capability.to_dict())
+        return {"query_result": payload}
     result = query_engine.answer(question_for_query, plan=route)
     return {"query_result": build_query_result_payload(result, route)}
 
