@@ -93,6 +93,17 @@ class SemanticParserTests(unittest.TestCase):
         self.assertTrue(result.is_out_of_scope)
         self.assertGreaterEqual(result.confidence, 0.95)
 
+    def test_invalid_input_does_not_become_follow_up(self):
+        parser = SemanticParser()
+        result = parser.parse(
+            "h d k j h sa d k l j",
+            context={"domain": "soil", "region_name": "徐州市"},
+        )
+
+        self.assertTrue(result.needs_clarification)
+        self.assertEqual(result.fallback_reason, "invalid_gibberish")
+        self.assertEqual(result.followup_type, "none")
+
 
 if __name__ == "__main__":
     unittest.main()

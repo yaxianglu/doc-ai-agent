@@ -50,6 +50,7 @@ from .request_understanding_reasoning import (
 )
 from .query_plan import canonical_understanding_payload
 from .query_dsl import infer_answer_form, normalize_answer_form, query_dsl_from_understanding
+from .input_guard import classify_input_quality
 from .semantic_parser import SemanticParser
 
 CITY_ALIASES = {
@@ -160,8 +161,12 @@ class RequestUnderstanding:
         注意：`history` 当前保留为接口兼容参数，本函数核心使用的是 `context`。
         """
         text = (question or "").strip()
+        input_guard = classify_input_quality(text)
         semantic_parse = self.semantic_parser.parse(text, context=context)
-        resolved_question, context_resolution = self._resolve_with_context(text, context)
+        if input_guard["is_valid_input"]:
+            resolved_question, context_resolution = self._resolve_with_context(text, context)
+        else:
+            resolved_question, context_resolution = text, []
         cleaned, ignored = self._strip_noise(resolved_question)
         used_context = bool(context_resolution)
         reuse_region_from_context = "reused_region_from_memory" in context_resolution
