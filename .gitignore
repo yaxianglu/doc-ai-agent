@@ -8,3 +8,4 @@ vector_store.db
 data/agent-memory.json
 .backend.pid
 output/
+.worktrees/
