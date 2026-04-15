@@ -145,3 +145,9 @@ PYTHONPATH=src python3.11 scripts/run_strict_acceptance_eval.py \
   - `output/evals/latest/report.md`
   - `output/evals/latest/comparison.md`
 - 详细说明见：`docs/reports/2026-04-14-strict-acceptance-eval-output.md`
+
+## 架构文档
+
+- 当前契约基线：`docs/architecture/current-agent-contract.md`
+- Query DSL：`docs/architecture/query-dsl.md`
+- V2 迁移计划：`docs/plans/2026-04-15-agent-v2-implementation.md`

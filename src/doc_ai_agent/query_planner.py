@@ -59,6 +59,7 @@ from .query_intent_routing import (
     score_advice,
     score_data,
 )
+from .query_parser import QueryParser
 from .query_plan import canonical_understanding_payload, route_from_canonical_understanding
 from .semantic_parse import SemanticParseResult
 from .semantic_parser import SemanticParser
@@ -113,6 +114,7 @@ class QueryPlanner:
         self.playbook_router = playbook_router
         self.semantic_judger = semantic_judger or SemanticJudger()
         self.semantic_parser = semantic_parser or SemanticParser()
+        self.query_parser = QueryParser()
 
     def _parse_semantics(self, question: str, context: dict | None = None) -> SemanticParseResult:
         try:
@@ -492,6 +494,16 @@ class QueryPlanner:
         """
         original_question = question
         question = self._resolve_follow_up_question(question, history, context=context)
+        if understanding is not None and not understanding.get("parsed_query"):
+            try:
+                understanding = dict(understanding)
+                understanding["parsed_query"] = self.query_parser.parse(
+                    question,
+                    history=history,
+                    context=context,
+                ).to_dict()
+            except Exception:
+                understanding = understanding
         parse_result = self._parse_semantics(question, context=context)
         if parse_result.normalized_query:
             question = parse_result.normalized_query

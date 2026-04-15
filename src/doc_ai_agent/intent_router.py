@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from .query_dsl import capabilities_from_semantics
+
 
 class IntentRouter:
     """意图路由器：调用 LLM 并输出受限字段的路由结果。"""
@@ -182,6 +184,15 @@ class IntentRouter:
                     result["threshold"] = float(threshold_raw)
                 except (TypeError, ValueError):
                     pass
+        result["capabilities"] = list(
+            capabilities_from_semantics(
+                intent=intent,
+                task_type=task_type,
+                needs_forecast=bool(future_window),
+                needs_explanation=False,
+                needs_advice=intent == "advice",
+            )
+        )
         return result
 
     @classmethod

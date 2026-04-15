@@ -8,9 +8,26 @@ from doc_ai_agent.agent_contracts import (
     PlanPayload,
     RequestUnderstandingPayload,
 )
+from doc_ai_agent.query_dsl import QueryDSL
 
 
 class AgentContractsTests(unittest.TestCase):
+    def test_query_dsl_round_trips_contract_shape(self):
+        payload = QueryDSL.from_dict(
+            {
+                "domain": "pest",
+                "intent": ["data_query", "forecast"],
+                "task_type": "ranking",
+                "region": {"name": "常州市", "level": "county"},
+                "historical_window": {"kind": "history", "window_type": "months", "window_value": 3},
+                "future_window": {"kind": "future", "window_type": "weeks", "window_value": 2, "horizon_days": 14},
+                "capabilities": ["data_query", "forecast"],
+            }
+        )
+
+        self.assertEqual(payload.to_dict()["region"]["level"], "county")
+        self.assertEqual(payload.to_dict()["capabilities"], ["data_query", "forecast"])
+
     def test_request_understanding_payload_round_trips_core_fields(self):
         payload = RequestUnderstandingPayload.from_dict(
             {
