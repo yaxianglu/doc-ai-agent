@@ -1255,6 +1255,35 @@ class AgentGraphTests(unittest.TestCase):
             for field in ["value", "source", "priority", "ttl", "updated_at_turn"]:
                 self.assertIn(field, slots[slot_name])
 
+    def test_memory_state_exposes_three_layer_context(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("给我过去5个月苏州市的虫害情况", thread_id="thread-layered-memory")
+
+        layers = result["evidence"]["memory_state"]["memory_layers"]
+        self.assertEqual(layers["session_context"]["domain"], "pest")
+        self.assertEqual(layers["session_context"]["region_name"], "苏州市")
+        self.assertEqual(layers["task_context"]["query_type"], "pest_overview")
+        self.assertEqual(layers["task_context"]["time_range"]["value"], "5_months")
+        self.assertEqual(layers["user_context"], {})
+
+    def test_agent_response_contains_structured_answer(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("给我过去5个月苏州市的虫害情况", thread_id="thread-structured-answer")
+
+        structured = result["evidence"]["structured_answer"]
+        self.assertEqual(structured["question"], "给我过去5个月苏州市的虫害情况")
+        self.assertEqual(structured["summary"], result["answer"])
+        self.assertEqual(structured["analysis_context"]["domain"], "pest")
+        self.assertTrue(structured["historical_data"])
+
     def test_greeting_does_not_overwrite_business_slots(self):
         agent = DocAIAgent(
             FakeStructuredRepo(),

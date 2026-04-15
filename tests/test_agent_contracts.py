@@ -9,6 +9,7 @@ from doc_ai_agent.agent_contracts import (
     RequestUnderstandingPayload,
 )
 from doc_ai_agent.query_dsl import QueryDSL
+from doc_ai_agent.response_builder import ResponseBuilder
 
 
 class AgentContractsTests(unittest.TestCase):
@@ -128,6 +129,23 @@ class AgentContractsTests(unittest.TestCase):
         self.assertEqual(response["response"]["evidence"]["generation_mode"], "analysis_synthesis")
         self.assertEqual(response["response"]["evidence"]["analysis_context"]["region_name"], "徐州市")
         self.assertEqual(response["response"]["data"]["historical"][0]["severity_score"], 86)
+
+    def test_response_builder_outputs_structured_answer(self):
+        structured = ResponseBuilder().build(
+            question="过去5个月徐州市虫情怎么样？",
+            answer="结论：徐州市虫情偏高。",
+            response_mode="analysis",
+            analysis_context={"domain": "pest", "region_name": "徐州市", "query_type": "pest_overview"},
+            historical_data=[{"region_name": "徐州市", "severity_score": 86}],
+            forecast_data=[{"risk_level": "high"}],
+            evidence_items=["历史排行结果", "预测服务输出"],
+        )
+
+        self.assertEqual(structured["summary"], "结论：徐州市虫情偏高。")
+        self.assertEqual(structured["question"], "过去5个月徐州市虫情怎么样？")
+        self.assertEqual(structured["analysis_context"]["domain"], "pest")
+        self.assertEqual(structured["historical_data"][0]["severity_score"], 86)
+        self.assertEqual(structured["evidence"], ["历史排行结果", "预测服务输出"])
 
 
 if __name__ == "__main__":

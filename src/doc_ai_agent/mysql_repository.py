@@ -218,6 +218,10 @@ class MySQLRepository:
         self.db_url = db_url
         self.conn = self._parse_url(db_url)
 
+    def backend_label(self) -> str:
+        """返回仓储后端标签，便于上层统一展示。"""
+        return "MySQL"
+
     @staticmethod
     def _parse_url(db_url: str) -> MySQLConnectionInfo:
         """解析 `mysql://` 连接串，返回结构化连接信息。"""

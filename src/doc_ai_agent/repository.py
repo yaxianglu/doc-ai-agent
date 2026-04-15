@@ -28,6 +28,10 @@ class AlertRepository:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def backend_label(self) -> str:
+        """返回仓储后端标签，便于上层统一展示。"""
+        return "SQLite"
+
     def init_schema(self) -> None:
         """初始化告警表与唯一约束。"""
         with self._connect() as conn:

@@ -185,6 +185,29 @@ def normalize_memory_snapshot(snapshot: dict | None) -> dict:
     if not effective_domain and query_type.startswith(("pest_", "soil_")):
         query_type = ""
         route["query_type"] = ""
+    time_range_value = slots["time_range"]["value"]
+    existing_layers = dict(payload.get("memory_layers") or {})
+    session_context = dict(existing_layers.get("session_context") or {})
+    task_context = dict(existing_layers.get("task_context") or {})
+    user_context = dict(existing_layers.get("user_context") or payload.get("user_preferences") or {})
+    memory_layers = {
+        "session_context": {
+            "domain": str(session_context.get("domain") or effective_domain),
+            "region_name": str(session_context.get("region_name") or effective_region),
+            "route": dict(session_context.get("route") or route),
+            "forecast": dict(session_context.get("forecast") or payload.get("forecast") or {}),
+            "last_question": str(session_context.get("last_question") or payload.get("last_question") or ""),
+            "turn_count": int(session_context.get("turn_count") or turn_count),
+        },
+        "task_context": {
+            "query_type": str(task_context.get("query_type") or query_type),
+            "query_family": str(task_context.get("query_family") or last_query_family or query_family_from_type(query_type)),
+            "intent": str(task_context.get("intent") or (payload.get("conversation_state") or {}).get("last_intent") or payload.get("intent") or ""),
+            "time_range": dict(task_context.get("time_range") or time_range_value) if isinstance(task_context.get("time_range") or time_range_value, dict) else {"mode": "none", "value": None},
+            "pending_clarification": task_context.get("pending_clarification") or payload.get("pending_clarification"),
+        },
+        "user_context": dict(user_context),
+    }
     return {
         "memory_version": int(payload.get("memory_version") or 2),
         "turn_count": turn_count,
@@ -200,6 +223,7 @@ def normalize_memory_snapshot(snapshot: dict | None) -> dict:
         "pending_user_question": payload.get("pending_user_question"),
         "pending_clarification": payload.get("pending_clarification"),
         "user_preferences": dict(payload.get("user_preferences") or {}),
+        "memory_layers": memory_layers,
         "conversation_state": {
             "last_intent": str((payload.get("conversation_state") or {}).get("last_intent") or payload.get("intent") or ""),
             "last_answer_mode": str((payload.get("conversation_state") or {}).get("last_answer_mode") or payload.get("answer_mode") or ""),
