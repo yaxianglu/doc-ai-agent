@@ -9,6 +9,7 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from .advice_engine import AdviceEngine
+from .access_facade import AccessFacade
 from .agent_analysis_synthesis import build_data_grounded_advice, build_data_grounded_explanation
 from .agent_comparison import detect_compare_request
 from .agent_compare_execution import execute_compare_request
@@ -44,6 +45,7 @@ from .query_planner import QueryPlanner
 from .query_engine import QueryEngine
 from .request_understanding import RequestUnderstanding
 from .repository import AlertRepository
+from .response_builder import ResponseBuilder
 
 
 class AgentState(TypedDict, total=False):
@@ -99,6 +101,11 @@ class DocAIAgent:
         if llm_client and router_model:
             self.intent_router = IntentRouter(llm_client, router_model)
         self.query_playbook_router = query_playbook_router or create_query_playbook_router()
+        self.access_facade = AccessFacade(
+            repo=repo,
+            source_provider=source_provider,
+            query_playbook_router=self.query_playbook_router,
+        )
         self.query_planner = QueryPlanner(
             self.intent_router,
             self.query_playbook_router,
@@ -111,6 +118,7 @@ class DocAIAgent:
             letta_api_key=letta_api_key,
             letta_block_prefix=letta_block_prefix,
         )
+        self.response_builder = ResponseBuilder()
         self.graph = self._build_graph()
 
     @staticmethod
@@ -481,7 +489,7 @@ class DocAIAgent:
             memory_context=state.get("memory_context"),
             query_result=state.get("query_result") or {},
             forecast_result=state.get("forecast_result") or {},
-            source_provider=self.source_provider,
+            source_provider=self.access_facade,
             build_runtime_context=self._build_runtime_context,
             first_region_name=self._first_region_name,
         )
@@ -821,6 +829,17 @@ class DocAIAgent:
             context_trace=list(plan.get("context_trace") or []),
             response_meta={},
         ).to_dict()
+        structured_answer = self.response_builder.build(
+            question=state.get("question", ""),
+            answer=response.get("answer", ""),
+            response_mode=response.get("mode", ""),
+            analysis_context=dict(evidence.get("analysis_context") or {}),
+            historical_data=response.get("data") if isinstance(response.get("data"), list) else (response.get("data") or {}).get("historical", []),
+            forecast_data=(response.get("data") or {}).get("forecast", []) if isinstance(response.get("data"), dict) else [],
+            evidence_items=list(evidence.get("sources") or []) or list(evidence.get("knowledge_sources") or []) or list(evidence.get("execution_plan") or []),
+        )
+        evidence["structured_answer"] = structured_answer
+        evidence["access_layer"] = self.access_facade.backend_summary()
         evidence["response_meta"] = self._build_response_meta(state, response, evidence)
         response["evidence"] = evidence
         return {

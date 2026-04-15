@@ -181,6 +181,26 @@ def build_memory_snapshot(
         pending_user_question = question
         pending_clarification = "generic_intent"
 
+    time_range_value = slots["time_range"]["value"]
+    memory_layers = {
+        "session_context": {
+            "domain": domain,
+            "region_name": region_name,
+            "route": dict(route),
+            "forecast": dict(forecast),
+            "last_question": question,
+            "turn_count": turn_count,
+        },
+        "task_context": {
+            "query_type": query_type,
+            "query_family": query_family_from_type(query_type),
+            "intent": query_plan_intent,
+            "time_range": dict(time_range_value) if isinstance(time_range_value, dict) else {"mode": "none", "value": None},
+            "pending_clarification": pending_clarification,
+        },
+        "user_context": dict(previous_context.get("user_preferences") or {}),
+    }
+
     return {
         "memory_version": 2,
         "turn_count": turn_count,
@@ -196,6 +216,7 @@ def build_memory_snapshot(
         "pending_user_question": pending_user_question,
         "pending_clarification": pending_clarification,
         "user_preferences": dict(previous_context.get("user_preferences") or {}),
+        "memory_layers": memory_layers,
         "conversation_state": {
             "last_intent": str(plan.get("intent") or ""),
             "last_answer_mode": str(response.get("mode") or ""),

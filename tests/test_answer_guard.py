@@ -117,6 +117,25 @@ class AnswerGuardTests(unittest.TestCase):
         self.assertIsNone(result["retry_route"]["county"])
         self.assertEqual(result["retry_route"]["region_level"], "county")
 
+    def test_falls_back_when_answer_time_range_conflicts_with_question(self):
+        result = self.guard.review(
+            question="最近30天预警最多的是哪些地区？",
+            understanding={"domain": "", "needs_forecast": False},
+            plan={"route": {"query_type": "alerts_top"}},
+            query_result={},
+            forecast_result={},
+            response={
+                "mode": "data_query",
+                "answer": "过去5个月预警最多的地区为：1.淮安市。",
+                "data": [],
+                "evidence": {},
+            },
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["action"], "fallback")
+        self.assertEqual(result["violations"][0]["code"], "time_range_mismatch")
+
 
 if __name__ == "__main__":
     unittest.main()

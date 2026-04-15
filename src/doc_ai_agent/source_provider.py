@@ -162,6 +162,9 @@ class StaticSourceProvider:
     """静态关键词检索实现，适合作为零依赖默认后端。"""
     items: List[dict]
 
+    def backend_label(self) -> str:
+        return "Static"
+
     def search(self, question: str, limit: int = 3, context: dict | None = None) -> List[dict]:
         """执行静态关键词检索，并按匹配得分排序。"""
         keywords = self._keywords(question, context=context)
@@ -227,6 +230,9 @@ class LlamaIndexSourceProvider:
     def __post_init__(self) -> None:
         self._fallback = StaticSourceProvider(self.items)
 
+    def backend_label(self) -> str:
+        return "LlamaIndex" if self.backend is not None else "StaticFallback"
+
     def search(self, question: str, limit: int = 3, context: dict | None = None) -> List[dict]:
         """优先调用 LlamaIndex 检索，失败时回退静态检索。"""
         if self.backend is None:
@@ -254,6 +260,9 @@ class QdrantSourceProvider:
 
     def __post_init__(self) -> None:
         self._fallback = StaticSourceProvider(self.items)
+
+    def backend_label(self) -> str:
+        return "Qdrant" if self.backend is not None else "StaticFallback"
 
     def search(self, question: str, limit: int = 3, context: dict | None = None) -> List[dict]:
         """优先调用 Qdrant 语义检索，失败时回退静态检索。"""

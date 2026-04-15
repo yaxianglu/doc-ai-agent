@@ -116,6 +116,9 @@ class StaticQueryPlaybookRouter:
     playbooks: List[dict] = field(default_factory=lambda: [dict(item) for item in DEFAULT_QUERY_PLAYBOOKS])
     minimum_score: float = 4.0
 
+    def backend_label(self) -> str:
+        return "StaticPlaybookRouter"
+
     def search(self, question: str, limit: int = 1, context: dict | None = None) -> List[dict]:
         """返回得分最高的 playbook 结果列表。"""
         scored: list[tuple[float, dict]] = []
@@ -251,6 +254,9 @@ class LlamaIndexQueryPlaybookRouter:
 
     backend: QueryPlaybookBackend | None = None
     fallback: StaticQueryPlaybookRouter = field(default_factory=StaticQueryPlaybookRouter)
+
+    def backend_label(self) -> str:
+        return "LlamaIndexPlaybookRouter" if self.backend is not None else self.fallback.backend_label()
 
     def search(self, question: str, limit: int = 1, context: dict | None = None) -> List[dict]:
         """优先尝试后端检索，失败时回退到静态路由。"""

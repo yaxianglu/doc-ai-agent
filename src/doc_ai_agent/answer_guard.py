@@ -78,6 +78,17 @@ class AnswerGuard:
         return sanitized
 
     @staticmethod
+    def _explicit_time_hint(text: str) -> str:
+        normalized = str(text or "")
+        match = re.search(r"(最近|过去|近)(\d+)(天|周|个月|月)", normalized)
+        if not match:
+            return ""
+        unit = match.group(3)
+        if unit == "月":
+            unit = "个月"
+        return f"{match.group(2)}_{unit}"
+
+    @staticmethod
     def _trend_text(series: list[dict], value_key: str) -> str:
         if len(series) < 2:
             return "样本不足，暂不判断趋势"
@@ -201,10 +212,15 @@ class AnswerGuard:
         hard_violations: list[dict] = []
         soft_violations: list[dict] = []
         rewritten_answer = answer
+        question_time_hint = self._explicit_time_hint(question)
+        answer_time_hint = self._explicit_time_hint(answer)
 
         if "1970-01-01" in answer:
             soft_violations.append({"code": "internal_default_time_exposed", "message": "回答暴露了内部默认时间。"})
             rewritten_answer = self._sanitize_internal_time(rewritten_answer)
+
+        if question_time_hint and answer_time_hint and question_time_hint != answer_time_hint:
+            hard_violations.append({"code": "time_range_mismatch", "message": "回答时间范围与问题不一致。"})
 
         if expected_domain == "weather" and answer_domains - {"weather"}:
             hard_violations.append({"code": "domain_mismatch", "message": "问题是天气查询，但回答被农业分析结果劫持。"})

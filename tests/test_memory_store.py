@@ -102,6 +102,25 @@ class MemoryStoreTests(unittest.TestCase):
             for field in ["value", "source", "priority", "ttl", "updated_at_turn"]:
                 self.assertIn(field, snapshot["slots"][slot_name])
 
+    def test_normalize_memory_snapshot_adds_three_layer_context(self):
+        snapshot = normalize_memory_snapshot(
+            {
+                "domain": "pest",
+                "region_name": "徐州市",
+                "query_type": "pest_top",
+                "window": {"window_type": "months", "window_value": 5},
+                "route": {"query_type": "pest_top", "region_level": "city"},
+                "user_preferences": {"answer_style": "concise"},
+            }
+        )
+
+        self.assertIn("memory_layers", snapshot)
+        self.assertEqual(snapshot["memory_layers"]["session_context"]["domain"], "pest")
+        self.assertEqual(snapshot["memory_layers"]["session_context"]["region_name"], "徐州市")
+        self.assertEqual(snapshot["memory_layers"]["task_context"]["query_type"], "pest_top")
+        self.assertEqual(snapshot["memory_layers"]["task_context"]["time_range"]["value"], "5_months")
+        self.assertEqual(snapshot["memory_layers"]["user_context"]["answer_style"], "concise")
+
     def test_local_memory_store_load_normalizes_legacy_payload(self):
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "agent-memory.json")
