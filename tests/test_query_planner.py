@@ -81,6 +81,23 @@ class ForcedLowConfidenceSemanticParser:
         )
 
 
+class CountingSemanticParser:
+    def __init__(self):
+        self.calls = 0
+
+    def parse(self, question: str, context: dict | None = None):
+        del question, context
+        self.calls += 1
+        from doc_ai_agent.semantic_parse import SemanticParseResult
+
+        return SemanticParseResult(
+            normalized_query="counting-parse-ran",
+            intent="advice",
+            confidence=0.01,
+            trace=["unexpected-secondary-parse"],
+        )
+
+
 class QueryPlannerTests(unittest.TestCase):
     def test_planner_marks_boolean_answer_form_for_yes_no_forecast_question(self):
         planner = QueryPlanner(None)
@@ -1530,6 +1547,78 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["city"], "徐州市")
         self.assertEqual(plan["route"]["region_level"], "city")
         self.assertEqual(plan["route"]["window"], {"window_type": "months", "window_value": 3})
+        self.assertEqual(plan["reason"], "understanding_historical_data_query")
+
+    def test_planner_uses_understanding_semantics_without_secondary_parse(self):
+        semantic_parser = CountingSemanticParser()
+        planner = QueryPlanner(
+            None,
+            semantic_judger=NeutralSemanticJudger(),
+            semantic_parser=semantic_parser,
+        )
+
+        understanding = {
+            "intent": "data_query",
+            "domain": "pest",
+            "task_type": "trend",
+            "region_name": "徐州市",
+            "region_level": "city",
+            "window": {"window_type": "months", "window_value": 3},
+            "normalized_question": "徐州市过去三个月虫情趋势如何",
+            "semantic_parse": {
+                "normalized_query": "徐州市过去三个月虫情趋势如何",
+                "intent": "data_query",
+                "domain": "pest",
+                "task_type": "trend",
+                "region_name": "徐州市",
+                "region_level": "city",
+                "historical_window": {"window_type": "months", "window_value": 3},
+                "future_window": None,
+                "followup_type": "none",
+                "needs_clarification": False,
+                "confidence": 0.88,
+                "is_out_of_scope": False,
+                "fallback_reason": "",
+                "trace": ["from_understanding"],
+            },
+            "parsed_query": {
+                "domain": "pest",
+                "intent": ["data_query"],
+                "task_type": "trend",
+                "answer_form": "trend",
+                "region": {"name": "徐州市", "level": "city"},
+                "historical_window": {"kind": "history", "window_type": "months", "window_value": 3},
+                "follow_up": False,
+                "followup_type": "none",
+                "needs_clarification": False,
+                "capabilities": ["data_query"],
+                "confidence": 0.88,
+                "original_question": "过去三个月情况如何",
+                "resolved_question": "徐州市过去三个月虫情趋势如何",
+            },
+            "canonical_understanding": {
+                "intent": "data_query",
+                "domain": "pest",
+                "task_type": "trend",
+                "region_name": "徐州市",
+                "region_level": "city",
+                "historical_window": {"window_type": "months", "window_value": 3},
+                "future_window": None,
+                "followup_type": "none",
+                "needs_clarification": False,
+            },
+            "needs_historical": True,
+            "needs_forecast": False,
+            "needs_advice": False,
+            "needs_explanation": False,
+        }
+
+        plan = planner.plan("过去三个月情况如何", understanding=understanding)
+
+        self.assertEqual(semantic_parser.calls, 0)
+        self.assertFalse(plan["needs_clarification"])
+        self.assertEqual(plan["route"]["query_type"], "pest_trend")
+        self.assertEqual(plan["route"]["city"], "徐州市")
         self.assertEqual(plan["reason"], "understanding_historical_data_query")
 
 

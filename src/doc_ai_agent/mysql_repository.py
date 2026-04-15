@@ -20,6 +20,8 @@ from datetime import datetime
 import hashlib
 from typing import Iterable, List, Optional
 from urllib.parse import parse_qs, unquote, urlparse
+
+from .repository_contracts import AnalyticsRepository
 import subprocess
 
 
@@ -230,7 +232,7 @@ class MySQLConnectionInfo:
     params: dict
 
 
-class MySQLRepository:
+class MySQLRepository(AnalyticsRepository):
     """MySQL 数据仓储。
 
     该类通过命令行 `mysql` 客户端执行 SQL，而不是直接使用驱动连接。

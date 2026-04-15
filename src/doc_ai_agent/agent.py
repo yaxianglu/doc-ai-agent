@@ -112,6 +112,8 @@ class DocAIAgent:
             semantic_parser=semantic_parser,
         )
         self.request_understanding = RequestUnderstanding(backend=understanding_backend)
+        if semantic_parser is not None:
+            self.request_understanding.semantic_parser = semantic_parser
         self.memory_store = self._build_memory_store(
             memory_store_path=memory_store_path,
             letta_base_url=letta_base_url,
@@ -395,7 +397,7 @@ class DocAIAgent:
             )
         plan = dict(plan)
         if not plan.get("query_plan"):
-            plan = self.query_planner._finalize_plan(
+            plan = self.query_planner.finalize_plan(
                 plan,
                 question_for_planning,
                 context=state.get("memory_context"),
@@ -403,7 +405,7 @@ class DocAIAgent:
             )
         query_plan = dict(plan.get("query_plan") or {})
         route = self._plan_route(plan)
-        explicit_top_n = self.query_planner._extract_top_n(state.get("question", ""))
+        explicit_top_n = self.query_planner.extract_top_n(state.get("question", ""))
         if explicit_top_n:
             route["top_n"] = explicit_top_n
             if query_plan:
@@ -508,10 +510,10 @@ class DocAIAgent:
             plan=plan,
             previous_context=previous_context,
             understanding=understanding,
-            build_route=self.query_planner._build_route,
+            build_route=self.query_planner.build_route,
             plan_route=self._plan_route,
             infer_region_level_from_name=self._infer_region_level_from_name,
-            is_greeting_question=self.query_planner._is_greeting_question,
+            is_greeting_question=self.query_planner.is_greeting_question,
         )
 
     def _normalize_historical_route(
@@ -526,7 +528,7 @@ class DocAIAgent:
             route=route,
             understanding=understanding,
             previous_context=previous_context,
-            build_route=self.query_planner._build_route,
+            build_route=self.query_planner.build_route,
             infer_region_level_from_name=self._infer_region_level_from_name,
         )
 

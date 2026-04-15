@@ -680,6 +680,32 @@ class RequestUnderstandingTests(unittest.TestCase):
             },
         )
 
+    def test_emits_parsed_query_alongside_canonical_understanding(self):
+        understanding = RequestUnderstanding(backend=UnifiedSchemaBackend())
+        understanding.semantic_parser = AdviceSemanticParser()
+
+        result = understanding.analyze("请解释并给我建议")
+
+        self.assertEqual(
+            result["parsed_query"],
+            {
+                "domain": "pest",
+                "intent": ["data_query"],
+                "task_type": "ranking",
+                "answer_form": "composite",
+                "region": {"name": "苏州市", "level": "city"},
+                "historical_window": {"kind": "history", "window_type": "months", "window_value": 3},
+                "future_window": {"kind": "future", "window_type": "weeks", "window_value": 2, "horizon_days": 14},
+                "follow_up": False,
+                "followup_type": "none",
+                "needs_clarification": False,
+                "capabilities": ["data_query", "forecast", "advice"],
+                "confidence": 0.6,
+                "original_question": "请解释并给我建议",
+                "resolved_question": "请解释并给我建议",
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -72,6 +72,131 @@ class RichFakeSourceProvider:
         return items[:limit]
 
 
+class PublicPlannerOnly:
+    def __init__(self):
+        self.finalize_calls = []
+        self.extract_calls = []
+        self.build_route_calls = []
+        self.greeting_calls = []
+
+    def plan(self, *args, **kwargs):
+        del args, kwargs
+        return {
+            "intent": "data_query",
+            "confidence": 0.9,
+            "route": {
+                "query_type": "pest_top",
+                "since": "2026-01-01 00:00:00",
+                "until": None,
+                "city": None,
+                "county": None,
+                "device_code": None,
+                "region_level": "city",
+                "window": {"window_type": "months", "window_value": 5},
+                "top_n": 1,
+                "forecast_window": None,
+                "forecast_mode": "",
+                "answer_form": "unknown",
+            },
+            "query_plan": {},
+            "task_graph": {},
+            "needs_clarification": False,
+            "clarification": None,
+            "reason": "public_api_test",
+            "context_trace": [],
+        }
+
+    def finalize_plan(self, plan, question, context=None, understanding=None):
+        self.finalize_calls.append(
+            {
+                "question": question,
+                "context": dict(context or {}),
+                "understanding": dict(understanding or {}),
+            }
+        )
+        route = dict(plan.get("route") or {})
+        return {
+            **dict(plan),
+            "route": route,
+            "query_plan": {
+                "version": "v1",
+                "goal": "agri_analysis",
+                "intent": "analysis",
+                "slots": {
+                    "domain": "pest",
+                    "metric": "pest_severity",
+                    "time_range": {"mode": "relative", "value": "5_months"},
+                    "region_scope": {"level": "city", "value": "all"},
+                    "aggregation": "top_k",
+                    "k": 1,
+                    "need_explanation": False,
+                    "need_forecast": False,
+                    "need_advice": False,
+                },
+                "constraints": {
+                    "must_use_structured_data": True,
+                    "allow_clarification": True,
+                },
+                "execution": {
+                    "route": route,
+                    "domain": "pest",
+                    "region_name": "",
+                    "historical_window": {"window_type": "months", "window_value": 5},
+                    "future_window": None,
+                    "answer_mode": "ranking",
+                },
+                "decomposition": {
+                    "version": "v2",
+                    "plan_goal": "agri_analysis",
+                    "execution_plan": ["understand_request", "historical_query", "answer_synthesis"],
+                    "merge_strategy": "sectioned_answer",
+                    "tasks": [],
+                },
+            },
+            "task_graph": {
+                "execution_plan": ["understand_request", "historical_query", "answer_synthesis"],
+                "tasks": [],
+            },
+        }
+
+    def extract_top_n(self, question: str):
+        self.extract_calls.append(question)
+        return 3
+
+    def build_route(self, question: str, query_type: str):
+        self.build_route_calls.append((question, query_type))
+        return {
+            "query_type": query_type,
+            "since": "1970-01-01 00:00:00",
+            "until": None,
+            "city": None,
+            "county": None,
+            "device_code": None,
+            "region_level": "city",
+            "window": {"window_type": "all", "window_value": None},
+            "top_n": None,
+            "forecast_window": None,
+            "forecast_mode": "",
+            "answer_form": "unknown",
+        }
+
+    def is_greeting_question(self, question: str):
+        self.greeting_calls.append(question)
+        return question == "你好"
+
+    def _finalize_plan(self, *args, **kwargs):
+        raise AssertionError("private planner finalize helper should not be used")
+
+    def _extract_top_n(self, *args, **kwargs):
+        raise AssertionError("private planner top_n helper should not be used")
+
+    def _build_route(self, *args, **kwargs):
+        raise AssertionError("private planner route helper should not be used")
+
+    def _is_greeting_question(self, *args, **kwargs):
+        raise AssertionError("private planner greeting helper should not be used")
+
+
 class RecallThenRerankBackend:
     def __init__(self):
         self.last_limit = None
@@ -1242,6 +1367,55 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(len(result["data"]), 3)
         self.assertIn("Top3", result["answer"])
         self.assertEqual(result["evidence"]["memory_state"]["route"]["top_n"], 3)
+
+    def test_plan_node_uses_public_planner_helpers_for_finalize_and_top_n(self):
+        agent = DocAIAgent(FakeStructuredRepo())
+        planner = PublicPlannerOnly()
+        agent.query_planner = planner
+
+        updates = agent._plan_node(
+            {
+                "question": "过去5个月虫情最严重的前3个地方是哪里？",
+                "history": [],
+                "memory_context": {},
+                "understanding": {},
+                "plan": {},
+            }
+        )
+
+        self.assertEqual(len(planner.finalize_calls), 1)
+        self.assertEqual(planner.extract_calls, ["过去5个月虫情最严重的前3个地方是哪里？"])
+        self.assertEqual(updates["plan"]["route"]["top_n"], 3)
+
+    def test_build_runtime_context_uses_public_planner_helpers(self):
+        agent = DocAIAgent(FakeStructuredRepo())
+        planner = PublicPlannerOnly()
+        agent.query_planner = planner
+
+        context = agent._build_runtime_context(
+            "你好",
+            {
+                "route": {
+                    "query_type": "count",
+                    "since": "1970-01-01 00:00:00",
+                    "until": None,
+                    "city": None,
+                    "county": None,
+                    "device_code": None,
+                    "region_level": "city",
+                    "window": {"window_type": "all", "window_value": None},
+                    "top_n": None,
+                    "forecast_window": None,
+                    "forecast_mode": "",
+                    "answer_form": "unknown",
+                }
+            },
+            understanding={},
+        )
+
+        self.assertEqual(planner.build_route_calls, [("你好", "count")])
+        self.assertEqual(planner.greeting_calls, ["你好"])
+        self.assertEqual(context["route"], {})
 
     def test_memory_state_exposes_slot_metadata(self):
         agent = DocAIAgent(

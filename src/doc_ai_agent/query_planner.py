@@ -128,6 +128,38 @@ class QueryPlanner:
         return SemanticParseResult(normalized_query=str(question or "").strip())
 
     @staticmethod
+    def _semantic_result_from_understanding(question: str, understanding: dict | None) -> SemanticParseResult | None:
+        if not isinstance(understanding, dict):
+            return None
+        semantic_parse = understanding.get("semantic_parse")
+        if isinstance(semantic_parse, dict):
+            return SemanticParseResult.from_dict(semantic_parse)
+        parsed_query = understanding.get("parsed_query")
+        if not isinstance(parsed_query, dict):
+            return None
+        future_window = understanding.get("future_window")
+        return SemanticParseResult(
+            normalized_query=str(
+                understanding.get("normalized_question")
+                or understanding.get("resolved_question")
+                or question
+                or ""
+            ).strip(),
+            intent=str(understanding.get("intent") or "advice"),
+            domain=str(understanding.get("domain") or ""),
+            task_type=str(understanding.get("task_type") or "unknown"),
+            region_name=str(understanding.get("region_name") or ""),
+            region_level=str(understanding.get("region_level") or ""),
+            historical_window=dict(understanding.get("window") or {"window_type": "all", "window_value": None}),
+            future_window=dict(future_window) if isinstance(future_window, dict) else None,
+            followup_type=str(understanding.get("followup_type") or "none"),
+            needs_clarification=bool(understanding.get("needs_clarification")),
+            confidence=float(understanding.get("confidence") or 0.0),
+            fallback_reason=str(understanding.get("fallback_reason") or ""),
+            trace=list(understanding.get("trace") or []),
+        )
+
+    @staticmethod
     def _is_agri_query_type(query_type: str) -> bool:
         return query_type in {
             "pest_detail",
@@ -168,6 +200,10 @@ class QueryPlanner:
 
     def _extract_top_n(self, question: str) -> Optional[int]:
         return extract_top_n(question)
+
+    def extract_top_n(self, question: str) -> Optional[int]:
+        """公开的 top_n 提取入口，供编排层复用。"""
+        return self._extract_top_n(question)
 
     @staticmethod
     def _asks_for_multiple_ranked_results(question: str) -> bool:
@@ -211,6 +247,10 @@ class QueryPlanner:
 
     def _build_route(self, question: str, query_type: str) -> dict:
         return build_query_route(question, query_type)
+
+    def build_route(self, question: str, query_type: str) -> dict:
+        """公开的 route 构建入口，避免外部依赖私有实现。"""
+        return self._build_route(question, query_type)
 
     def _normalize_router_route(self, question: str, route: dict) -> dict:
         return normalize_router_route(
@@ -322,6 +362,10 @@ class QueryPlanner:
             is_scope_correction_follow_up=self._is_scope_correction_follow_up,
         )
 
+    def finalize_plan(self, plan: dict, question: str, context: dict | None = None, understanding: dict | None = None) -> dict:
+        """公开的计划收口入口，供编排层和测试复用。"""
+        return self._finalize_plan(plan, question, context=context, understanding=understanding)
+
     @staticmethod
     def _has_actionable_canonical_understanding(understanding: dict | None) -> bool:
         canonical = canonical_understanding_payload(understanding)
@@ -422,6 +466,10 @@ class QueryPlanner:
     def _is_greeting_question(cls, question: str) -> bool:
         return SemanticJudger.is_greeting_question(question)
 
+    def is_greeting_question(self, question: str) -> bool:
+        """公开的问候识别入口，供运行时上下文构建复用。"""
+        return self._is_greeting_question(question)
+
     @staticmethod
     def _is_scope_correction_follow_up(question: str) -> bool:
         return is_scope_correction_follow_up(question)
@@ -494,6 +542,13 @@ class QueryPlanner:
         """
         original_question = question
         question = self._resolve_follow_up_question(question, history, context=context)
+        has_precomputed_semantics = bool(
+            isinstance(understanding, dict)
+            and (
+                isinstance(understanding.get("semantic_parse"), dict)
+                or isinstance(understanding.get("parsed_query"), dict)
+            )
+        )
         if understanding is not None and not understanding.get("parsed_query"):
             try:
                 understanding = dict(understanding)
@@ -504,7 +559,9 @@ class QueryPlanner:
                 ).to_dict()
             except Exception:
                 understanding = understanding
-        parse_result = self._parse_semantics(question, context=context)
+        parse_result = self._semantic_result_from_understanding(question, understanding) if has_precomputed_semantics else None
+        if parse_result is None:
+            parse_result = self._parse_semantics(question, context=context)
         if parse_result.normalized_query:
             question = parse_result.normalized_query
         semantic_decision = self.semantic_judger.judge(question)
