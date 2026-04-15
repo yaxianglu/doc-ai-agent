@@ -2,10 +2,18 @@ import os
 import tempfile
 import unittest
 
+from doc_ai_agent.repository_contracts import AnalyticsRepository
 from doc_ai_agent.repository import AlertRepository
 
 
 class RepositoryTests(unittest.TestCase):
+    def test_alert_repository_satisfies_analytics_repository_protocol(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = os.path.join(td, "alerts.db")
+            repo = AlertRepository(db)
+
+            self.assertIsInstance(repo, AnalyticsRepository)
+
     def test_count_and_top_city(self):
         with tempfile.TemporaryDirectory() as td:
             db = os.path.join(td, "alerts.db")

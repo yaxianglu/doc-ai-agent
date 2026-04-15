@@ -12,8 +12,10 @@ import os
 import sqlite3
 from typing import Iterable, List, Optional
 
+from .repository_contracts import AnalyticsRepository
 
-class AlertRepository:
+
+class AlertRepository(AnalyticsRepository):
     """告警数据仓储（SQLite 实现）。"""
 
     def __init__(self, db_path: str):

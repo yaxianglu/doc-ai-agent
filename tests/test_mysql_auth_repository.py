@@ -2,6 +2,7 @@ import json
 import unittest
 
 from doc_ai_agent.mysql_repository import MySQLRepository
+from doc_ai_agent.repository_contracts import AnalyticsRepository
 
 
 class InspectableMySQLRepository(MySQLRepository):
@@ -24,6 +25,11 @@ class InspectableMySQLRepository(MySQLRepository):
 
 
 class MySQLAuthRepositoryTests(unittest.TestCase):
+    def test_mysql_repository_satisfies_analytics_repository_protocol(self):
+        repo = InspectableMySQLRepository()
+
+        self.assertIsInstance(repo, AnalyticsRepository)
+
     def test_create_tables_contains_auth_schema(self):
         repo = InspectableMySQLRepository()
 

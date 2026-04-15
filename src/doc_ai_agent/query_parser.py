@@ -16,4 +16,7 @@ class QueryParser:
         """解析问题并返回统一 QueryDSL。"""
 
         understanding = self.understanding_engine.analyze(question, history=history, context=context)
+        parsed_query = understanding.get("parsed_query") if isinstance(understanding, dict) else None
+        if isinstance(parsed_query, dict):
+            return QueryDSL.from_dict(parsed_query)
         return query_dsl_from_understanding(understanding)
