@@ -727,7 +727,7 @@ class DocAIAgent:
 
     def _answer_guard_node(self, state: AgentState) -> dict:
         response = dict(state.get("response") or {})
-        if not response.get("answer") or response.get("mode") == "advice":
+        if not response.get("answer"):
             return {"response": response, "orchestration_state": self._orchestration_state(state)}
         review = self.answer_guard.review(
             question=state.get("question", ""),
@@ -756,11 +756,14 @@ class DocAIAgent:
             merged_evidence.update(dict(refreshed_query_result.get("evidence") or {}))
             guarded["evidence"] = merged_evidence
         evidence = dict(guarded.get("evidence") or {})
+        violation_codes = [str(item.get("code") or "") for item in review["violations"]]
+        if "invalid_input_business_answer" in violation_codes:
+            evidence["generation_mode"] = "clarification"
         evidence["answer_guard"] = {
             "ok": review["ok"],
             "action": review["action"],
             "violations": list(review["violations"]),
-            "violation_codes": [str(item.get("code") or "") for item in review["violations"]],
+            "violation_codes": violation_codes,
         }
         guarded["evidence"] = evidence
         if refreshed_query_result:

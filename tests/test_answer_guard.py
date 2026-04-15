@@ -136,6 +136,21 @@ class AnswerGuardTests(unittest.TestCase):
         self.assertEqual(result["action"], "fallback")
         self.assertEqual(result["violations"][0]["code"], "time_range_mismatch")
 
+    def test_invalid_input_business_advice_is_rewritten_to_clarification(self):
+        result = self.guard.review(
+            question="h d k j h sa d k l j",
+            understanding={"fallback_reason": "invalid_gibberish"},
+            plan={"intent": "advice"},
+            query_result={},
+            forecast_result={},
+            response={"mode": "advice", "answer": "建议：先分区核查土壤墒情。"},
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["action"], "fallback")
+        self.assertEqual(result["violations"][0]["code"], "invalid_input_business_answer")
+        self.assertIn("没看懂", result["fallback_answer"])
+
 
 if __name__ == "__main__":
     unittest.main()
