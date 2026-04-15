@@ -881,6 +881,15 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertTrue(plan["needs_clarification"])
         self.assertEqual(plan["reason"], "low_signal")
 
+    def test_router_advice_does_not_override_invalid_input(self):
+        planner = QueryPlanner(FakeRouter({"intent": "advice"}))
+
+        plan = planner.plan("h d k j h sa d k l j")
+
+        self.assertTrue(plan["needs_clarification"])
+        self.assertEqual(plan["reason"], "invalid_gibberish")
+        self.assertIn("没看懂", plan["clarification"])
+
     def test_out_of_scope_weather_question_returns_capability_boundary(self):
         planner = QueryPlanner(None)
         plan = planner.plan("浙江天气")

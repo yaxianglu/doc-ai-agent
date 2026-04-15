@@ -52,12 +52,14 @@ from .query_intent_routing import (
     domain_from_query_type,
     finalize_plan,
     infer_query_type,
+    input_guard_decision,
     is_low_signal,
     merge_router_route,
     needs_agri_domain_clarification,
     normalize_router_route,
     score_advice,
     score_data,
+    should_accept_router_advice,
 )
 from .query_parser import QueryParser
 from .query_plan import canonical_understanding_payload, route_from_canonical_understanding
@@ -268,6 +270,14 @@ class QueryPlanner:
 
     def _is_low_signal(self, question: str) -> bool:
         return is_low_signal(question, is_greeting_question=self._is_greeting_question)
+
+    @staticmethod
+    def _input_guard_decision(question: str) -> dict:
+        return input_guard_decision(question)
+
+    @staticmethod
+    def _should_accept_router_advice(question: str, understanding: dict | None = None) -> bool:
+        return should_accept_router_advice(question, understanding=understanding)
 
     @classmethod
     def _out_of_scope_capability_reply(cls, question: str) -> str | None:
@@ -600,6 +610,17 @@ class QueryPlanner:
                 "reason": SemanticJudger.REASON_GREETING,
                 "context_trace": self._semantic_context_trace(SemanticJudger.REASON_GREETING, parse_result.trace),
             }, question, context=context, understanding=understanding)
+        input_guard = self._input_guard_decision(question)
+        if not input_guard["is_valid_input"]:
+            return self._finalize_plan({
+                "intent": "advice",
+                "confidence": max(self._safe_confidence(input_guard["confidence"]), semantic_confidence),
+                "route": self._build_route(question, "count"),
+                "needs_clarification": True,
+                "clarification": input_guard["clarification"],
+                "reason": input_guard["reason"] or "invalid_input",
+                "context_trace": list(dict.fromkeys([*list(parse_result.trace), "input_guard"])),
+            }, question, context=context, understanding=understanding)
         if parse_result.needs_clarification or semantic_confidence < 0.35:
             return self._finalize_plan({
                 "intent": "advice",
@@ -767,10 +788,13 @@ class QueryPlanner:
                         "reason": "router_data_query",
                         "context_trace": [],
                     }, question, context=context, understanding=understanding)
-                if not (
-                    isinstance(understanding, dict)
-                    and understanding.get("needs_historical")
-                    and str(understanding.get("domain") or "") in {"pest", "soil", "mixed"}
+                if (
+                    self._should_accept_router_advice(question, understanding=understanding)
+                    and not (
+                        isinstance(understanding, dict)
+                        and understanding.get("needs_historical")
+                        and str(understanding.get("domain") or "") in {"pest", "soil", "mixed"}
+                    )
                 ):
                     return self._finalize_plan({
                         "intent": "advice",
