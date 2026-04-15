@@ -537,6 +537,17 @@ class SpyAdviceEngine:
         )
 
 
+class AggressiveAdviceEngine:
+    def answer(self, question: str, context=None) -> AdviceResult:
+        del question, context
+        return AdviceResult(
+            answer="建议：1. 先分区核查土壤墒情。 2. 对低墒地块优先补水。",
+            sources=[{"title": "模型建议", "url": "", "published_at": "", "snippet": ""}],
+            generation_mode="llm",
+            model="gpt-test",
+        )
+
+
 class AggressiveRouterLLM(FakeLLMClient):
     def complete_json(self, model, system_prompt, user_prompt):
         if "意图路由" in system_prompt and "为什么" in user_prompt:
@@ -627,6 +638,85 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], "semantic_low_confidence")
         self.assertLess(result["evidence"]["response_meta"]["confidence"], 0.4)
 
+    def test_invalid_input_business_advice_is_fallbacked_by_answer_guard(self):
+        class BadAdvicePlanner:
+            def plan(self, *args, **kwargs):
+                del args, kwargs
+                return {
+                    "intent": "advice",
+                    "confidence": 0.9,
+                    "route": {
+                        "query_type": "count",
+                        "since": "1970-01-01 00:00:00",
+                        "until": None,
+                        "city": None,
+                        "county": None,
+                        "device_code": None,
+                        "region_level": "city",
+                        "window": {"window_type": "all", "window_value": None},
+                        "top_n": None,
+                        "forecast_window": None,
+                        "forecast_mode": "",
+                        "answer_form": "unknown",
+                    },
+                    "query_plan": {},
+                    "task_graph": {},
+                    "needs_clarification": False,
+                    "clarification": None,
+                    "reason": "router_advice",
+                    "context_trace": [],
+                }
+
+            def finalize_plan(self, plan, question, context=None, understanding=None):
+                del question, context, understanding
+                return {
+                    **dict(plan),
+                    "route": dict(plan.get("route") or {}),
+                    "query_plan": {},
+                    "task_graph": {},
+                }
+
+            def extract_top_n(self, question: str):
+                del question
+                return None
+
+            def build_route(self, question: str, query_type: str):
+                del question
+                return {
+                    "query_type": query_type,
+                    "since": "1970-01-01 00:00:00",
+                    "until": None,
+                    "city": None,
+                    "county": None,
+                    "device_code": None,
+                    "region_level": "city",
+                    "window": {"window_type": "all", "window_value": None},
+                    "top_n": None,
+                    "forecast_window": None,
+                    "forecast_mode": "",
+                    "answer_form": "unknown",
+                }
+
+            def is_greeting_question(self, question: str):
+                del question
+                return False
+
+        agent = DocAIAgent(
+            AlertRepository(self.db),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+        agent.query_planner = BadAdvicePlanner()
+        agent.advice_engine = AggressiveAdviceEngine()
+
+        result = agent.answer("h d k j h sa d k l j", thread_id="thread-invalid-answer-guard")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("没看懂", result["answer"])
+        self.assertEqual(result["evidence"]["generation_mode"], "clarification")
+        self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], "invalid_gibberish")
+        self.assertEqual(result["evidence"]["answer_guard"]["action"], "fallback")
+        self.assertIn("invalid_input_business_answer", result["evidence"]["answer_guard"]["violation_codes"])
+
     def test_identity_question_returns_capability_intro(self):
         agent = DocAIAgent(
             AlertRepository(self.db),
@@ -698,6 +788,36 @@ class AgentTests(unittest.TestCase):
                 self.assertEqual(result["evidence"]["request_understanding"]["fallback_reason"], reason)
                 self.assertIn(f"ood:{reason}", result["evidence"]["request_understanding"]["trace"])
                 self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], reason)
+
+    def test_short_english_fragment_returns_invalid_input_clarification(self):
+        agent = DocAIAgent(
+            AlertRepository(self.db),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("asd qwe zxc", thread_id="thread-invalid-english")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertEqual(result["evidence"]["generation_mode"], "clarification")
+        self.assertEqual(result["evidence"]["request_understanding"]["fallback_reason"], "invalid_gibberish")
+        self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], "invalid_gibberish")
+        self.assertIn("没看懂", result["answer"])
+
+    def test_invalid_fragment_follow_up_does_not_reuse_previous_context(self):
+        agent = DocAIAgent(
+            AlertRepository(self.db),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("过去5个月墒情最严重的地方是哪里", thread_id="thread-invalid-follow-up")
+        follow_up = agent.answer("asd qwe zxc", thread_id="thread-invalid-follow-up")
+
+        self.assertEqual(follow_up["mode"], "advice")
+        self.assertEqual(follow_up["evidence"]["generation_mode"], "clarification")
+        self.assertEqual(follow_up["evidence"]["request_understanding"]["fallback_reason"], "invalid_gibberish")
+        self.assertFalse(follow_up["evidence"]["request_understanding"]["used_context"])
+        self.assertIn("没看懂", follow_up["answer"])
+        self.assertNotIn("墒情最严重", follow_up["answer"])
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()

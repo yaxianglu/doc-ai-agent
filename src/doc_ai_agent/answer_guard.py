@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from .agri_semantics import asks_county_scope, has_trend_intent
+from .input_guard import classify_input_quality
 from .query_plan import execution_route
 from .request_understanding_reasoning import has_negated_trend
 
@@ -13,6 +14,7 @@ TREND_CUES = ("趋势", "上升", "下降", "平稳", "波动", "缓解", "增�
 
 class AnswerGuard:
     """对最终答案做轻量规则守卫，优先重写，无法修复时再降级。"""
+    INVALID_INPUT_REASONS = {"low_signal", "semantic_low_confidence"}
 
     @staticmethod
     def _route(plan: dict) -> dict:
@@ -76,6 +78,57 @@ class AnswerGuard:
         sanitized = sanitized.replace("1970-01-01", "历史")
         sanitized = re.sub(r"历史上整体", "整体", sanitized)
         return sanitized
+
+    @classmethod
+    def _invalid_input_reason(cls, understanding: dict, plan: dict) -> str:
+        for candidate in [
+            str((understanding or {}).get("fallback_reason") or ""),
+            str((plan or {}).get("reason") or ""),
+        ]:
+            if candidate.startswith("invalid_") or candidate in cls.INVALID_INPUT_REASONS:
+                return candidate
+        return ""
+
+    @staticmethod
+    def _invalid_input_clarification(question: str, reason: str) -> str:
+        decision = classify_input_quality(question)
+        clarification = str(decision.get("clarification") or "").strip()
+        if clarification:
+            return clarification
+        if reason == "semantic_low_confidence":
+            return "请补充你要查询的领域、地区或时间范围，我再继续查询。"
+        return "我没看懂这条输入。你可以直接问虫情、墒情、预警数据，或让我给处置建议。"
+
+    @staticmethod
+    def _looks_like_clarification(answer: str) -> bool:
+        normalized = str(answer or "")
+        return any(
+            token in normalized
+            for token in ["我没看懂", "请补充", "你可以直接问", "我目前主要支持", "你想看虫情还是墒情"]
+        )
+
+    @classmethod
+    def _answer_contains_business_claim(cls, answer: str) -> bool:
+        normalized = str(answer or "").strip()
+        if not normalized or cls._looks_like_clarification(normalized):
+            return False
+        if re.search(r"^(建议|原因|依据|风险点|复查项)[:：]", normalized):
+            return True
+        if any(
+            token in normalized
+            for token in ["整体虫情概况", "整体墒情概况", "虫情趋势", "墒情趋势", "预警数量趋势", "最近值", "峰值", "观测日"]
+        ):
+            return True
+        if (
+            any(token in normalized for token in ["虫情", "墒情", "预警"])
+            and any(token in normalized for token in ["补水", "排水", "巡查", "防治", "核查", "复查", "上升", "下降"])
+        ):
+            return True
+        if re.search(r"(?:^|[\s；;])(?:1[.、]|2[.、]|3[.、])", normalized) and any(
+            token in normalized for token in ["补水", "排水", "巡查", "防治", "核查", "复查"]
+        ):
+            return True
+        return False
 
     @staticmethod
     def _explicit_time_hint(text: str) -> str:
@@ -230,6 +283,30 @@ class AnswerGuard:
     ) -> dict:
         """审查最终回答，并返回 pass / rewrite / fallback 结果。"""
         answer = str(response.get("answer") or "")
+        invalid_input_reason = self._invalid_input_reason(understanding, plan)
+        if response.get("mode") == "advice" and not invalid_input_reason and not self._answer_contains_business_claim(answer):
+            return {
+                "ok": True,
+                "action": "pass",
+                "violations": [],
+                "rewritten_answer": "",
+                "fallback_answer": "",
+                "retry_route": {},
+            }
+        if invalid_input_reason and self._answer_contains_business_claim(answer):
+            return {
+                "ok": False,
+                "action": "fallback",
+                "violations": [
+                    {
+                        "code": "invalid_input_business_answer",
+                        "message": "输入无效或低置信，但回答生成了业务结论。",
+                    }
+                ],
+                "rewritten_answer": "",
+                "fallback_answer": self._invalid_input_clarification(question, invalid_input_reason),
+                "retry_route": {},
+            }
         expected_domain = self._expected_domain(question, understanding, plan, query_result, forecast_result)
         answer_domains = self._domains_in_text(answer)
         route = self._route(plan)

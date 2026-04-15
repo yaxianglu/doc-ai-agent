@@ -145,6 +145,10 @@ def response_confidence(plan: dict, response: dict, evidence: dict, source_types
 def response_fallback_reason(response: dict, evidence: dict, plan: dict, source_types: list[str]) -> str:
     """提取响应中最值得向前端暴露的降级原因。"""
     if evidence.get("generation_mode") == "clarification" or plan.get("needs_clarification"):
+        request_understanding = dict(evidence.get("request_understanding") or {})
+        request_reason = str(request_understanding.get("fallback_reason") or "")
+        if request_reason:
+            return request_reason
         return str(plan.get("reason") or "clarification")
 
     historical_query = dict(evidence.get("historical_query") or {})

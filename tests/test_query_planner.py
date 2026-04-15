@@ -873,13 +873,13 @@ class QueryPlannerTests(unittest.TestCase):
         planner = QueryPlanner(None)
         plan = planner.plan("123456")
         self.assertTrue(plan["needs_clarification"])
-        self.assertEqual(plan["reason"], "low_signal")
+        self.assertEqual(plan["reason"], "invalid_noise")
 
     def test_low_signal_question_needs_clarification_with_router(self):
         planner = QueryPlanner(FakeRouter({"intent": "advice"}))
         plan = planner.plan("123456")
         self.assertTrue(plan["needs_clarification"])
-        self.assertEqual(plan["reason"], "low_signal")
+        self.assertEqual(plan["reason"], "invalid_noise")
 
     def test_router_advice_does_not_override_invalid_input(self):
         planner = QueryPlanner(FakeRouter({"intent": "advice"}))
