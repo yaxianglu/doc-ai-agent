@@ -10,6 +10,7 @@ from typing import Dict, Optional
 from .query_extractors import extract_city as shared_extract_city
 from .query_extractors import extract_day_range as shared_extract_day_range
 from .capability_result import CapabilityResult
+from .repository_contracts import AlertQueryRepository, MonitoringRepository
 
 
 @dataclass
@@ -28,6 +29,28 @@ class QueryEngine:
     """面向查询计划的执行器，负责路由到不同数据查询分支。"""
     def __init__(self, repo):
         self.repo = repo
+
+    def _alert_query_repo(self) -> AlertQueryRepository | None:
+        if isinstance(self.repo, AlertQueryRepository):
+            return self.repo
+        return None
+
+    def _require_alert_query_repo(self) -> AlertQueryRepository:
+        repo = self._alert_query_repo()
+        if repo is None:
+            raise RuntimeError("alert query repository contract is required for alert query flows")
+        return repo
+
+    def _monitoring_repo(self) -> MonitoringRepository | None:
+        if isinstance(self.repo, MonitoringRepository):
+            return self.repo
+        return None
+
+    def _require_monitoring_repo(self) -> MonitoringRepository:
+        repo = self._monitoring_repo()
+        if repo is None:
+            raise RuntimeError("monitoring repository contract is required for structured agri query flows")
+        return repo
 
     def _parse_timestamp(self, value: Optional[str]) -> Optional[datetime]:
         if not value:
@@ -245,14 +268,16 @@ class QueryEngine:
         return overall_label
 
     def _available_alert_range_suffix(self) -> str:
-        if not hasattr(self.repo, "available_alert_time_range"):
+        repo = self._alert_query_repo()
+        if repo is None:
             return ""
-        return self._format_time_range_suffix("告警数据", self.repo.available_alert_time_range())
+        return self._format_time_range_suffix("告警数据", repo.available_alert_time_range())
 
     def _available_alert_ranges(self) -> list[dict]:
-        if not hasattr(self.repo, "available_alert_time_range"):
+        repo = self._alert_query_repo()
+        if repo is None:
             return []
-        item = self._build_available_range_item("alerts", "告警数据", self.repo.available_alert_time_range())
+        item = self._build_available_range_item("alerts", "告警数据", repo.available_alert_time_range())
         return [item] if item else []
 
     def _build_no_data_reason(
@@ -294,45 +319,50 @@ class QueryEngine:
         }
 
     def _available_pest_range_suffix(self) -> str:
-        if not hasattr(self.repo, "available_pest_time_range"):
+        repo = self._monitoring_repo()
+        if repo is None:
             return ""
-        return self._format_time_range_suffix("虫情监测数据", self.repo.available_pest_time_range())
+        return self._format_time_range_suffix("虫情监测数据", repo.available_pest_time_range())
 
     def _available_pest_time_range(self) -> Optional[dict]:
-        if not hasattr(self.repo, "available_pest_time_range"):
+        repo = self._monitoring_repo()
+        if repo is None:
             return None
-        return self.repo.available_pest_time_range()
+        return repo.available_pest_time_range()
 
     def _available_pest_ranges(self) -> list[dict]:
         item = self._build_available_range_item("pest", "虫情监测数据", self._available_pest_time_range())
         return [item] if item else []
 
     def _available_soil_range_suffix(self, anomaly_direction: Optional[str] = None) -> str:
-        if not hasattr(self.repo, "available_soil_time_range"):
+        repo = self._monitoring_repo()
+        if repo is None:
             return ""
         try:
-            time_range = self.repo.available_soil_time_range(anomaly_direction=anomaly_direction)
+            time_range = repo.available_soil_time_range(anomaly_direction=anomaly_direction)
         except TypeError:
-            time_range = self.repo.available_soil_time_range()
+            time_range = repo.available_soil_time_range()
         return self._format_time_range_suffix("墒情监测数据", time_range)
 
     def _available_soil_ranges(self, anomaly_direction: Optional[str] = None) -> list[dict]:
-        if not hasattr(self.repo, "available_soil_time_range"):
+        repo = self._monitoring_repo()
+        if repo is None:
             return []
         try:
-            time_range = self.repo.available_soil_time_range(anomaly_direction=anomaly_direction)
+            time_range = repo.available_soil_time_range(anomaly_direction=anomaly_direction)
         except TypeError:
-            time_range = self.repo.available_soil_time_range()
+            time_range = repo.available_soil_time_range()
         item = self._build_available_range_item("soil", "墒情监测数据", time_range)
         return [item] if item else []
 
     def _available_soil_time_range(self, anomaly_direction: Optional[str] = None) -> Optional[dict]:
-        if not hasattr(self.repo, "available_soil_time_range"):
+        repo = self._monitoring_repo()
+        if repo is None:
             return None
         try:
-            return self.repo.available_soil_time_range(anomaly_direction=anomaly_direction)
+            return repo.available_soil_time_range(anomaly_direction=anomaly_direction)
         except TypeError:
-            return self.repo.available_soil_time_range()
+            return repo.available_soil_time_range()
 
     def _extract_region(self, question: str, plan: dict) -> tuple[Optional[str], str]:
         county = plan.get("county") or None
@@ -484,6 +514,7 @@ class QueryEngine:
         return detail_line
 
     def _answer_pest_top(self, question: str, plan: dict) -> QueryResult:
+        repo = self._require_monitoring_repo()
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_level = str(plan.get("region_level") or "city")
@@ -492,8 +523,8 @@ class QueryEngine:
         county = plan.get("county")
         wants_city_then_county = "市" in question and ("再细到县" in question or "细到县" in question or "再细到区县" in question)
         if wants_city_then_county:
-            city_rows = self.repo.top_pest_regions(since, until, region_level="city", top_n=min(max(top_n, 3), 5), city=None, county=None)
-            county_rows = self.repo.top_pest_regions(since, until, region_level="county", top_n=max(top_n, 5), city=None, county=None)
+            city_rows = repo.top_pest_regions(since, until, region_level="city", top_n=min(max(top_n, 3), 5), city=None, county=None)
+            county_rows = repo.top_pest_regions(since, until, region_level="county", top_n=max(top_n, 5), city=None, county=None)
             since_scope = self._format_since_scope(since)
             prefix = f"{since_scope}，" if since_scope else "历史上，"
             city_text = "；".join(
@@ -515,12 +546,12 @@ class QueryEngine:
                     "region_level": "city_then_county",
                     "city": None,
                     "county": None,
-                    "samples": self.repo.sample_pest_records(since, until, 3),
+                    "samples": repo.sample_pest_records(since, until, 3),
                     "available_data_ranges": [],
                     "no_data_reasons": [],
                 },
             )
-        data = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=top_n, city=city, county=county)
+        data = repo.top_pest_regions(since, until, region_level=region_level, top_n=top_n, city=city, county=county)
         scope_label = "区县" if region_level == "county" else "地区"
         if data:
             since_scope = self._format_since_scope(since)
@@ -546,7 +577,7 @@ class QueryEngine:
                 "region_level": region_level,
                 "city": city,
                 "county": county,
-                "samples": self.repo.sample_pest_records(since, until, 3),
+                "samples": repo.sample_pest_records(since, until, 3),
                 "available_data_ranges": self._available_pest_ranges() if not data else [],
                 "no_data_reasons": [
                     self._build_no_data_reason(
@@ -578,6 +609,7 @@ class QueryEngine:
         )
 
     def _answer_soil_top(self, question: str, plan: dict) -> QueryResult:
+        repo = self._require_monitoring_repo()
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_level = str(plan.get("region_level") or "city")
@@ -590,7 +622,7 @@ class QueryEngine:
             anomaly_direction = None
         city = plan.get("city")
         county = plan.get("county")
-        data = self.repo.top_soil_regions(
+        data = repo.top_soil_regions(
             since,
             until,
             region_level=region_level,
@@ -625,7 +657,7 @@ class QueryEngine:
                 "city": city,
                 "county": county,
                 "mapping_notice": "墒情地区字段来自主表或辅助告警映射，未映射设备会落入未知地区",
-                "samples": self.repo.sample_soil_records(since, until, 3),
+                "samples": repo.sample_soil_records(since, until, 3),
                 "available_data_ranges": self._available_soil_ranges(anomaly_direction=anomaly_direction) if not data else [],
                 "no_data_reasons": [
                     self._build_no_data_reason(
@@ -658,10 +690,11 @@ class QueryEngine:
         )
 
     def _answer_pest_trend(self, question: str, plan: dict) -> QueryResult:
+        repo = self._require_monitoring_repo()
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_name, region_level = self._extract_region(question, plan)
-        data = self.repo.pest_trend(since, until, region_name or None, region_level=region_level)
+        data = repo.pest_trend(since, until, region_name or None, region_level=region_level)
         since_scope = self._format_since_scope(since)
         scope_prefix = self._scope_prefix(region_name, since_scope)
         no_data_reason = self._build_no_data_reason(
@@ -926,10 +959,11 @@ class QueryEngine:
         )
 
     def _answer_soil_trend(self, question: str, plan: dict) -> QueryResult:
+        repo = self._require_monitoring_repo()
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_name, region_level = self._extract_region(question, plan)
-        data = self.repo.soil_trend(since, until, region_name or None, region_level=region_level)
+        data = repo.soil_trend(since, until, region_name or None, region_level=region_level)
         since_scope = self._format_since_scope(since)
         scope_prefix = self._scope_prefix(region_name, since_scope)
         no_data_reason = self._build_no_data_reason(
@@ -1209,10 +1243,11 @@ class QueryEngine:
         )
 
     def _answer_alerts_trend(self, question: str, plan: dict) -> QueryResult:
+        repo = self._require_alert_query_repo()
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         city = plan.get("city") or self._extract_city(question)
-        data = self.repo.alerts_trend(since, until, city=city) if hasattr(self.repo, "alerts_trend") else []
+        data = repo.alerts_trend(since, until, city=city)
         since_scope = self._format_since_scope(since)
         scope_prefix = self._scope_prefix(city, since_scope)
         if not data:
@@ -1236,7 +1271,7 @@ class QueryEngine:
                             label="告警数据",
                             since=since,
                             until=until,
-                            time_range=self.repo.available_alert_time_range() if hasattr(self.repo, "available_alert_time_range") else None,
+                            time_range=repo.available_alert_time_range(),
                             region_name=city or "",
                         )
                     ],
@@ -1262,13 +1297,14 @@ class QueryEngine:
 
     def _answer_alerts_top(self, question: str, plan: dict) -> QueryResult:
         """返回预警/报警 Top 排行。"""
+        repo = self._require_alert_query_repo()
         since = str(plan.get("since") or self._extract_since(question))
         field = str(plan.get("field", "")).strip() or ("county" if "区县" in question or "县" in question else "city")
         top_n = int(plan.get("top_n") or 5)
         day_start, day_end = self._extract_day_range(question)
         if day_start:
             since = day_start
-        data = self.repo.top_n_filtered(field, top_n, since, until=day_end) if hasattr(self.repo, "top_n_filtered") else self.repo.top_n(field, top_n, since)
+        data = repo.top_n_filtered(field, top_n, since, until=day_end)
         if data:
             answer = f"自{since[:10]}以来，Top{top_n}为：" + "；".join([f"{i+1}.{r['name']}({r['count']})" for i, r in enumerate(data)])
         else:
@@ -1290,7 +1326,7 @@ class QueryEngine:
                         label="告警数据",
                         since=since,
                         until=day_end,
-                        time_range=self.repo.available_alert_time_range() if hasattr(self.repo, "available_alert_time_range") else None,
+                        time_range=repo.available_alert_time_range(),
                     )
                 ]
                 if not data
@@ -1303,7 +1339,7 @@ class QueryEngine:
                         label="告警数据",
                         since=since,
                         until=day_end,
-                        time_range=self.repo.available_alert_time_range() if hasattr(self.repo, "available_alert_time_range") else None,
+                        time_range=repo.available_alert_time_range(),
                     ),
                     time_ranges=self._available_alert_ranges(),
                     top_n=top_n,
@@ -1365,13 +1401,15 @@ class QueryEngine:
         return candidates[:top_n]
 
     def _answer_alerts_high_pest_low(self, question: str, plan: dict) -> QueryResult:
+        analytics_repo = self._require_alert_query_repo()
+        monitoring_repo = self._require_monitoring_repo()
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_level = str(plan.get("region_level") or "county")
         top_n = max(1, int(plan.get("top_n") or 5))
         field = "county" if region_level == "county" else "city"
-        alert_rows = self.repo.top_n_filtered(field, max(top_n * 4, 12), since, until=until) if hasattr(self.repo, "top_n_filtered") else []
-        pest_rows = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=max(top_n * 4, 12), city=plan.get("city"), county=plan.get("county")) if hasattr(self.repo, "top_pest_regions") else []
+        alert_rows = analytics_repo.top_n_filtered(field, max(top_n * 4, 12), since, until=until)
+        pest_rows = monitoring_repo.top_pest_regions(since, until, region_level=region_level, top_n=max(top_n * 4, 12), city=plan.get("city"), county=plan.get("county"))
         data = self._build_cross_signal_gap_rows(
             primary_rows=[{"region_name": row.get("name"), "count": row.get("count")} for row in alert_rows],
             secondary_rows=pest_rows,
@@ -1396,13 +1434,15 @@ class QueryEngine:
         )
 
     def _answer_pest_high_alerts_low(self, question: str, plan: dict) -> QueryResult:
+        analytics_repo = self._require_alert_query_repo()
+        monitoring_repo = self._require_monitoring_repo()
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_level = str(plan.get("region_level") or "county")
         top_n = max(1, int(plan.get("top_n") or 5))
         field = "county" if region_level == "county" else "city"
-        pest_rows = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=max(top_n * 4, 12), city=plan.get("city"), county=plan.get("county")) if hasattr(self.repo, "top_pest_regions") else []
-        alert_rows = self.repo.top_n_filtered(field, max(top_n * 4, 12), since, until=until) if hasattr(self.repo, "top_n_filtered") else []
+        pest_rows = monitoring_repo.top_pest_regions(since, until, region_level=region_level, top_n=max(top_n * 4, 12), city=plan.get("city"), county=plan.get("county"))
+        alert_rows = analytics_repo.top_n_filtered(field, max(top_n * 4, 12), since, until=until)
         data = self._build_cross_signal_gap_rows(
             primary_rows=pest_rows,
             secondary_rows=[{"region_name": row.get("name"), "count": row.get("count")} for row in alert_rows],
@@ -1430,8 +1470,10 @@ class QueryEngine:
         """执行查询计划并返回统一 QueryResult。"""
         plan = plan or {}
         query_type = str(plan.get("query_type") or "count")
+        monitoring_repo = self._monitoring_repo()
+        analytics_repo = self._alert_query_repo()
 
-        if hasattr(self.repo, "top_pest_regions"):
+        if monitoring_repo is not None:
             # 新版结构化仓储路径：优先命中细分查询分支。
             if query_type == "alerts_top":
                 return self._answer_alerts_top(question, plan)
@@ -1473,7 +1515,10 @@ class QueryEngine:
         if query_type in {"pest_top", "soil_top", "structured_agri"}:
             field = "county" if "区县" in question or "县" in question else "city"
             top_n = int(plan.get("top_n") or 5)
-            data = self.repo.top_n_filtered(field, top_n, since) if hasattr(self.repo, "top_n_filtered") else self.repo.top_n(field, top_n, since)
+            if analytics_repo is not None:
+                data = analytics_repo.top_n_filtered(field, top_n, since)
+            else:
+                data = self.repo.top_n(field, top_n, since)
             label = "虫情" if query_type == "pest_top" or "虫" in question else "墒情"
             answer = f"自{since[:10]}以来，{label}最需要关注的Top{top_n}地区为：" + "；".join(
                 [f"{i+1}.{r['name']}({r['count']})" for i, r in enumerate(data)]
@@ -1511,11 +1556,12 @@ class QueryEngine:
             )
 
         if query_type == "threshold_summary":
+            repo = self._require_alert_query_repo()
             threshold = self._extract_threshold(question) or 150.0
             day_start, day_end = self._extract_day_range(question)
             if day_start:
                 since = day_start
-            data = self.repo.top_n_filtered("city", 5, since, until=day_end, min_alert_value=threshold)
+            data = repo.top_n_filtered("city", 5, since, until=day_end, min_alert_value=threshold)
             above_count = self.repo.count_alert_value_above(threshold, since, day_end)
             city_summary = "；".join([f"{r['name']}({r['count']})" for r in data]) if data else "无"
             return QueryResult(
@@ -1733,7 +1779,8 @@ class QueryEngine:
             since = day_start
         city = self._extract_city(question)
         level = self._extract_level(question)
-        count = self.repo.count_filtered(since, until=day_end, city=city, level=level) if hasattr(self.repo, "count_filtered") else self.repo.count_since(since)
+        repo = self._require_alert_query_repo()
+        count = repo.count_filtered(since, until=day_end, city=city, level=level)
         scope = ""
         if city:
             scope += city
@@ -1753,7 +1800,7 @@ class QueryEngine:
                 "until": day_end,
                 "city": city,
                 "alert_level": level,
-                "samples": self.repo.sample_alerts(since, 3) if hasattr(self.repo, 'sample_alerts') else [],
+                "samples": repo.sample_alerts(since, 3),
                 "available_data_ranges": self._available_alert_ranges() if count == 0 else [],
                 "no_data_reasons": [
                     self._build_no_data_reason(
@@ -1761,7 +1808,7 @@ class QueryEngine:
                         label="告警数据",
                         since=since,
                         until=day_end,
-                        time_range=self.repo.available_alert_time_range() if hasattr(self.repo, "available_alert_time_range") else None,
+                        time_range=repo.available_alert_time_range(),
                         region_name=city or "",
                     )
                 ]
@@ -1775,7 +1822,7 @@ class QueryEngine:
                         label="告警数据",
                         since=since,
                         until=day_end,
-                        time_range=self.repo.available_alert_time_range() if hasattr(self.repo, "available_alert_time_range") else None,
+                        time_range=repo.available_alert_time_range(),
                         region_name=city or "",
                     ),
                     time_ranges=self._available_alert_ranges(),

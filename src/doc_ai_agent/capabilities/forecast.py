@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ..capability_result import CapabilityResult
+
+if TYPE_CHECKING:
+    from ..forecast_service import ForecastService
 
 
 class ForecastCapability:
     """对 ForecastService 的轻量能力封装。"""
 
-    def __init__(self, forecast_service):
+    def __init__(self, forecast_service: ForecastService):
         self.forecast_service = forecast_service
 
     def execute(self, route: dict, runtime_context: dict) -> CapabilityResult:

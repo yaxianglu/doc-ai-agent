@@ -242,6 +242,36 @@ class RecallThenRerankBackend:
 
 
 class FakeStructuredRepo:
+    def count_since(self, since):
+        del since
+        return 12
+
+    def top_n(self, field, n, since):
+        del field, since
+        return [{"name": "徐州市", "count": 12}][:n]
+
+    def sample_alerts(self, since, limit=3):
+        del since
+        return [{"alert_id": "A-1"}][:limit]
+
+    def available_alert_time_range(self):
+        return None
+
+    def count_filtered(self, since, until=None, city=None, level=None):
+        del since, until, city, level
+        return 12
+
+    def top_n_filtered(self, field, n, since, until=None, city=None, level=None, min_alert_value=None):
+        del field, since, until, city, level, min_alert_value
+        return [{"name": "徐州市", "count": 12}][:n]
+
+    def available_pest_time_range(self):
+        return None
+
+    def available_soil_time_range(self, anomaly_direction=None):
+        del anomaly_direction
+        return None
+
     def top_pest_regions(self, since, until, region_level="city", top_n=5, city=None, county=None):
         return [
             {
