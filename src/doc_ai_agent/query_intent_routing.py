@@ -20,6 +20,7 @@ from .agri_semantics import (
 )
 from .query_dsl import QueryDSL, capabilities_from_semantics, query_dsl_from_understanding
 from .query_plan import build_query_plan, execution_route
+from .task_dsl import task_dsl_from_task_graph
 from .task_decomposition import build_task_graph
 
 
@@ -431,6 +432,10 @@ def finalize_plan(
         needs_advice=inferred_needs_advice,
     )
     finalized["query_plan"]["decomposition"] = build_task_graph(finalized["query_plan"])
+    finalized["task_dsl"] = task_dsl_from_task_graph(
+        finalized["query_plan"],
+        finalized["query_plan"]["decomposition"],
+    ).to_dict()
     parsed_query = query_dsl_from_understanding(understanding or finalized).to_dict()
     capabilities = list(
         parsed_query.get("capabilities")

@@ -14,6 +14,7 @@ __all__ = [
     "AnalysisResponseEnvelope",
     "ForecastExecutionContext",
     "FinalResponseEvidence",
+    "OrchestrationStateEnvelope",
 ]
 
 
@@ -262,3 +263,27 @@ class FinalResponseEvidence:
             evidence["context_trace"] = list(self.context_trace)
         evidence["response_meta"] = dict(self.response_meta)
         return evidence
+
+
+@dataclass(frozen=True)
+class OrchestrationStateEnvelope:
+    """统一编排状态快照。"""
+
+    parsed_query: dict = field(default_factory=dict)
+    route: dict = field(default_factory=dict)
+    plan: dict = field(default_factory=dict)
+    task_results: dict = field(default_factory=dict)
+    evidence: dict = field(default_factory=dict)
+    confidence: dict = field(default_factory=dict)
+    memory_context: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "parsed_query": dict(self.parsed_query),
+            "route": dict(self.route),
+            "plan": dict(self.plan),
+            "task_results": dict(self.task_results),
+            "evidence": dict(self.evidence),
+            "confidence": dict(self.confidence),
+            "memory_context": dict(self.memory_context),
+        }

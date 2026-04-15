@@ -13,6 +13,7 @@ from .agent_analysis_synthesis import build_data_grounded_advice, build_data_gro
 from .agent_comparison import detect_compare_request
 from .agent_compare_execution import execute_compare_request
 from .agent_contracts import FinalResponseEvidence, ForecastExecutionContext
+from .agent_contracts import OrchestrationStateEnvelope
 from .answer_guard import AnswerGuard
 from .agent_execution_nodes import (
     build_advice_response,
@@ -53,6 +54,7 @@ class AgentState(TypedDict, total=False):
     forecast_result: dict
     knowledge: list[dict]
     response: dict
+    orchestration_state: dict
 
 
 class DocAIAgent:
@@ -394,15 +396,16 @@ class DocAIAgent:
         plan["route"] = self._plan_route(plan) or route
         plan["task_graph"] = self._plan_task_graph(plan)
         outcome = update_plan_outcome(plan=plan, understanding=understanding)
+        updates = {"plan": outcome.plan, "orchestration_state": self._orchestration_state(state, plan=outcome.plan, understanding=outcome.understanding)}
         if outcome.understanding != understanding:
-            return {"plan": outcome.plan, "understanding": outcome.understanding}
-        return {"plan": outcome.plan}
+            updates["understanding"] = outcome.understanding
+        return updates
 
     def _route_from_plan(self, state: AgentState) -> str:
         return route_target(state.get("plan") or {}, state.get("understanding") or {})
 
     def _query_node(self, state: AgentState) -> dict:
-        return run_query_node(
+        result = run_query_node(
             question=state.get("question", ""),
             understanding=state.get("understanding") or {},
             plan=state.get("plan") or {},
@@ -413,6 +416,13 @@ class DocAIAgent:
             plan_route=self._plan_route,
             query_engine=self.query_engine,
         )
+        query_result = dict(result.get("query_result") or {})
+        result["orchestration_state"] = self._orchestration_state(
+            state,
+            task_results={"query": query_result},
+            evidence={"query": dict(query_result.get("evidence") or {})},
+        )
+        return result
 
     def _resolve_forecast_context(self, state: AgentState) -> ForecastExecutionContext:
         return build_forecast_execution_context(
@@ -432,7 +442,7 @@ class DocAIAgent:
     def _forecast_node(self, state: AgentState) -> dict:
         forecast_context = self._resolve_forecast_context(state)
         if not forecast_context.enabled:
-            return {"forecast_result": {}}
+            return {"forecast_result": {}, "orchestration_state": self._orchestration_state(state)}
         forecast_route = dict(forecast_context.route or {})
         runtime_context = dict(forecast_context.runtime_context)
         if forecast_route.get("forecast_mode") == "ranking":
@@ -447,10 +457,17 @@ class DocAIAgent:
             )
         else:
             result = self.forecast_service.forecast_region(forecast_route, context=runtime_context)
-        return {"forecast_result": result}
+        return {
+            "forecast_result": result,
+            "orchestration_state": self._orchestration_state(
+                state,
+                task_results={"forecast": dict(result)},
+                evidence={"forecast": dict(result.get("forecast") or {}) if isinstance(result, dict) else {}},
+            ),
+        }
 
     def _knowledge_node(self, state: AgentState) -> dict:
-        return run_knowledge_node(
+        result = run_knowledge_node(
             question=state.get("question", ""),
             understanding=state.get("understanding") or {},
             plan=state.get("plan") or {},
@@ -461,6 +478,11 @@ class DocAIAgent:
             build_runtime_context=self._build_runtime_context,
             first_region_name=self._first_region_name,
         )
+        result["orchestration_state"] = self._orchestration_state(
+            state,
+            task_results={"knowledge": {"count": len(result.get("knowledge") or [])}},
+        )
+        return result
 
     def _derive_domain(self, question: str, plan: dict, previous_context: dict | None = None) -> str:
         return derive_domain(question, self._plan_route(plan), previous_context)
@@ -558,7 +580,7 @@ class DocAIAgent:
         )
 
     def _advice_node(self, state: AgentState) -> dict:
-        return build_advice_response(
+        result = build_advice_response(
             question=state.get("question", ""),
             plan=state.get("plan") or {},
             understanding=state.get("understanding") or {},
@@ -567,9 +589,23 @@ class DocAIAgent:
             advice_engine=self.advice_engine,
             execution_plan=self._execution_plan(state),
         )
+        response = dict(result.get("response") or {})
+        result["orchestration_state"] = self._orchestration_state(
+            state,
+            task_results={"advice": {"mode": response.get("mode"), "answer": response.get("answer")}},
+            evidence={"advice": dict(response.get("evidence") or {})},
+        )
+        return result
 
     def _clarify_node(self, state: AgentState) -> dict:
-        return build_clarification_response(state.get("plan") or {})
+        result = build_clarification_response(state.get("plan") or {})
+        response = dict(result.get("response") or {})
+        result["orchestration_state"] = self._orchestration_state(
+            state,
+            task_results={"clarify": {"answer": response.get("answer")}},
+            evidence={"clarify": dict(response.get("evidence") or {})},
+        )
+        return result
 
     def _synthesize_node(self, state: AgentState) -> dict:
         """合并查询、预测与知识证据，生成最终分析响应。"""
@@ -584,7 +620,14 @@ class DocAIAgent:
                 merged_evidence = dict(query_result.get("evidence") or {})
                 merged_evidence["execution_plan"] = self._execution_plan(state)
                 query_result["evidence"] = merged_evidence
-                return {"response": query_result}
+                return {
+                    "response": query_result,
+                    "orchestration_state": self._orchestration_state(
+                        state,
+                        task_results={"synthesize": {"mode": query_result.get("mode"), "answer": query_result.get("answer")}},
+                        evidence={"response": dict(query_result.get("evidence") or {})},
+                    ),
+                }
         if (
             understanding.get("needs_forecast")
             and not understanding.get("needs_historical")
@@ -602,7 +645,12 @@ class DocAIAgent:
                     "answer": forecast_result.get("answer", ""),
                     "data": forecast_result.get("data", []),
                     "evidence": evidence,
-                }
+                },
+                "orchestration_state": self._orchestration_state(
+                    state,
+                    task_results={"synthesize": {"mode": "data_query", "answer": forecast_result.get("answer", "")}},
+                    evidence={"response": evidence},
+                ),
             }
 
         # 统一上下文后再合成，可避免解释与建议使用不同口径。
@@ -633,7 +681,7 @@ class DocAIAgent:
             build_data_grounded_advice=self._build_data_grounded_advice,
             advice_engine=self.advice_engine,
         )
-        return synthesize_analysis_response(
+        result = synthesize_analysis_response(
             execution_plan=self._execution_plan(state),
             understanding=understanding,
             plan=plan,
@@ -646,11 +694,18 @@ class DocAIAgent:
             advice_text=advice_text,
             advice_sources=advice_sources,
         )
+        response = dict(result.get("response") or {})
+        result["orchestration_state"] = self._orchestration_state(
+            state,
+            task_results={"synthesize": {"mode": response.get("mode"), "answer": response.get("answer")}},
+            evidence={"response": dict(response.get("evidence") or {})},
+        )
+        return result
 
     def _answer_guard_node(self, state: AgentState) -> dict:
         response = dict(state.get("response") or {})
         if not response.get("answer") or response.get("mode") == "advice":
-            return {"response": response}
+            return {"response": response, "orchestration_state": self._orchestration_state(state)}
         review = self.answer_guard.review(
             question=state.get("question", ""),
             understanding=dict(state.get("understanding") or {}),
@@ -686,8 +741,23 @@ class DocAIAgent:
         }
         guarded["evidence"] = evidence
         if refreshed_query_result:
-            return {"response": guarded, "query_result": refreshed_query_result}
-        return {"response": guarded}
+            return {
+                "response": guarded,
+                "query_result": refreshed_query_result,
+                "orchestration_state": self._orchestration_state(
+                    state,
+                    task_results={"answer_guard": {"action": review["action"]}},
+                    evidence={"response": evidence},
+                ),
+            }
+        return {
+            "response": guarded,
+            "orchestration_state": self._orchestration_state(
+                state,
+                task_results={"answer_guard": {"action": review["action"]}},
+                evidence={"response": evidence},
+            ),
+        }
 
     @staticmethod
     def _first_region_name(response: dict) -> str:
@@ -744,7 +814,40 @@ class DocAIAgent:
         ).to_dict()
         evidence["response_meta"] = self._build_response_meta(state, response, evidence)
         response["evidence"] = evidence
-        return {"memory_context": snapshot, "response": response}
+        return {
+            "memory_context": snapshot,
+            "response": response,
+            "orchestration_state": self._orchestration_state(
+                state,
+                memory_context=snapshot,
+                evidence={"response": evidence},
+            ),
+        }
+
+    def _orchestration_state(self, state: AgentState, **overrides) -> dict:
+        """统一收口编排状态，便于后续 V2 迁移。"""
+        current = dict(state.get("orchestration_state") or {})
+        parsed_query = dict(overrides.get("parsed_query") or current.get("parsed_query") or (state.get("understanding") or {}).get("parsed_query") or {})
+        route = dict(overrides.get("route") or current.get("route") or self._plan_route(state.get("plan") or {}) or {})
+        plan = dict(overrides.get("plan") or current.get("plan") or state.get("plan") or {})
+        task_results = dict(current.get("task_results") or {})
+        task_results.update(dict(overrides.get("task_results") or {}))
+        evidence = dict(current.get("evidence") or {})
+        evidence.update(dict(overrides.get("evidence") or {}))
+        confidence = dict(current.get("confidence") or {})
+        understanding = dict(state.get("understanding") or {})
+        if "request_understanding" not in confidence and understanding.get("confidence") not in {None, ""}:
+            confidence["request_understanding"] = understanding.get("confidence")
+        memory_context = dict(overrides.get("memory_context") or current.get("memory_context") or state.get("memory_context") or {})
+        return OrchestrationStateEnvelope(
+            parsed_query=parsed_query,
+            route=route,
+            plan=plan,
+            task_results=task_results,
+            evidence=evidence,
+            confidence=confidence,
+            memory_context=memory_context,
+        ).to_dict()
 
     def answer(self, question: str, history: object = None, thread_id: str | None = None) -> dict:
         """对外主入口：驱动状态图执行并返回最终响应。"""

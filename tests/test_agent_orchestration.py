@@ -1,9 +1,26 @@
 import unittest
 
 from doc_ai_agent.agent_orchestration import PlanNodeOutcome, resolve_planning_question, route_target, update_plan_outcome
+from doc_ai_agent.task_dsl import task_dsl_from_task_graph
 
 
 class AgentOrchestrationTests(unittest.TestCase):
+    def test_task_dsl_constrains_to_known_templates(self):
+        payload = task_dsl_from_task_graph(
+            {"goal": "agri_analysis"},
+            {
+                "plan_goal": "agri_analysis",
+                "execution_plan": ["understand_request", "historical_query", "forecast", "answer_synthesis"],
+                "tasks": [
+                    {"id": "t1", "type": "historical_rank", "stage": "historical_query", "depends_on": [], "output_key": "historical"},
+                    {"id": "t2", "type": "forecast", "stage": "forecast", "depends_on": ["t1"], "output_key": "forecast"},
+                ],
+            },
+        ).to_dict()
+
+        self.assertEqual(payload["templates"][0]["template"], "rank")
+        self.assertEqual(payload["templates"][1]["template"], "forecast")
+
     def test_resolve_planning_question_prefers_original_follow_up_for_context_explanation(self):
         question = resolve_planning_question(
             "为什么",
