@@ -27,6 +27,7 @@ class AgentApp:
     """应用容器：负责资源初始化、数据刷新与聊天调用。"""
     def __init__(self, config: AppConfig):
         self.config = config
+        self.bootstrap_credentials = fixed_bootstrap_credentials()
         if config.db_url:
             self.repo = MySQLRepository(config.db_url)
             self.repo.create_tables()
@@ -36,8 +37,9 @@ class AgentApp:
             self.repo = AlertRepository(config.db_path)
             self.repo.init_schema()
         self.auth = AuthService(self.auth_repo, session_ttl_days=config.auth_session_ttl_days)
-        self.bootstrap_credentials = fixed_bootstrap_credentials()
-        self.auth.ensure_users(self.bootstrap_credentials)
+        if not config.db_url:
+            # 内存模式仍保留固定账号，便于本地开发和单测；MySQL 运行态只读取既有用户表。
+            self.auth.ensure_users(self.bootstrap_credentials)
         llm_client = None
         understanding_backend = None
         if config.openai_api_key:

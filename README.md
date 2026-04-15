@@ -28,6 +28,10 @@ set -a && source .env.local && set +a
 PYTHONPATH=src python3.11 scripts/run_server.py
 ```
 
+如果是 `ai.luyaxiang.com` 的固定域名运维，请不要参考上面的开发启动方式，统一使用：
+
+- `docs/runbooks/ai-luyaxiang-service-operations.md`
+
 可选环境变量：
 - `DOC_AGENT_DATA_DIR`：xlsx 文件目录，默认 `.`  
 - `DOC_AGENT_DB_PATH`：sqlite 文件路径，默认 `./data/alerts.db`
@@ -151,3 +155,4 @@ PYTHONPATH=src python3.11 scripts/run_strict_acceptance_eval.py \
 - 当前契约基线：`docs/architecture/current-agent-contract.md`
 - Query DSL：`docs/architecture/query-dsl.md`
 - V2 迁移计划：`docs/plans/2026-04-15-agent-v2-implementation.md`
+- 固定域名运维手册：`docs/runbooks/ai-luyaxiang-service-operations.md`
