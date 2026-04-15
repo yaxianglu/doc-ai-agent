@@ -29,6 +29,21 @@ class FakePlaybookRouter:
         return self.payload
 
 
+class FacadeOnlyPlaybookRouter:
+    def route(self, _question: str, context: dict | None = None):
+        raise AssertionError("QueryPlanner should not call raw playbook router directly")
+
+
+class SpyAccessFacade:
+    def __init__(self, route_payload=None):
+        self.route_payload = route_payload or {}
+        self.route_calls = []
+
+    def route_query(self, question: str, context: dict | None = None) -> dict:
+        self.route_calls.append({"question": question, "context": dict(context or {})})
+        return dict(self.route_payload)
+
+
 class ForcedGenericExplanationJudger:
     def judge(self, _question: str):
         return {
@@ -1443,7 +1458,28 @@ class QueryPlannerTests(unittest.TestCase):
         plan = planner.plan("设备SNS00204659最近一次预警时间是什么？")
         self.assertEqual(plan["intent"], "data_query")
         self.assertEqual(plan["route"]["query_type"], "latest_device")
-        self.assertEqual(plan["reason"], "heuristic_data_query")
+
+    def test_playbook_route_uses_access_facade_boundary(self):
+        facade = SpyAccessFacade(
+            {
+                "intent": "data_query",
+                "query_type": "joint_risk",
+                "reason": "facade semantic joint risk",
+                "retrieval_engine": "llamaindex",
+            }
+        )
+        planner = QueryPlanner(
+            None,
+            playbook_router=FacadeOnlyPlaybookRouter(),
+            access_facade=facade,
+        )
+
+        plan = planner.plan("近两个月哪些地方虫情高而且缺水更明显？")
+
+        self.assertEqual(len(facade.route_calls), 1)
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "joint_risk")
+        self.assertEqual(plan["reason"], "playbook_data_query")
 
     def test_generic_top_question_does_not_extract_fake_county(self):
         planner = QueryPlanner(None)

@@ -36,10 +36,11 @@ class AdviceEngine:
         "晚上好",
     }
 
-    def __init__(self, llm_client=None, model: str = "", source_provider=None):
+    def __init__(self, llm_client=None, model: str = "", source_provider=None, access_facade=None):
         self.llm_client = llm_client
         self.model = model
         self.source_provider = source_provider
+        self.access_facade = access_facade
 
     @staticmethod
     def _prefixed_section(prefix: str, content: str) -> str:
@@ -90,7 +91,14 @@ class AdviceEngine:
             )
 
         sources = []
-        if self.source_provider is not None:
+        if self.access_facade is not None:
+            search_query = question
+            if context.get("domain") == "pest" and context.get("region_name"):
+                search_query = f"{context['region_name']} 虫情 防治建议"
+            if context.get("domain") == "soil" and context.get("region_name"):
+                search_query = f"{context['region_name']} 墒情 调度建议"
+            sources = self.access_facade.search_sources(search_query, limit=3, context=context)
+        elif self.source_provider is not None:
             search_query = question
             if context.get("domain") == "pest" and context.get("region_name"):
                 search_query = f"{context['region_name']} 虫情 防治建议"

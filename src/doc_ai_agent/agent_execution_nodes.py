@@ -132,6 +132,7 @@ def run_knowledge_node(
     query_result: dict,
     forecast_result: dict,
     source_provider,
+    access_facade=None,
     build_runtime_context,
     first_region_name,
 ) -> dict:
@@ -153,11 +154,19 @@ def run_knowledge_node(
     )
     if forecast_result.get("forecast"):
         context["forecast"] = forecast_result["forecast"]
-    knowledge = source_provider.search(
-        understanding.get("normalized_question") or question,
-        limit=3,
-        context=context,
-    )
+    search_question = understanding.get("normalized_question") or question
+    if access_facade is not None:
+        knowledge = access_facade.search_sources(
+            search_question,
+            limit=3,
+            context=context,
+        )
+    else:
+        knowledge = source_provider.search(
+            search_question,
+            limit=3,
+            context=context,
+        )
     return {"knowledge": knowledge}
 
 
