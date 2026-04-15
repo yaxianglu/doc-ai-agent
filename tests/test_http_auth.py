@@ -7,6 +7,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from doc_ai_agent.auth import fixed_bootstrap_credentials
 from doc_ai_agent.config import AppConfig
 from doc_ai_agent.server import build_http_server
 
@@ -28,16 +29,12 @@ class HttpAuthTests(unittest.TestCase):
     def test_protected_routes_require_auth_and_login_flow_works(self):
         with tempfile.TemporaryDirectory() as td:
             repo_root = os.path.dirname(os.path.dirname(__file__))
-            credentials_path = os.path.join(td, "auth-initial-credentials.txt")
-            with open(credentials_path, "w", encoding="utf-8") as handle:
-                handle.write("gago-1:StrongPass!123\n")
+            credentials = fixed_bootstrap_credentials()
             cfg = AppConfig(
                 data_dir=repo_root,
                 db_path=os.path.join(td, "alerts.db"),
                 refresh_interval_minutes=5,
                 port=0,
-                auth_db_path=os.path.join(td, "auth.db"),
-                auth_bootstrap_path=credentials_path,
                 openai_api_key="",
                 openai_base_url="https://api.openai.com/v1",
                 openai_router_model="gpt-4.1-mini",
@@ -62,7 +59,7 @@ class HttpAuthTests(unittest.TestCase):
                 _, login_payload = http_json(
                     f"{base_url}/auth/login",
                     method="POST",
-                    payload={"username": "gago-1", "password": "StrongPass!123"},
+                    payload={"username": "gago-1", "password": credentials["gago-1"]},
                 )
                 token = login_payload["token"]
                 self.assertEqual(login_payload["user"]["username"], "gago-1")
@@ -91,16 +88,12 @@ class HttpAuthTests(unittest.TestCase):
     def test_chat_returns_json_500_when_handler_raises(self):
         with tempfile.TemporaryDirectory() as td:
             repo_root = os.path.dirname(os.path.dirname(__file__))
-            credentials_path = os.path.join(td, "auth-initial-credentials.txt")
-            with open(credentials_path, "w", encoding="utf-8") as handle:
-                handle.write("gago-1:StrongPass!123\n")
+            credentials = fixed_bootstrap_credentials()
             cfg = AppConfig(
                 data_dir=repo_root,
                 db_path=os.path.join(td, "alerts.db"),
                 refresh_interval_minutes=5,
                 port=0,
-                auth_db_path=os.path.join(td, "auth.db"),
-                auth_bootstrap_path=credentials_path,
                 openai_api_key="",
                 openai_base_url="https://api.openai.com/v1",
                 openai_router_model="gpt-4.1-mini",
@@ -117,7 +110,7 @@ class HttpAuthTests(unittest.TestCase):
                 _, login_payload = http_json(
                     f"{base_url}/auth/login",
                     method="POST",
-                    payload={"username": "gago-1", "password": "StrongPass!123"},
+                    payload={"username": "gago-1", "password": credentials["gago-1"]},
                 )
                 token = login_payload["token"]
 

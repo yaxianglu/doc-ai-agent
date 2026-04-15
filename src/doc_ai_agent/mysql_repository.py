@@ -17,6 +17,7 @@ import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 from typing import Iterable, List, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 import subprocess
@@ -176,6 +177,29 @@ CREATE TABLE IF NOT EXISTS fact_soil_moisture (
   KEY idx_soil_sn_time (device_sn, sample_time),
   KEY idx_soil_anomaly (soil_anomaly_type, soil_anomaly_score)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='墒情事实表';
+
+CREATE TABLE IF NOT EXISTS auth_user (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '用户主键',
+  username VARCHAR(64) NOT NULL COMMENT '用户名',
+  password_hash VARCHAR(255) NOT NULL COMMENT '密码哈希',
+  password_salt VARCHAR(255) NOT NULL COMMENT '密码盐',
+  is_active TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  UNIQUE KEY uk_auth_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='认证用户表';
+
+CREATE TABLE IF NOT EXISTS auth_session (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '会话主键',
+  user_id BIGINT NOT NULL COMMENT '用户主键',
+  token_hash VARCHAR(255) NOT NULL COMMENT '令牌哈希',
+  created_at DATETIME NOT NULL COMMENT '创建时间',
+  expires_at DATETIME NOT NULL COMMENT '过期时间',
+  last_used_at DATETIME NOT NULL COMMENT '最近使用时间',
+  UNIQUE KEY uk_auth_token_hash (token_hash),
+  KEY idx_auth_session_user (user_id),
+  CONSTRAINT fk_auth_session_user FOREIGN KEY (user_id) REFERENCES auth_user(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='认证会话表';
 """
 
 DEFAULT_RULES = [
@@ -221,6 +245,11 @@ class MySQLRepository:
     def backend_label(self) -> str:
         """返回仓储后端标签，便于上层统一展示。"""
         return "MySQL"
+
+    @staticmethod
+    def _hash_token(token: str) -> str:
+        """对会话令牌做 SHA-256 哈希，避免 MySQL 中存明文。"""
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _parse_url(db_url: str) -> MySQLConnectionInfo:
@@ -330,6 +359,101 @@ class MySQLRepository:
         """创建所有业务表，并初始化默认分析规则。"""
         self._run_sql(SCHEMA_SQL)
         self._seed_rules()
+
+    def get_user_by_username(self, username: str) -> dict | None:
+        """按用户名查询认证用户。"""
+        sql = f"""
+        SELECT JSON_OBJECT(
+          'id', id,
+          'username', username,
+          'password_hash', password_hash,
+          'password_salt', password_salt,
+          'is_active', is_active
+        )
+        FROM auth_user
+        WHERE username = {self._quote(username)}
+        LIMIT 1;
+        """
+        return self._fetch_json_object(sql)
+
+    def create_user(self, username: str, password_hash: str, password_salt: str) -> dict:
+        """创建认证用户并返回创建结果。"""
+        sql = f"""
+        INSERT INTO auth_user (username, password_hash, password_salt, is_active, created_at, updated_at)
+        VALUES (
+          {self._quote(username)},
+          {self._quote(password_hash)},
+          {self._quote(password_salt)},
+          1,
+          NOW(),
+          NOW()
+        );
+        """
+        self._run_sql(sql)
+        user = self.get_user_by_username(username)
+        if user is None:
+            raise RuntimeError("user creation failed")
+        return user
+
+    def update_user_password(self, user_id: int, password_hash: str, password_salt: str) -> None:
+        """更新认证用户密码。"""
+        sql = f"""
+        UPDATE auth_user
+        SET password_hash = {self._quote(password_hash)},
+            password_salt = {self._quote(password_salt)},
+            updated_at = NOW()
+        WHERE id = {int(user_id)};
+        """
+        self._run_sql(sql)
+
+    def create_session(self, user_id: int, token: str, expires_at: str) -> str:
+        """创建认证会话并返回原始 token。"""
+        sql = f"""
+        INSERT INTO auth_session (user_id, token_hash, created_at, expires_at, last_used_at)
+        VALUES (
+          {int(user_id)},
+          {self._quote(self._hash_token(token))},
+          NOW(),
+          {self._quote(expires_at)},
+          NOW()
+        );
+        """
+        self._run_sql(sql)
+        return token
+
+    def get_user_by_token(self, token: str) -> dict | None:
+        """通过 token 查询认证用户，并刷新最近使用时间。"""
+        token_hash = self._hash_token(token)
+        sql = f"""
+        SELECT JSON_OBJECT(
+          'id', u.id,
+          'username', u.username,
+          'is_active', u.is_active,
+          'session_id', s.id
+        )
+        FROM auth_session s
+        JOIN auth_user u ON u.id = s.user_id
+        WHERE s.token_hash = {self._quote(token_hash)}
+          AND s.expires_at > NOW()
+          AND u.is_active = 1
+        LIMIT 1;
+        """
+        user = self._fetch_json_object(sql)
+        if user:
+            touch_sql = f"""
+            UPDATE auth_session SET last_used_at = NOW()
+            WHERE id = {int(user['session_id'])};
+            """
+            self._run_sql(touch_sql)
+        return user
+
+    def delete_session(self, token: str) -> None:
+        """删除认证会话。"""
+        sql = f"""
+        DELETE FROM auth_session
+        WHERE token_hash = {self._quote(self._hash_token(token))};
+        """
+        self._run_sql(sql)
 
     def structured_data_ready(self) -> bool:
         """检查结构化数据是否已经准备完成。"""

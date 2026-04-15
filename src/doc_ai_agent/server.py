@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict, Iterable, Optional
 
 from .agent import DocAIAgent
-from .auth import AuthRepository, AuthService, load_or_create_credentials
+from .auth import AuthService, MemoryAuthRepository, fixed_bootstrap_credentials
 from .config import AppConfig
 from .mysql_repository import MySQLRepository
 from .openai_client import OpenAIClient
@@ -27,18 +27,17 @@ class AgentApp:
     """应用容器：负责资源初始化、数据刷新与聊天调用。"""
     def __init__(self, config: AppConfig):
         self.config = config
-        self.auth_repo = AuthRepository(config.auth_db_path)
-        self.auth_repo.init_schema()
-        self.auth = AuthService(self.auth_repo, session_ttl_days=config.auth_session_ttl_days)
-        auth_usernames = [item.strip() for item in config.auth_usernames.split(",") if item.strip()]
-        self.bootstrap_credentials = load_or_create_credentials(config.auth_bootstrap_path, auth_usernames)
-        self.auth.ensure_users(self.bootstrap_credentials)
         if config.db_url:
             self.repo = MySQLRepository(config.db_url)
             self.repo.create_tables()
+            self.auth_repo = self.repo
         else:
+            self.auth_repo = MemoryAuthRepository()
             self.repo = AlertRepository(config.db_path)
             self.repo.init_schema()
+        self.auth = AuthService(self.auth_repo, session_ttl_days=config.auth_session_ttl_days)
+        self.bootstrap_credentials = fixed_bootstrap_credentials()
+        self.auth.ensure_users(self.bootstrap_credentials)
         llm_client = None
         understanding_backend = None
         if config.openai_api_key:

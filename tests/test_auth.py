@@ -4,14 +4,27 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from doc_ai_agent.auth import (
-    AuthRepository,
     AuthService,
+    MemoryAuthRepository,
+    fixed_bootstrap_credentials,
     hash_password,
     verify_password,
 )
 
 
 class AuthTests(unittest.TestCase):
+    def test_fixed_bootstrap_credentials_are_deterministic(self):
+        self.assertEqual(
+            fixed_bootstrap_credentials(),
+            {
+                "gago-1": "2aZ8gx-pbXQsxXv4Mf9Q",
+                "gago-2": "F_jGYw8BMhF@j&*bgp_A",
+                "gago-3": "2A4Qt7miqT!xsnSv5gV2",
+                "gago-4": "%@5#=vgP=v%mb9LzK$Nh",
+                "gago-5": "3*u8a4ph.Z&x+4gP5XvF",
+            },
+        )
+
     def test_hash_password_and_verify(self):
         password_hash, salt = hash_password("StrongPass!123")
 
@@ -20,8 +33,7 @@ class AuthTests(unittest.TestCase):
 
     def test_bootstrap_users_are_created_once(self):
         with tempfile.TemporaryDirectory() as td:
-            repo = AuthRepository(os.path.join(td, "auth.db"))
-            repo.init_schema()
+            repo = MemoryAuthRepository()
             service = AuthService(repo)
 
             created_first = service.ensure_users(
@@ -44,8 +56,7 @@ class AuthTests(unittest.TestCase):
 
     def test_login_creates_session_and_authenticate_resolves_user(self):
         with tempfile.TemporaryDirectory() as td:
-            repo = AuthRepository(os.path.join(td, "auth.db"))
-            repo.init_schema()
+            repo = MemoryAuthRepository()
             service = AuthService(repo)
             service.ensure_users({"gago-1": "StrongPass!123"})
 
@@ -58,8 +69,7 @@ class AuthTests(unittest.TestCase):
 
     def test_login_returns_none_for_wrong_password(self):
         with tempfile.TemporaryDirectory() as td:
-            repo = AuthRepository(os.path.join(td, "auth.db"))
-            repo.init_schema()
+            repo = MemoryAuthRepository()
             service = AuthService(repo)
             service.ensure_users({"gago-1": "StrongPass!123"})
 
@@ -67,8 +77,7 @@ class AuthTests(unittest.TestCase):
 
     def test_logout_invalidates_session(self):
         with tempfile.TemporaryDirectory() as td:
-            repo = AuthRepository(os.path.join(td, "auth.db"))
-            repo.init_schema()
+            repo = MemoryAuthRepository()
             service = AuthService(repo)
             service.ensure_users({"gago-1": "StrongPass!123"})
 
@@ -81,8 +90,7 @@ class AuthTests(unittest.TestCase):
 
     def test_expired_session_is_rejected(self):
         with tempfile.TemporaryDirectory() as td:
-            repo = AuthRepository(os.path.join(td, "auth.db"))
-            repo.init_schema()
+            repo = MemoryAuthRepository()
             service = AuthService(repo)
             service.ensure_users({"gago-1": "StrongPass!123"})
             user = repo.get_user_by_username("gago-1")
