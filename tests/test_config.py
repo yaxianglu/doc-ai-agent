@@ -12,8 +12,6 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.data_dir, str(repo_root))
         self.assertEqual(cfg.refresh_interval_minutes, 5)
         self.assertEqual(cfg.db_path, str(repo_root / "data" / "alerts.db"))
-        self.assertEqual(cfg.auth_db_path, str(repo_root / "data" / "auth.db"))
-        self.assertEqual(cfg.auth_bootstrap_path, str(repo_root / "output" / "auth-initial-credentials.txt"))
         self.assertEqual(cfg.openai_base_url, "https://api.openai.com/v1")
         self.assertEqual(cfg.openai_router_model, "gpt-4.1-mini")
         self.assertEqual(cfg.openai_advice_model, "gpt-4.1")
@@ -70,8 +68,6 @@ class ConfigTests(unittest.TestCase):
             {
                 "DOC_AGENT_DATA_DIR": "fixtures/data",
                 "DOC_AGENT_DB_PATH": "runtime/alerts.db",
-                "DOC_AGENT_AUTH_DB_PATH": "runtime/auth.db",
-                "DOC_AGENT_AUTH_BOOTSTRAP_PATH": "runtime/auth.txt",
                 "DOC_AGENT_SOURCE_CATALOG": "runtime/sources.json",
                 "DOC_AGENT_SOURCE_QDRANT_PATH": "runtime/qdrant",
                 "DOC_AGENT_MEMORY_STORE_PATH": "runtime/memory.json",
@@ -79,8 +75,6 @@ class ConfigTests(unittest.TestCase):
         )
         self.assertEqual(cfg.data_dir, str(repo_root / "fixtures" / "data"))
         self.assertEqual(cfg.db_path, str(repo_root / "runtime" / "alerts.db"))
-        self.assertEqual(cfg.auth_db_path, str(repo_root / "runtime" / "auth.db"))
-        self.assertEqual(cfg.auth_bootstrap_path, str(repo_root / "runtime" / "auth.txt"))
         self.assertEqual(cfg.source_catalog_path, str(repo_root / "runtime" / "sources.json"))
         self.assertEqual(cfg.source_provider_qdrant_path, str(repo_root / "runtime" / "qdrant"))
         self.assertEqual(cfg.memory_store_path, str(repo_root / "runtime" / "memory.json"))

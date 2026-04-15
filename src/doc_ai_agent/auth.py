@@ -10,14 +10,19 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import os
 import secrets
-import sqlite3
 from datetime import datetime, timedelta, timezone
-from typing import Mapping
+from typing import Mapping, Protocol
 
 
 PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*_-+=."
+FIXED_BOOTSTRAP_CREDENTIALS = {
+    "gago-1": "2aZ8gx-pbXQsxXv4Mf9Q",
+    "gago-2": "F_jGYw8BMhF@j&*bgp_A",
+    "gago-3": "2A4Qt7miqT!xsnSv5gV2",
+    "gago-4": "%@5#=vgP=v%mb9LzK$Nh",
+    "gago-5": "3*u8a4ph.Z&x+4gP5XvF",
+}
 
 
 def utc_now() -> datetime:
@@ -54,165 +59,89 @@ def generate_strong_password(length: int = 20) -> str:
     return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(max(16, length)))
 
 
-def load_or_create_credentials(path: str, usernames: list[str]) -> dict[str, str]:
-    """读取或初始化账号密码文件，返回 `{username: password}` 映射。"""
-    if os.path.exists(path):
-        credentials: dict[str, str] = {}
-        with open(path, "r", encoding="utf-8") as handle:
-            for line in handle:
-                raw = line.strip()
-                if not raw or raw.startswith("#") or ":" not in raw:
-                    continue
-                username, password = raw.split(":", 1)
-                credentials[username.strip()] = password.strip()
-        if credentials:
-            return credentials
-
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    credentials = {username: generate_strong_password() for username in usernames}
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write("# Initial doc-cloud auth credentials\n")
-        for username, password in credentials.items():
-            handle.write(f"{username}: {password}\n")
-    try:
-        # 尽量收紧文件权限，降低凭据泄露风险（跨平台失败时忽略）。
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-    return credentials
+def fixed_bootstrap_credentials() -> dict[str, str]:
+    """返回固定的系统种子账号，避免启动时随机改密。"""
+    return dict(FIXED_BOOTSTRAP_CREDENTIALS)
 
 
-class AuthRepository:
-    """认证数据访问层：负责 users / sessions 表的读写。"""
+class AuthRepositoryLike(Protocol):
+    def get_user_by_username(self, username: str) -> dict | None: ...
+    def create_user(self, username: str, password_hash: str, password_salt: str) -> dict: ...
+    def update_user_password(self, user_id: int, password_hash: str, password_salt: str) -> None: ...
+    def create_session(self, user_id: int, token: str, expires_at: str) -> str: ...
+    def get_user_by_token(self, token: str) -> dict | None: ...
+    def delete_session(self, token: str) -> None: ...
 
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        parent = os.path.dirname(db_path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
 
-    def _connect(self) -> sqlite3.Connection:
-        """创建 SQLite 连接并启用按列名访问。"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def init_schema(self) -> None:
-        """初始化认证相关数据表。"""
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL UNIQUE,
-                    password_hash TEXT NOT NULL,
-                    password_salt TEXT NOT NULL,
-                    is_active INTEGER NOT NULL DEFAULT 1,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS sessions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    token_hash TEXT NOT NULL UNIQUE,
-                    created_at TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    last_used_at TEXT NOT NULL,
-                    FOREIGN KEY (user_id) REFERENCES users(id)
-                )
-                """
-            )
+class MemoryAuthRepository:
+    def __init__(self):
+        self._users: dict[int, dict] = {}
+        self._user_index: dict[str, int] = {}
+        self._sessions: dict[str, dict] = {}
+        self._next_user_id = 1
+        self._next_session_id = 1
 
     def get_user_by_username(self, username: str) -> dict | None:
-        """按用户名查询用户，查无则返回 `None`。"""
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT id, username, password_hash, password_salt, is_active, created_at, updated_at
-                FROM users
-                WHERE username = ?
-                """,
-                (username,),
-            ).fetchone()
-        return dict(row) if row else None
+        user_id = self._user_index.get(username)
+        if user_id is None:
+            return None
+        return dict(self._users[user_id])
 
     def create_user(self, username: str, password_hash: str, password_salt: str) -> dict:
-        """创建用户并返回新用户信息。"""
         now = utc_now().isoformat()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO users (username, password_hash, password_salt, is_active, created_at, updated_at)
-                VALUES (?, ?, ?, 1, ?, ?)
-                """,
-                (username, password_hash, password_salt, now, now),
-            )
-        user = self.get_user_by_username(username)
-        if user is None:
-            raise RuntimeError("user creation failed")
-        return user
+        user = {
+            "id": self._next_user_id,
+            "username": username,
+            "password_hash": password_hash,
+            "password_salt": password_salt,
+            "is_active": 1,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self._users[self._next_user_id] = user
+        self._user_index[username] = self._next_user_id
+        self._next_user_id += 1
+        return dict(user)
 
     def update_user_password(self, user_id: int, password_hash: str, password_salt: str) -> None:
-        """更新指定用户密码哈希与盐值。"""
-        now = utc_now().isoformat()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE users
-                SET password_hash = ?, password_salt = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (password_hash, password_salt, now, user_id),
-            )
+        user = self._users[user_id]
+        user["password_hash"] = password_hash
+        user["password_salt"] = password_salt
+        user["updated_at"] = utc_now().isoformat()
 
     def create_session(self, user_id: int, token: str, expires_at: str) -> str:
-        """创建登录会话；数据库仅保存 token 哈希。"""
+        token_hash = hash_token(token)
         now = utc_now().isoformat()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO sessions (user_id, token_hash, created_at, expires_at, last_used_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (user_id, hash_token(token), now, expires_at, now),
-            )
+        self._sessions[token_hash] = {
+            "id": self._next_session_id,
+            "user_id": user_id,
+            "expires_at": expires_at,
+            "last_used_at": now,
+        }
+        self._next_session_id += 1
         return token
 
     def get_user_by_token(self, token: str) -> dict | None:
-        """通过令牌查找会话对应用户，并刷新会话最近使用时间。"""
-        now = utc_now().isoformat()
         token_hash = hash_token(token)
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT u.id, u.username, u.is_active, s.id AS session_id, s.expires_at
-                FROM sessions s
-                JOIN users u ON u.id = s.user_id
-                WHERE s.token_hash = ? AND s.expires_at > ? AND u.is_active = 1
-                """,
-                (token_hash, now),
-            ).fetchone()
-            if row:
-                conn.execute(
-                    "UPDATE sessions SET last_used_at = ? WHERE id = ?",
-                    (now, row["session_id"]),
-                )
-        return {"id": row["id"], "username": row["username"], "is_active": bool(row["is_active"])} if row else None
+        session = self._sessions.get(token_hash)
+        if session is None:
+            return None
+        if session["expires_at"] <= utc_now().isoformat():
+            return None
+        user = self._users.get(int(session["user_id"]))
+        if user is None or not bool(user["is_active"]):
+            return None
+        session["last_used_at"] = utc_now().isoformat()
+        return {"id": user["id"], "username": user["username"], "is_active": bool(user["is_active"])}
 
     def delete_session(self, token: str) -> None:
-        """按令牌删除会话（用于登出）。"""
-        with self._connect() as conn:
-            conn.execute("DELETE FROM sessions WHERE token_hash = ?", (hash_token(token),))
+        self._sessions.pop(hash_token(token), None)
 
 
 class AuthService:
     """认证服务层：封装用户初始化、登录态生成与鉴权逻辑。"""
 
-    def __init__(self, repo: AuthRepository, session_ttl_days: int = 7):
+    def __init__(self, repo: AuthRepositoryLike, session_ttl_days: int = 7):
         self.repo = repo
         self.session_ttl_days = max(1, session_ttl_days)
 
