@@ -234,6 +234,50 @@ class TrendRepo(FakeAlertRepo):
         ]
 
 
+class MinimalStructuredTrendRepo:
+    def top_pest_regions(self, since, until=None, region_level="city", top_n=5, city=None, county=None):
+        del since, until, region_level, city, county
+        return [
+            {"region_name": "溧阳市", "severity_score": 9, "record_count": 3, "active_days": 2},
+        ][:top_n]
+
+    def sample_pest_records(self, since, until, limit=3):
+        del since, until
+        return [{"city_name": "常州市", "county_name": "溧阳市", "normalized_pest_count": 24}][:limit]
+
+    def pest_trend(self, since, until, region_name, region_level="city"):
+        del since, until, region_name, region_level
+        return [
+            {"date": "2026-03-28", "severity_score": 58},
+            {"date": "2026-03-29", "severity_score": 64},
+            {"date": "2026-03-30", "severity_score": 70},
+        ]
+
+    def top_soil_regions(self, since, until=None, region_level="city", top_n=5, anomaly_direction=None, city=None, county=None):
+        del since, until, region_level, anomaly_direction, city, county
+        return [
+            {"region_name": "宿迁市", "anomaly_score": 88, "abnormal_count": 16, "low_count": 11, "high_count": 0},
+        ][:top_n]
+
+    def sample_soil_records(self, since, until, limit=3):
+        del since, until
+        return [{"city_name": "宿迁市", "county_name": "泗阳县", "soil_anomaly_score": 18}][:limit]
+
+    def soil_trend(self, since, until, region_name, region_level="city"):
+        del since, until, region_name, region_level
+        return [
+            {"date": "2026-03-28", "avg_anomaly_score": 45},
+            {"date": "2026-03-29", "avg_anomaly_score": 56},
+            {"date": "2026-03-30", "avg_anomaly_score": 70},
+        ]
+
+    def joint_risk_regions(self, since, until=None, region_level="city", top_n=5, city=None, county=None):
+        del since, until, region_level, city, county
+        return [
+            {"region_name": "宿迁市", "joint_score": 166, "pest_score": 98, "low_soil_score": 68},
+        ][:top_n]
+
+
 class EmptyTrendRepo(TrendRepo):
     def available_pest_time_range(self):
         return {
@@ -435,6 +479,26 @@ class QueryEngineTests(unittest.TestCase):
         self.assertIn("起点", result.answer)
         self.assertIn("最近", result.answer)
         self.assertIn("峰值", result.answer)
+
+    def test_structured_trend_routes_do_not_require_availability_methods(self):
+        engine = QueryEngine(MinimalStructuredTrendRepo())
+
+        pest_result = engine.answer(
+            "过去5个月虫情总体是上升还是下降？",
+            plan={"query_type": "pest_trend", "since": "2025-11-14 00:00:00"},
+        )
+        soil_result = engine.answer(
+            "近两个月墒情有没有缓解？",
+            plan={"query_type": "soil_trend", "since": "2026-02-14 00:00:00"},
+        )
+        joint_result = engine.answer(
+            "过去90天，宿迁同时出现高虫情和低墒情吗？",
+            plan={"query_type": "joint_risk", "since": "2026-01-15 00:00:00", "city": "宿迁市", "region_level": "city", "answer_form": "boolean"},
+        )
+
+        self.assertIn("虫情趋势：整体上升", pest_result.answer)
+        self.assertIn("暂未缓解", soil_result.answer)
+        self.assertRegex(joint_result.answer, r"^是。")
 
     def test_pest_trend_no_data_answer_includes_reason_range_and_retry(self):
         engine = QueryEngine(EmptyTrendRepo())

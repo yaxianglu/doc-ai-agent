@@ -7,7 +7,7 @@
 适用对象：
 
 - 前端仓库：`/Users/mac/Desktop/gago-cloud/code/doc-frontend`
-- 后端仓库：`/Users/mac/Desktop/personal/doc-cloud/doc-ai-agent`
+- 后端仓库：`/Users/mac/Desktop/gago-cloud/code/doc-ai-agent`
 - 固定域名：`https://ai.luyaxiang.com`
 
 适用场景：
@@ -42,7 +42,7 @@ Browser
 ### 3.1 仓库位置
 
 - 前端：`/Users/mac/Desktop/gago-cloud/code/doc-frontend`
-- 后端：`/Users/mac/Desktop/personal/doc-cloud/doc-ai-agent`
+- 后端：`/Users/mac/Desktop/gago-cloud/code/doc-ai-agent`
 
 ### 3.2 启动脚本
 
@@ -154,14 +154,14 @@ npm install
 ### 8.2 更新后端代码
 
 ```bash
-cd /Users/mac/Desktop/personal/doc-cloud/doc-ai-agent
+cd /Users/mac/Desktop/gago-cloud/code/doc-ai-agent
 git pull --rebase origin main
 ```
 
 如果后端依赖有变化，再执行：
 
 ```bash
-cd /Users/mac/Desktop/personal/doc-cloud/doc-ai-agent
+cd /Users/mac/Desktop/gago-cloud/code/doc-ai-agent
 /Users/mac/.pyenv/versions/3.11.10/bin/python3.11 -m pip install -e .
 ```
 
@@ -293,6 +293,7 @@ mysql -u <USER> -p -h 127.0.0.1 -D doc-cloud -e "SELECT COUNT(*) AS active_sessi
 
 - 不要用 `npm run dev` 承载线上域名
 - 不要把 Vite dev server 当成线上入口
+- 不要手动启动 `cloudflared tunnel --url ...` 这类 Quick Tunnel；固定域名只使用 system 的 Named Tunnel
 - 不要依赖 SQLite 认证文件
 - 不要期待重启后端会自动重建或覆盖 MySQL 用户
 - 不要跳过域名登录和 `/api/chat` 验活

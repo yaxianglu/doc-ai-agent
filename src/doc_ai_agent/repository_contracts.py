@@ -155,6 +155,95 @@ class MonitoringRepository(Protocol):
 
 
 @runtime_checkable
+class PestQueryRepository(Protocol):
+    """虫情查询主路径所需的最小结构化契约。"""
+
+    def sample_pest_records(self, since: str, until: Optional[str], limit: int = 3) -> List[dict]:
+        ...
+
+    def top_pest_regions(
+        self,
+        since: str,
+        until: Optional[str] = None,
+        region_level: str = "city",
+        top_n: int = 5,
+        city: Optional[str] = None,
+        county: Optional[str] = None,
+    ) -> List[dict]:
+        ...
+
+    def pest_trend(
+        self,
+        since: str,
+        until: Optional[str],
+        region_name: Optional[str] = None,
+        region_level: str = "city",
+    ) -> List[dict]:
+        ...
+
+
+@runtime_checkable
+class SoilQueryRepository(Protocol):
+    """墒情查询主路径所需的最小结构化契约。"""
+
+    def sample_soil_records(self, since: str, until: Optional[str], limit: int = 3) -> List[dict]:
+        ...
+
+    def top_soil_regions(
+        self,
+        since: str,
+        until: Optional[str] = None,
+        region_level: str = "city",
+        top_n: int = 5,
+        anomaly_direction: Optional[str] = None,
+        city: Optional[str] = None,
+        county: Optional[str] = None,
+    ) -> List[dict]:
+        ...
+
+    def soil_trend(
+        self,
+        since: str,
+        until: Optional[str],
+        region_name: Optional[str] = None,
+        region_level: str = "city",
+    ) -> List[dict]:
+        ...
+
+
+@runtime_checkable
+class JointRiskRepository(Protocol):
+    """联合风险查询主路径所需的最小结构化契约。"""
+
+    def joint_risk_regions(
+        self,
+        since: str,
+        until: Optional[str] = None,
+        region_level: str = "city",
+        top_n: int = 5,
+        city: Optional[str] = None,
+        county: Optional[str] = None,
+    ) -> List[dict]:
+        ...
+
+
+@runtime_checkable
+class PestAvailabilityRepository(Protocol):
+    """虫情可用时间窗的可选契约。"""
+
+    def available_pest_time_range(self) -> Optional[dict]:
+        ...
+
+
+@runtime_checkable
+class SoilAvailabilityRepository(Protocol):
+    """墒情可用时间窗的可选契约。"""
+
+    def available_soil_time_range(self, anomaly_direction: Optional[str] = None) -> Optional[dict]:
+        ...
+
+
+@runtime_checkable
 class ForecastRepository(Protocol):
     """Forecast-ready structured operations for ranking and regional prediction."""
 
