@@ -113,6 +113,7 @@ class IntentRouterTests(unittest.TestCase):
         self.assertEqual(route.get("region_level"), "city")
         self.assertEqual(route.get("historical_window"), {"window_type": "months", "window_value": 3})
         self.assertEqual(route.get("future_window"), {"window_type": "weeks", "window_value": 2, "horizon_days": 14})
+        self.assertEqual(route.get("capabilities"), ["data_query", "forecast"])
 
 
 if __name__ == "__main__":

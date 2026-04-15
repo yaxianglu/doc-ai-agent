@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .capability_result import CapabilityResult
+
 
 @dataclass
 class AdviceResult:
@@ -12,6 +14,10 @@ class AdviceResult:
     sources: list
     generation_mode: str
     model: str
+
+    def to_capability_result(self) -> CapabilityResult:
+        """兼容 V2 capability 输出。"""
+        return CapabilityResult.from_advice_result(self)
 
 
 class AdviceEngine:

@@ -9,6 +9,7 @@ from typing import Dict, Optional
 
 from .query_extractors import extract_city as shared_extract_city
 from .query_extractors import extract_day_range as shared_extract_day_range
+from .capability_result import CapabilityResult
 
 
 @dataclass
@@ -17,6 +18,10 @@ class QueryResult:
     answer: str
     data: list | dict
     evidence: Dict[str, object]
+
+    def to_capability_result(self) -> CapabilityResult:
+        """兼容 V2 capability 输出。"""
+        return CapabilityResult.from_query_result(self)
 
 
 class QueryEngine:

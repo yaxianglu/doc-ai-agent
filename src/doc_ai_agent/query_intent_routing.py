@@ -18,6 +18,7 @@ from .agri_semantics import (
     needs_explanation,
     needs_forecast,
 )
+from .query_dsl import QueryDSL, capabilities_from_semantics, query_dsl_from_understanding
 from .query_plan import build_query_plan, execution_route
 from .task_decomposition import build_task_graph
 
@@ -430,5 +431,18 @@ def finalize_plan(
         needs_advice=inferred_needs_advice,
     )
     finalized["query_plan"]["decomposition"] = build_task_graph(finalized["query_plan"])
+    parsed_query = query_dsl_from_understanding(understanding or finalized).to_dict()
+    capabilities = list(
+        parsed_query.get("capabilities")
+        or capabilities_from_semantics(
+            intent=str(finalized.get("intent") or "advice"),
+            task_type=str(parsed_query.get("task_type") or finalized.get("task_type") or "unknown"),
+            needs_forecast=bool(finalized.get("future_window")),
+            needs_explanation=inferred_needs_explanation,
+            needs_advice=inferred_needs_advice,
+        )
+    )
+    finalized["parsed_query"] = parsed_query
+    finalized["capabilities"] = capabilities
     finalized["route"] = execution_route(finalized["query_plan"])
     return finalized

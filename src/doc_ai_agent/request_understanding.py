@@ -49,6 +49,7 @@ from .request_understanding_reasoning import (
     needs_historical_data,
 )
 from .query_plan import canonical_understanding_payload
+from .query_dsl import query_dsl_from_understanding
 from .semantic_parser import SemanticParser
 
 CITY_ALIASES = {
@@ -286,6 +287,7 @@ class RequestUnderstanding:
                 "needs_clarification": semantic_parse.needs_clarification,
             }
         )
+        result["parsed_query"] = query_dsl_from_understanding(result).to_dict()
         return result
 
     def _extract_with_entity_service(self, cleaned: str) -> dict:
