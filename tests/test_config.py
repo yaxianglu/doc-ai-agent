@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -78,6 +79,50 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.source_catalog_path, str(repo_root / "runtime" / "sources.json"))
         self.assertEqual(cfg.source_provider_qdrant_path, str(repo_root / "runtime" / "qdrant"))
         self.assertEqual(cfg.memory_store_path, str(repo_root / "runtime" / "memory.json"))
+
+    def test_explicit_env_file_is_loaded(self):
+        with tempfile.TemporaryDirectory() as td:
+            env_file = Path(td) / "agent.env"
+            env_file.write_text(
+                "\n".join(
+                    [
+                        "DOC_AGENT_DB_URL=mysql://dev:password@127.0.0.1:3306/doc-cloud",
+                        "OPENAI_API_KEY=sk-from-file",
+                        "DOC_AGENT_PORT=8123",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            cfg = AppConfig.from_env({"DOC_AGENT_ENV_FILE": str(env_file)})
+
+            self.assertEqual(cfg.db_url, "mysql://dev:password@127.0.0.1:3306/doc-cloud")
+            self.assertEqual(cfg.openai_api_key, "sk-from-file")
+            self.assertEqual(cfg.port, 8123)
+
+    def test_explicit_env_values_override_env_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            env_file = Path(td) / "agent.env"
+            env_file.write_text(
+                "\n".join(
+                    [
+                        "DOC_AGENT_DB_URL=mysql://dev:password@127.0.0.1:3306/doc-cloud",
+                        "OPENAI_API_KEY=sk-from-file",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            cfg = AppConfig.from_env(
+                {
+                    "DOC_AGENT_ENV_FILE": str(env_file),
+                    "DOC_AGENT_DB_URL": "mysql://prod:secret@127.0.0.1:3306/doc-cloud-prod",
+                    "OPENAI_API_KEY": "sk-from-env",
+                }
+            )
+
+            self.assertEqual(cfg.db_url, "mysql://prod:secret@127.0.0.1:3306/doc-cloud-prod")
+            self.assertEqual(cfg.openai_api_key, "sk-from-env")
 
 
 if __name__ == "__main__":

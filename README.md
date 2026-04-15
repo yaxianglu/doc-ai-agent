@@ -24,7 +24,13 @@ tests/
 
 ```bash
 cd /Users/mac/Desktop/code/service/doc-ai-agent
-set -a && source .env.local && set +a
+PYTHONPATH=src python3.11 scripts/run_server.py
+```
+
+现在 `scripts/run_server.py`、`scripts/run_strict_acceptance_eval.py`、`scripts/import_pest_soil.py` 都会自动读取仓库根目录下的 `.env.local` / `.env`；如果你想显式指定配置文件，也可以传：
+
+```bash
+export DOC_AGENT_ENV_FILE=/absolute/path/to/agent.env
 PYTHONPATH=src python3.11 scripts/run_server.py
 ```
 
