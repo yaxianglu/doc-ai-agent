@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .forecast_engine import ForecastEngine
+from .repository_contracts import AlertQueryRepository, ForecastRankingRepository, PestForecastTrendRepository, SoilForecastTrendRepository
 
 
 @dataclass
@@ -114,6 +115,26 @@ class ForecastService:
         self.repo = repo
         self.engine = ForecastEngine(repo)
         self.backend = backend or StatsForecastBackend()
+
+    def _alert_query_repo(self) -> AlertQueryRepository | None:
+        if isinstance(self.repo, AlertQueryRepository):
+            return self.repo
+        return None
+
+    def _pest_trend_repo(self) -> PestForecastTrendRepository | None:
+        if isinstance(self.repo, PestForecastTrendRepository):
+            return self.repo
+        return None
+
+    def _soil_trend_repo(self) -> SoilForecastTrendRepository | None:
+        if isinstance(self.repo, SoilForecastTrendRepository):
+            return self.repo
+        return None
+
+    def _forecast_ranking_repo(self) -> ForecastRankingRepository | None:
+        if isinstance(self.repo, ForecastRankingRepository):
+            return self.repo
+        return None
 
     @staticmethod
     def _uplift(score: float, horizon_days: int) -> float:
@@ -304,15 +325,13 @@ class ForecastService:
     def forecast_region(self, route: dict, context: dict | None = None) -> dict:
         """面向单地区生成预测回答与结构化 forecast 证据。"""
         domain = str((context or {}).get("domain") or route.get("query_type", "")).replace("_forecast", "")
-        if domain == "pest" and not hasattr(self.repo, "pest_trend"):
-            return self._fallback_region_forecast(route, domain="pest")
-        if domain == "soil" and not hasattr(self.repo, "soil_trend"):
-            return self._fallback_region_forecast(route, domain="soil")
-
         region_name = str(route.get("city") or route.get("county") or (context or {}).get("region_name") or "重点地区")
         horizon_days = int(route.get("forecast_window", {}).get("horizon_days") or 14)
         if domain == "pest":
-            series = self.repo.pest_trend(
+            repo = self._pest_trend_repo()
+            if repo is None:
+                return self._fallback_region_forecast(route, domain="pest")
+            series = repo.pest_trend(
                 str(route.get("since") or (context or {}).get("since") or "1970-01-01 00:00:00"),
                 route.get("until"),
                 region_name,
@@ -321,7 +340,10 @@ class ForecastService:
             projection = self.backend.forecast_series(series, date_key="date", value_key="severity_score", horizon_days=horizon_days)
             stats = self._series_stats(series, "severity_score")
         else:
-            series = self.repo.soil_trend(
+            repo = self._soil_trend_repo()
+            if repo is None:
+                return self._fallback_region_forecast(route, domain="soil")
+            series = repo.soil_trend(
                 str(route.get("since") or (context or {}).get("since") or "1970-01-01 00:00:00"),
                 route.get("until"),
                 region_name,
@@ -384,13 +406,14 @@ class ForecastService:
         }
 
     def _fallback_region_forecast(self, route: dict, *, domain: str) -> dict:
+        analytics_repo = self._alert_query_repo()
         since = str(route.get("since") or "1970-01-01 00:00:00")
         horizon_days = int(route.get("forecast_window", {}).get("horizon_days") or 14)
         region_name = str(route.get("city") or route.get("county") or "重点地区")
-        if hasattr(self.repo, "count_filtered"):
-            count = self.repo.count_filtered(since, city=region_name if route.get("city") else None)
+        if analytics_repo is not None:
+            count = analytics_repo.count_filtered(since, city=region_name if route.get("city") else None)
         else:
-            count = self.repo.count_since(since)
+            count = 0
         projected_score = round(max(1, count) * (1 + min(horizon_days, 30) / 30), 2)
         risk_index = min(100.0, round(projected_score * 18, 1))
         risk_level = self._risk_level(risk_index)
@@ -444,14 +467,16 @@ class ForecastService:
         county: str | None = None,
     ) -> dict:
         """面向区域排行场景输出批量预测与排序结果。"""
-        if domain == "pest" and hasattr(self.repo, "top_pest_regions"):
-            raw = self.repo.top_pest_regions(since, until, region_level=region_level, top_n=top_n, city=city, county=county)
+        ranking_repo = self._forecast_ranking_repo()
+        analytics_repo = self._alert_query_repo()
+        if domain == "pest" and ranking_repo is not None:
+            raw = ranking_repo.top_pest_regions(since, until, region_level=region_level, top_n=top_n, city=city, county=county)
             ranked = [
                 {**row, "projected_score": self._uplift(float(row.get("severity_score") or 0), horizon_days)}
                 for row in raw
             ]
-        elif domain == "soil" and hasattr(self.repo, "top_soil_regions"):
-            raw = self.repo.top_soil_regions(
+        elif domain == "soil" and ranking_repo is not None:
+            raw = ranking_repo.top_soil_regions(
                 since,
                 until,
                 region_level=region_level,
@@ -465,7 +490,10 @@ class ForecastService:
                 for row in raw
             ]
         else:
-            raw = self.repo.top_n_filtered("city", top_n, since) if hasattr(self.repo, "top_n_filtered") else self.repo.top_n("city", top_n, since)
+            if analytics_repo is not None:
+                raw = analytics_repo.top_n_filtered("city", top_n, since)
+            else:
+                raw = []
             ranked = [
                 {"region_name": row["name"], "record_count": row["count"], "projected_score": self._uplift(float(row["count"]), horizon_days)}
                 for row in raw

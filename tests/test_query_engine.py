@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from doc_ai_agent.query_engine import QueryEngine
 
@@ -7,6 +8,42 @@ class FakeAlertRepo:
     def __init__(self):
         self.last_pest_top_kwargs = {}
         self.last_soil_top_kwargs = {}
+
+    def count_since(self, since):
+        del since
+        return 4
+
+    def top_n(self, field, n, since):
+        del since
+        return self.top_n_filtered(field, n, "1970-01-01 00:00:00")
+
+    def sample_alerts(self, since, limit=3):
+        del since
+        return [{"alert_id": "A-1"}][:limit]
+
+    def available_alert_time_range(self):
+        return {
+            "min_time": "2026-01-01 00:00:00",
+            "max_time": "2026-04-10 00:00:00",
+        }
+
+    def count_filtered(self, since, until=None, city=None, level=None):
+        del since, until, city, level
+        return 4
+
+    def alerts_trend(self, since, until=None, city=None):
+        del since, until, city
+        return [
+            {"date": "2026-04-01", "alert_count": 2},
+            {"date": "2026-04-02", "alert_count": 4},
+        ]
+
+    def available_pest_time_range(self):
+        return None
+
+    def available_soil_time_range(self, anomaly_direction=None):
+        del anomaly_direction
+        return None
 
     def top_pest_regions(self, since, until=None, region_level="city", top_n=5, city=None, county=None):
         self.last_pest_top_kwargs = {
@@ -62,6 +99,14 @@ class FakeAlertRepo:
         return []
 
     def sample_soil_records(self, since, until, limit=3):
+        return []
+
+    def pest_trend(self, since, until, region_name, region_level="city"):
+        del since, until, region_name, region_level
+        return []
+
+    def soil_trend(self, since, until, region_name, region_level="city"):
+        del since, until, region_name, region_level
         return []
 
     def top_active_devices(self, since, until=None, limit=10):
@@ -154,6 +199,12 @@ class FakeAlertRepo:
 
     def top_n_filtered(self, field, n, since, until=None, min_alert_value=None):
         del since, until, min_alert_value
+        if field == "city":
+            return [
+                {"name": "徐州市", "count": 12},
+                {"name": "常州市", "count": 11},
+                {"name": "苏州市", "count": 3},
+            ][:n]
         if field != "county":
             return []
         return [
@@ -201,6 +252,10 @@ class EmptyTrendRepo(TrendRepo):
 
     def soil_trend(self, since, until, region_name, region_level="city"):
         return []
+
+
+class ContractAlertRepo(FakeAlertRepo):
+    pass
 
 
 class QueryEngineTests(unittest.TestCase):
@@ -429,6 +484,30 @@ class QueryEngineTests(unittest.TestCase):
         self.assertIn("虫情高但预警并不多", result.answer)
         self.assertIn("铜山区", result.answer)
         self.assertEqual(result.data[0]["region_name"], "铜山区")
+
+    def test_count_query_uses_contract_without_hasattr_discovery(self):
+        engine = QueryEngine(ContractAlertRepo())
+
+        with patch("doc_ai_agent.query_engine.hasattr", side_effect=AssertionError("query_engine hasattr should not be used"), create=True):
+            result = engine.answer(
+                "最近30天有多少条预警？",
+                plan={"query_type": "count", "since": "2026-03-01 00:00:00"},
+            )
+
+        self.assertIn("预警信息共 4 条", result.answer)
+        self.assertEqual(result.evidence["samples"][0]["alert_id"], "A-1")
+
+    def test_alerts_top_query_uses_contract_without_hasattr_discovery(self):
+        engine = QueryEngine(ContractAlertRepo())
+
+        with patch("doc_ai_agent.query_engine.hasattr", side_effect=AssertionError("query_engine hasattr should not be used"), create=True):
+            result = engine.answer(
+                "最近30天哪些地区预警最多？",
+                plan={"query_type": "alerts_top", "since": "2026-03-01 00:00:00", "top_n": 2},
+            )
+
+        self.assertIn("Top2", result.answer)
+        self.assertEqual(len(result.data), 2)
 
 
 if __name__ == "__main__":

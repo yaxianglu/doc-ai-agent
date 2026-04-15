@@ -251,6 +251,34 @@ class ForecastServiceTests(unittest.TestCase):
         self.assertIn("暂不做强预测", result["answer"])
         self.assertIn("样本覆盖 0 个观测日", result["answer"])
 
+    def test_forecast_region_uses_contract_without_hasattr_discovery(self):
+        with patch("doc_ai_agent.forecast_service.hasattr", side_effect=AssertionError("forecast_service hasattr should not be used"), create=True):
+            result = self.service.forecast_region(
+                {
+                    "query_type": "pest_forecast",
+                    "since": "2026-03-01 00:00:00",
+                    "city": "徐州市",
+                    "region_level": "city",
+                    "forecast_window": {"horizon_days": 14},
+                }
+            )
+
+        self.assertEqual(result["forecast"]["domain"], "pest")
+        self.assertEqual(result["analysis_context"]["region_name"], "徐州市")
+
+    def test_forecast_top_regions_uses_contract_without_hasattr_discovery(self):
+        with patch("doc_ai_agent.forecast_service.hasattr", side_effect=AssertionError("forecast_service hasattr should not be used"), create=True):
+            result = self.service.forecast_top_regions(
+                domain="soil",
+                since="2026-03-01 00:00:00",
+                horizon_days=14,
+                region_level="city",
+                top_n=2,
+            )
+
+        self.assertEqual(result["forecast"]["domain"], "soil")
+        self.assertEqual(len(result["data"]), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
