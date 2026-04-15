@@ -13,6 +13,7 @@ from datetime import datetime
 
 from .agri_semantics import infer_domain_from_text, infer_region_scope, needs_advice, needs_explanation
 from .entity_extraction import EntityExtractionService
+from .input_guard import classify_input_quality
 from .request_context_resolution import (
     contains_pest,
     contains_soil,
@@ -104,6 +105,16 @@ class SemanticParser:
         context = dict(context or {})
         normalized = str(question or "").strip()
         trace = ["normalize"]
+        guard = classify_input_quality(normalized)
+        if not guard["is_valid_input"]:
+            trace.append("input_guard")
+            return SemanticParseResult(
+                normalized_query=normalized,
+                intent="advice",
+                needs_clarification=True,
+                fallback_reason=guard["reason"],
+                trace=trace,
+            )
         followup_type = self._infer_followup_type(normalized, context)
         if followup_type != "none":
             trace.append(f"followup:{followup_type}")

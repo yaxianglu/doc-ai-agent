@@ -644,6 +644,20 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertTrue(result["semantic_parse"]["needs_clarification"])
         self.assertEqual(result["trace"], ["normalize", "slots", "mock"])
 
+    def test_analyze_keeps_invalid_input_out_of_follow_up_reuse(self):
+        result = self.understanding.analyze(
+            "h d k j h sa d k l j",
+            context={
+                "domain": "soil",
+                "region_name": "徐州市",
+            },
+        )
+
+        self.assertEqual(result["followup_type"], "none")
+        self.assertTrue(result["needs_clarification"])
+        self.assertEqual(result["fallback_reason"], "invalid_gibberish")
+        self.assertEqual(result["semantic_parse"]["followup_type"], "none")
+
     def test_unified_backend_semantic_schema_merges_without_loss(self):
         understanding = RequestUnderstanding(backend=UnifiedSchemaBackend())
         understanding.semantic_parser = AdviceSemanticParser()
