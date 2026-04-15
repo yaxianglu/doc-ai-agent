@@ -29,6 +29,7 @@ class QueryDSLTests(unittest.TestCase):
         self.assertEqual(payload.region.level, "county")
         self.assertEqual(payload.historical_window.window_value, 3)
         self.assertEqual(payload.future_window.horizon_days, 14)
+        self.assertEqual(payload.answer_form, "boolean")
         self.assertEqual(payload.capabilities, ("data_query", "forecast"))
 
     def test_query_dsl_round_trip(self):
@@ -39,6 +40,7 @@ class QueryDSLTests(unittest.TestCase):
                 "task_type": "joint_risk",
                 "region": {"name": "江苏省", "level": "city"},
                 "historical_window": {"kind": "history", "window_type": "weeks", "window_value": 8},
+                "answer_form": "composite",
                 "follow_up": True,
                 "followup_type": "short_followup",
                 "needs_clarification": False,
@@ -50,7 +52,30 @@ class QueryDSLTests(unittest.TestCase):
         serialized = payload.to_dict()
         self.assertEqual(serialized["domain"], "soil")
         self.assertEqual(serialized["region"]["name"], "江苏省")
+        self.assertEqual(serialized["answer_form"], "composite")
         self.assertEqual(serialized["capabilities"], ["data_query", "reasoning", "advice"])
+
+    def test_query_dsl_supports_trend_answer_form(self):
+        payload = query_dsl_from_understanding(
+            {
+                "original_question": "过去5个月虫情总体是上升还是下降？",
+                "resolved_question": "过去5个月虫情总体是上升还是下降？",
+                "intent": "data_query",
+                "task_type": "trend",
+                "domain": "pest",
+                "window": {"window_type": "months", "window_value": 5},
+                "answer_form": "trend",
+                "region_name": "",
+                "region_level": "city",
+                "followup_type": "none",
+                "needs_forecast": False,
+                "needs_explanation": False,
+                "needs_advice": False,
+                "confidence": 0.88,
+            }
+        )
+
+        self.assertEqual(payload.answer_form, "trend")
 
     def test_capabilities_from_semantics_prefers_reasoning_for_explanation(self):
         capabilities = capabilities_from_semantics(

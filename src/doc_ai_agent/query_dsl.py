@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+ANSWER_FORMS = {"unknown", "boolean", "trend", "rank", "detail", "explanation", "advice", "composite"}
+
 
 @dataclass(frozen=True)
 class QueryRegion:
@@ -70,6 +72,7 @@ class QueryDSL:
     domain: str = ""
     intent: tuple[str, ...] = field(default_factory=tuple)
     task_type: str = "unknown"
+    answer_form: str = "unknown"
     region: QueryRegion = field(default_factory=QueryRegion)
     historical_window: QueryWindow = field(default_factory=QueryWindow)
     future_window: QueryWindow | None = None
@@ -86,6 +89,7 @@ class QueryDSL:
             "domain": self.domain,
             "intent": list(self.intent),
             "task_type": self.task_type,
+            "answer_form": self.answer_form,
             "region": self.region.to_dict(),
             "historical_window": self.historical_window.to_dict(),
             "follow_up": self.follow_up,
@@ -108,6 +112,7 @@ class QueryDSL:
             domain=str(raw.get("domain") or ""),
             intent=tuple(str(item) for item in raw.get("intent") or [] if str(item or "")),
             task_type=str(raw.get("task_type") or "unknown"),
+            answer_form=normalize_answer_form(raw.get("answer_form")),
             region=QueryRegion.from_dict(raw.get("region")),
             historical_window=QueryWindow.from_dict(raw.get("historical_window"), kind="history"),
             future_window=QueryWindow.from_dict(future_window, kind="future") if isinstance(future_window, dict) else None,
@@ -119,6 +124,49 @@ class QueryDSL:
             original_question=str(raw.get("original_question") or ""),
             resolved_question=str(raw.get("resolved_question") or ""),
         )
+
+
+def normalize_answer_form(value: object) -> str:
+    """标准化答案形态，避免自由字符串进入规划层。"""
+
+    normalized = str(value or "").strip()
+    return normalized if normalized in ANSWER_FORMS else "unknown"
+
+
+def infer_answer_form(
+    question: str,
+    *,
+    task_type: str = "",
+    needs_explanation: bool = False,
+    needs_advice: bool = False,
+    needs_forecast: bool = False,
+) -> str:
+    """从问题和旧语义字段推导回答形态。"""
+
+    normalized = str(question or "")
+    if (
+        (needs_explanation and needs_advice)
+        or ("先" in normalized and "再" in normalized and any(token in normalized for token in ["建议", "解释", "原因"]))
+        or ("解释" in normalized and "建议" in normalized)
+    ):
+        return "composite"
+    if any(token in normalized for token in ["上升还是下降", "增加还是减少", "减少还是增加", "下降还是上升", "趋势", "走势", "走向", "有没有缓解"]):
+        return "trend"
+    if any(token in normalized for token in ["是否", "会不会", "能否", "可不可以", "有没有"]) or normalized.endswith(("吗", "吗？", "吗?")):
+        return "boolean"
+    if task_type == "trend":
+        return "trend"
+    if task_type == "ranking":
+        return "rank"
+    if task_type == "data_detail":
+        return "detail"
+    if needs_explanation:
+        return "explanation"
+    if needs_advice:
+        return "advice"
+    if needs_forecast:
+        return "trend"
+    return "unknown"
 
 
 def capabilities_from_semantics(*, intent: str, task_type: str, needs_forecast: bool, needs_explanation: bool, needs_advice: bool) -> tuple[str, ...]:
@@ -149,10 +197,20 @@ def query_dsl_from_understanding(understanding: dict | None) -> QueryDSL:
     needs_explanation = bool(raw.get("needs_explanation"))
     needs_advice = bool(raw.get("needs_advice"))
     followup_type = str(raw.get("followup_type") or "none")
+    answer_form = normalize_answer_form(raw.get("answer_form"))
+    if answer_form == "unknown":
+        answer_form = infer_answer_form(
+            str(raw.get("resolved_question") or raw.get("original_question") or ""),
+            task_type=str(raw.get("task_type") or "unknown"),
+            needs_forecast=needs_forecast,
+            needs_explanation=needs_explanation,
+            needs_advice=needs_advice,
+        )
     return QueryDSL(
         domain=str(raw.get("domain") or ""),
         intent=(intent,),
         task_type=str(raw.get("task_type") or "unknown"),
+        answer_form=answer_form,
         region=QueryRegion(
             name=str(raw.get("region_name") or ""),
             level=str(raw.get("region_level") or ""),

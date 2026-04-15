@@ -82,6 +82,27 @@ class ForcedLowConfidenceSemanticParser:
 
 
 class QueryPlannerTests(unittest.TestCase):
+    def test_planner_marks_boolean_answer_form_for_yes_no_forecast_question(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("过去3个月常州哪个县虫情最重，未来两周会不会继续升高？")
+
+        self.assertEqual(plan["answer_form"], "boolean")
+
+    def test_planner_marks_trend_answer_form_for_direction_question(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("过去5个月虫情总体是上升还是下降？")
+
+        self.assertEqual(plan["answer_form"], "trend")
+
+    def test_planner_marks_composite_answer_form_for_rank_reason_advice_question(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("先给我过去5个月最严重的县，再解释原因，再给建议")
+
+        self.assertEqual(plan["answer_form"], "composite")
+
     def test_planner_uses_semantic_parse_result_for_ood_question(self):
         planner = QueryPlanner(
             None,

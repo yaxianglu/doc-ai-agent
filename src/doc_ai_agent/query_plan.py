@@ -69,6 +69,7 @@ def canonical_understanding_payload(understanding: dict | None) -> dict:
         "intent": str(source.get("intent") or raw.get("intent") or "advice"),
         "domain": str(source.get("domain") or raw.get("domain") or ""),
         "task_type": str(source.get("task_type") or raw.get("task_type") or "unknown"),
+        "answer_form": str(source.get("answer_form") or raw.get("answer_form") or "unknown"),
         "region_name": str(source.get("region_name") or raw.get("region_name") or ""),
         "region_level": str(source.get("region_level") or raw.get("region_level") or ""),
         "historical_window": historical_window,

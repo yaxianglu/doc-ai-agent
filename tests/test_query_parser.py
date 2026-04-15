@@ -15,6 +15,7 @@ class StubUnderstandingEngine:
             "future_window": {"window_type": "weeks", "window_value": 2, "horizon_days": 14},
             "region_name": "常州市",
             "region_level": "county",
+            "answer_form": "boolean",
             "followup_type": "none",
             "needs_clarification": False,
             "needs_forecast": True,
@@ -33,6 +34,7 @@ class QueryParserTests(unittest.TestCase):
         self.assertEqual(result.domain, "pest")
         self.assertEqual(result.task_type, "ranking")
         self.assertEqual(result.region.level, "county")
+        self.assertEqual(result.answer_form, "boolean")
         self.assertEqual(result.capabilities, ("data_query", "forecast"))
 
 
