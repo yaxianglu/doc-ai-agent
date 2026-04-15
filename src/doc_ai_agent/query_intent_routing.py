@@ -18,7 +18,7 @@ from .agri_semantics import (
     needs_explanation,
     needs_forecast,
 )
-from .query_dsl import QueryDSL, capabilities_from_semantics, query_dsl_from_understanding
+from .query_dsl import QueryDSL, capabilities_from_semantics, infer_answer_form, normalize_answer_form, query_dsl_from_understanding
 from .query_plan import build_query_plan, execution_route
 from .task_dsl import task_dsl_from_task_graph
 from .task_decomposition import build_task_graph
@@ -349,6 +349,7 @@ def typed_metadata(
             "historical_window": {"window_type": "all", "window_value": None},
             "future_window": None,
             "answer_mode": answer_mode_for_plan(intent, route, needs_clarification),
+            "answer_form": "unknown",
         }
     domain = str(
         understanding.get("domain")
@@ -369,12 +370,22 @@ def typed_metadata(
     )
     historical_window = understanding.get("window") or route.get("window") or {"window_type": "all", "window_value": None}
     future_window = understanding.get("future_window") or route.get("forecast_window")
+    answer_form = normalize_answer_form(understanding.get("answer_form"))
+    if answer_form == "unknown":
+        answer_form = infer_answer_form(
+            question,
+            task_type=str(understanding.get("task_type") or ""),
+            needs_forecast=bool(future_window),
+            needs_explanation=bool(understanding.get("needs_explanation")),
+            needs_advice=bool(understanding.get("needs_advice")),
+        )
     return {
         "domain": domain,
         "region_name": region_name,
         "historical_window": historical_window,
         "future_window": future_window,
         "answer_mode": answer_mode_for_plan(intent, route, needs_clarification),
+        "answer_form": answer_form,
     }
 
 

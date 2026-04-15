@@ -49,7 +49,7 @@ from .request_understanding_reasoning import (
     needs_historical_data,
 )
 from .query_plan import canonical_understanding_payload
-from .query_dsl import query_dsl_from_understanding
+from .query_dsl import infer_answer_form, query_dsl_from_understanding
 from .semantic_parser import SemanticParser
 
 CITY_ALIASES = {
@@ -244,6 +244,13 @@ class RequestUnderstanding:
             region_level=region_level,
         )
         historical_query_text = build_historical_query_text(domain, historical_window, cleaned, task_type, region_name, region_level)
+        answer_form = infer_answer_form(
+            cleaned,
+            task_type=task_type,
+            needs_forecast=needs_forecast_flag,
+            needs_explanation=needs_explanation_flag,
+            needs_advice=needs_advice_flag,
+        )
 
         result = {
             "original_question": text,
@@ -253,6 +260,7 @@ class RequestUnderstanding:
             "ignored_phrases": ignored,
             "intent": intent,
             "task_type": task_type,
+            "answer_form": answer_form,
             "understanding_engine": structured.get("engine") or extracted.get("engine") or "rules",
             "used_context": used_context,
             "context_resolution": context_resolution,
@@ -279,6 +287,7 @@ class RequestUnderstanding:
                 "intent": intent,
                 "domain": domain,
                 "task_type": task_type,
+                "answer_form": answer_form,
                 "region_name": region_name,
                 "region_level": region_level,
                 "historical_window": historical_window,
