@@ -94,6 +94,7 @@ class DocAIAgent:
             llm_client=llm_client,
             model=advice_model,
             source_provider=source_provider,
+            access_facade=self.access_facade if hasattr(self, "access_facade") else None,
         )
         self.reasoning_capability = ReasoningCapability(self.advice_engine)
         self.advice_capability = AdviceCapability(self.advice_engine)
@@ -106,10 +107,12 @@ class DocAIAgent:
             source_provider=source_provider,
             query_playbook_router=self.query_playbook_router,
         )
+        self.advice_engine.access_facade = self.access_facade
         self.query_planner = QueryPlanner(
             self.intent_router,
             self.query_playbook_router,
             semantic_parser=semantic_parser,
+            access_facade=self.access_facade,
         )
         self.request_understanding = RequestUnderstanding(backend=understanding_backend)
         if semantic_parser is not None:
@@ -491,7 +494,8 @@ class DocAIAgent:
             memory_context=state.get("memory_context"),
             query_result=state.get("query_result") or {},
             forecast_result=state.get("forecast_result") or {},
-            source_provider=self.access_facade,
+            source_provider=self.source_provider,
+            access_facade=self.access_facade,
             build_runtime_context=self._build_runtime_context,
             first_region_name=self._first_region_name,
         )

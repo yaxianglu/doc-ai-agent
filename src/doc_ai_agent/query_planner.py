@@ -108,10 +108,12 @@ class QueryPlanner:
         playbook_router=None,
         semantic_judger: SemanticJudger | None = None,
         semantic_parser: SemanticParser | None = None,
+        access_facade=None,
     ):
         """注入可选的意图路由器与 playbook 路由器。"""
         self.intent_router = intent_router
         self.playbook_router = playbook_router
+        self.access_facade = access_facade
         self.semantic_judger = semantic_judger or SemanticJudger()
         self.semantic_parser = semantic_parser or SemanticParser()
         self.query_parser = QueryParser()
@@ -425,12 +427,17 @@ class QueryPlanner:
 
     def _playbook_route(self, question: str, context: dict | None = None) -> dict | None:
         """尝试走 playbook 路由，并确保结果是农业数据查询类型。"""
-        if self.playbook_router is None:
-            return None
-        try:
-            route = self.playbook_router.route(question, context=context)
-        except Exception:
-            return None
+        route = None
+        if self.access_facade is not None:
+            try:
+                route = self.access_facade.route_query(question, context=context)
+            except Exception:
+                route = None
+        elif self.playbook_router is not None:
+            try:
+                route = self.playbook_router.route(question, context=context)
+            except Exception:
+                return None
         if not isinstance(route, dict):
             return None
         query_type = str(route.get("query_type") or "")

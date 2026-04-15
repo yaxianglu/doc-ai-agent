@@ -1,6 +1,10 @@
 import unittest
 
-from doc_ai_agent.agent_execution_nodes import build_query_result_payload, build_clarification_response
+from doc_ai_agent.agent_execution_nodes import (
+    build_query_result_payload,
+    build_clarification_response,
+    run_knowledge_node,
+)
 from doc_ai_agent.capabilities.data_query import DataQueryCapability
 from doc_ai_agent.capabilities.advice import AdviceCapability
 from doc_ai_agent.capabilities.forecast import ForecastCapability
@@ -95,6 +99,41 @@ class AgentExecutionNodesTests(unittest.TestCase):
         self.assertEqual(payload["response"]["mode"], "advice")
         self.assertEqual(payload["response"]["evidence"]["generation_mode"], "clarification")
         self.assertEqual(payload["response"]["evidence"]["confidence"], 0.62)
+
+    def test_run_knowledge_node_uses_access_facade_search_boundary(self):
+        class RawSourceProvider:
+            def search(self, question, limit=3, context=None):
+                raise AssertionError("knowledge node should not call raw source provider directly")
+
+        class SpyAccessFacade:
+            def __init__(self):
+                self.calls = []
+
+            def search_sources(self, question, limit=3, context=None):
+                self.calls.append({"question": question, "limit": limit, "context": dict(context or {})})
+                return [{"title": "规则库"}]
+
+        facade = SpyAccessFacade()
+        payload = run_knowledge_node(
+            question="为什么徐州虫情高",
+            understanding={"needs_explanation": True, "normalized_question": "为什么徐州虫情高"},
+            plan={"intent": "data_query"},
+            memory_context={"domain": "pest"},
+            query_result={"data": [{"region_name": "徐州市"}]},
+            forecast_result={"forecast": {"risk_level": "高"}, "analysis_context": {"region_name": "徐州市"}},
+            source_provider=RawSourceProvider(),
+            access_facade=facade,
+            build_runtime_context=lambda question, plan, previous_context=None, understanding=None: {
+                "domain": "pest",
+                "region_name": "",
+            },
+            first_region_name=lambda query_result: "徐州市",
+        )
+
+        self.assertEqual(len(facade.calls), 1)
+        self.assertEqual(facade.calls[0]["question"], "为什么徐州虫情高")
+        self.assertEqual(facade.calls[0]["context"]["region_name"], "徐州市")
+        self.assertEqual(payload["knowledge"][0]["title"], "规则库")
 
 
 if __name__ == "__main__":

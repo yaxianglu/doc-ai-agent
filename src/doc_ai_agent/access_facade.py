@@ -35,7 +35,10 @@ class AccessFacade:
         search = getattr(self.source_provider, "search", None)
         if not callable(search):
             return []
-        results = search(question, limit=limit, context=context)
+        try:
+            results = search(question, limit=limit, context=context)
+        except TypeError:
+            results = search(question, limit=limit)
         return list(results or [])
 
     def search(self, question: str, limit: int = 3, context: dict | None = None) -> list[dict]:
