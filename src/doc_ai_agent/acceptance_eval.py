@@ -7,11 +7,14 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+from .input_guard import classify_input_quality
+
 SUITE_BY_CATEGORY = {
     "边界能力": "ood",
     "原因解释": "explanation",
     "预测能力": "forecast",
     "多轮上下文": "context",
+    "无效输入": "invalid_input",
 }
 
 
@@ -25,6 +28,8 @@ def load_question_bank(path: Path) -> list[dict]:
             "category": str(item["category"]),
             "question": str(item["question"]),
         }
+        if str(item.get("suite") or "").strip():
+            entry["suite"] = str(item["suite"]).strip()
         if isinstance(item.get("turns"), list):
             entry["turns"] = [str(turn) for turn in item["turns"] if str(turn).strip()]
         normalized.append(entry)
@@ -101,6 +106,51 @@ def _is_boundary_question(item: dict, question: str) -> bool:
     return category == "边界能力" or _contains_any(question, ["天气", "下雨", "气温", "天气预报", "台风", "新闻", "高铁票", "火车票", "你是谁"])
 
 
+def _is_invalid_input_question(question: str) -> bool:
+    """识别键盘乱敲、英文碎片、纯噪声等无效输入。"""
+    return not bool(classify_input_quality(question).get("is_valid_input", True))
+
+
+def _looks_like_invalid_input_clarification(answer: str) -> bool:
+    """识别系统是否对无效输入做了澄清式回复。"""
+    return _contains_any(
+        answer,
+        [
+            "我没看懂",
+            "请补充",
+            "你可以直接问",
+            "我目前主要支持",
+            "你想看虫情还是墒情",
+        ],
+    )
+
+
+def _looks_like_business_hijack(answer: str) -> bool:
+    """识别无效输入却被劫持成业务回答/建议。"""
+    if _looks_like_invalid_input_clarification(answer):
+        return False
+    return _contains_any(
+        answer,
+        [
+            "建议：",
+            "原因：",
+            "依据：",
+            "整体虫情",
+            "整体墒情",
+            "虫情趋势",
+            "墒情趋势",
+            "预警数量趋势",
+            "最近值",
+            "峰值",
+            "观测日",
+            "补水",
+            "排水",
+            "巡查",
+            "防治",
+        ],
+    )
+
+
 def _is_identity_boundary_question(question: str) -> bool:
     """识别身份说明类边界题。"""
     stripped = question.strip().rstrip("？?")
@@ -163,12 +213,14 @@ def _score_item(item: dict) -> dict:
     """按规则评估单条问答结果并输出分数与失败项。"""
     if isinstance(item.get("turn_results"), list):
         turns = list(item.get("turn_results") or [])
+        suite_name = _suite_name_for(item)
+        category_name = str(item.get("category") or "多轮上下文")
         scored_turns = [
             _score_item(
                 {
                     "index": int(item["index"]),
-                    "category": "多轮上下文",
-                    "suite": "context",
+                    "category": category_name,
+                    "suite": suite_name,
                     "question": str(turn.get("question") or ""),
                     "ok": bool(turn.get("ok", True)),
                     "mode": str(turn.get("mode") or ""),
@@ -186,8 +238,8 @@ def _score_item(item: dict) -> dict:
                     checks_failed.append(failed)
         return {
             "index": int(item["index"]),
-            "category": str(item.get("category") or "多轮上下文"),
-            "suite": "context",
+            "category": category_name,
+            "suite": suite_name,
             "question": str(item.get("question") or ""),
             "mode": str(item.get("mode") or ""),
             "score": average_score,
@@ -202,6 +254,8 @@ def _score_item(item: dict) -> dict:
     mode = str(item.get("mode") or "")
     ok = bool(item.get("ok"))
     seconds = float(item.get("seconds") or 0)
+    evidence = dict(item.get("evidence") or {})
+    response_meta = dict(evidence.get("response_meta") or {})
     score = 10.0
     failed: list[str] = []
 
@@ -253,6 +307,25 @@ def _score_item(item: dict) -> dict:
 
     if _is_boundary_question(item, question):
         score, failed = _score_boundary_response(question, answer, score, failed)
+
+    if _is_invalid_input_question(question):
+        clarification_like = _looks_like_invalid_input_clarification(answer)
+        generation_mode = str(evidence.get("generation_mode") or "")
+        fallback_reason = str(response_meta.get("fallback_reason") or "")
+        if clarification_like:
+            failed = [entry for entry in failed if entry != "misrouted_to_advice"]
+        else:
+            score -= 7.0
+            failed.append("invalid_input_not_clarified")
+        if _looks_like_business_hijack(answer):
+            score -= 3.0
+            failed.append("invalid_input_business_hijack")
+        if generation_mode and generation_mode != "clarification":
+            score -= 1.5
+            failed.append("invalid_input_wrong_generation_mode")
+        if fallback_reason and not fallback_reason.startswith("invalid_"):
+            score -= 1.0
+            failed.append("invalid_input_wrong_fallback_reason")
 
     if _contains_any(question, ["预警", "报警"]) and "墒情异常最多" in answer and "预警" not in answer:
         score -= 3.5
