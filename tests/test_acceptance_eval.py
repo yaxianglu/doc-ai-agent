@@ -311,6 +311,67 @@ class AcceptanceEvalTests(unittest.TestCase):
         self.assertIn("county_scope_mismatch", item["checks_failed"])
         self.assertLess(item["score"], 5.0)
 
+    def test_score_run_rewards_invalid_input_clarification_and_penalizes_business_hijack(self):
+        raw = [
+            {
+                "index": 141,
+                "category": "无效输入",
+                "suite": "invalid_input",
+                "question": "h d k j h sa d k l j",
+                "ok": True,
+                "mode": "advice",
+                "seconds": 0.1,
+                "answer": "我没看懂这条输入。你可以直接问虫情、墒情、预警数据，或让我给处置建议。",
+                "evidence": {
+                    "generation_mode": "clarification",
+                    "response_meta": {"fallback_reason": "invalid_gibberish"},
+                },
+            },
+            {
+                "index": 142,
+                "category": "无效输入",
+                "suite": "invalid_input",
+                "question": "asd qwe zxc",
+                "ok": True,
+                "mode": "advice",
+                "seconds": 0.1,
+                "answer": "建议：1. 先分区核查土壤墒情。 2. 对低墒地块优先补水。",
+                "evidence": {
+                    "generation_mode": "llm",
+                    "response_meta": {"fallback_reason": "router_advice"},
+                },
+            },
+        ]
+
+        scored = score_run(raw)
+        by_index = {item["index"]: item for item in scored["items"]}
+        self.assertGreaterEqual(by_index[141]["score"], 9.0)
+        self.assertLess(by_index[142]["score"], 3.5)
+        self.assertIn("invalid_input_business_hijack", by_index[142]["checks_failed"])
+        self.assertIn("invalid_input_wrong_generation_mode", by_index[142]["checks_failed"])
+
+    def test_score_run_reports_invalid_input_suite_scores(self):
+        raw = [
+            {
+                "index": 141,
+                "category": "无效输入",
+                "suite": "invalid_input",
+                "question": "!!! ??? 12345",
+                "ok": True,
+                "mode": "advice",
+                "seconds": 0.1,
+                "answer": "我没看懂这条输入。你可以直接问虫情、墒情、预警数据，或让我给处置建议。",
+                "evidence": {
+                    "generation_mode": "clarification",
+                    "response_meta": {"fallback_reason": "invalid_noise"},
+                },
+            }
+        ]
+
+        scored = score_run(raw)
+        self.assertIn("invalid_input", scored["summary"]["suite_scores"])
+        self.assertGreaterEqual(scored["summary"]["suite_scores"]["invalid_input"], 9.0)
+
 
 if __name__ == "__main__":
     unittest.main()

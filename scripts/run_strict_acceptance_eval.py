@@ -43,8 +43,15 @@ def _load_suite_index() -> dict[int, str]:
     return suite_index
 
 
-def run_eval() -> list[dict]:
-    questions = load_question_bank(QUESTION_BANK)
+def _load_questions(question_bank: Path, append_banks: list[Path]) -> list[dict]:
+    questions = load_question_bank(question_bank)
+    for extra_path in append_banks:
+        questions.extend(load_question_bank(extra_path))
+    return questions
+
+
+def run_eval(*, question_bank: Path, append_banks: list[Path]) -> list[dict]:
+    questions = _load_questions(question_bank, append_banks)
     suite_index = _load_suite_index()
     app = AgentApp(AppConfig.from_env(os.environ))
     app.refresh()
@@ -75,7 +82,7 @@ def run_eval() -> list[dict]:
                 {
                     "index": item["index"],
                     "category": item["category"],
-                    "suite": "context",
+                    "suite": str(item.get("suite") or "context"),
                     "question": item["question"],
                     "turns": turns,
                     "turn_results": turn_results,
@@ -94,7 +101,7 @@ def run_eval() -> list[dict]:
             {
                 "index": item["index"],
                 "category": item["category"],
-                "suite": suite_index.get(int(item["index"]), ""),
+                "suite": str(item.get("suite") or suite_index.get(int(item["index"]), "")),
                 "question": item["question"],
                 "ok": True,
                 "mode": response.get("mode"),
@@ -113,6 +120,8 @@ def main() -> int:
     parser.add_argument("--compare", action="store_true")
     parser.add_argument("--baseline", default=str(EVAL_ROOT / "baseline" / "scored.json"))
     parser.add_argument("--from-raw", default="")
+    parser.add_argument("--question-bank", default=str(QUESTION_BANK))
+    parser.add_argument("--append-bank", action="append", default=[])
     args = parser.parse_args()
 
     run_dir = EVAL_ROOT / _timestamp_slug()
@@ -123,7 +132,10 @@ def main() -> int:
     if args.from_raw:
         raw = json.loads(Path(args.from_raw).read_text(encoding="utf-8"))
     else:
-        raw = run_eval()
+        raw = run_eval(
+            question_bank=Path(args.question_bank),
+            append_banks=[Path(path) for path in list(args.append_bank or [])],
+        )
     raw_path = run_dir / "raw.json"
     raw_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (latest_dir / "raw.json").write_text(raw_path.read_text(encoding="utf-8"), encoding="utf-8")
