@@ -135,6 +135,57 @@ class AgentExecutionNodesTests(unittest.TestCase):
         self.assertEqual(facade.calls[0]["context"]["region_name"], "徐州市")
         self.assertEqual(payload["knowledge"][0]["title"], "规则库")
 
+    def test_run_knowledge_node_skips_fact_query_retrieval(self):
+        class RawSourceProvider:
+            def search(self, question, limit=3, context=None):
+                raise AssertionError("fact query should not hit knowledge search")
+
+        payload = run_knowledge_node(
+            question="最近30天徐州预警多少次",
+            understanding={"needs_explanation": False, "needs_advice": False, "normalized_question": "最近30天徐州预警多少次"},
+            plan={"intent": "data_query", "route": {"query_type": "alerts_count"}},
+            memory_context={"domain": "alerts"},
+            query_result={"data": [{"region_name": "徐州市"}]},
+            forecast_result={},
+            source_provider=RawSourceProvider(),
+            access_facade=None,
+            build_runtime_context=lambda question, plan, previous_context=None, understanding=None: {
+                "domain": "alerts",
+                "region_name": "徐州市",
+            },
+            first_region_name=lambda query_result: "徐州市",
+        )
+
+        self.assertEqual(payload["knowledge"], [])
+        self.assertEqual(payload["knowledge_policy"]["mode"], "disabled")
+        self.assertFalse(payload["knowledge_policy"]["should_retrieve"])
+        self.assertEqual(payload["knowledge_policy"]["reason"], "fact_query_no_external_knowledge")
+
+    def test_run_knowledge_node_allows_explanation_query_retrieval(self):
+        class RawSourceProvider:
+            def search(self, question, limit=3, context=None):
+                return [{"title": "植保知识库"}]
+
+        payload = run_knowledge_node(
+            question="为什么徐州虫情高",
+            understanding={"needs_explanation": True, "normalized_question": "为什么徐州虫情高"},
+            plan={"intent": "data_query", "route": {"query_type": "pest_overview"}},
+            memory_context={"domain": "pest"},
+            query_result={"data": [{"region_name": "徐州市"}]},
+            forecast_result={},
+            source_provider=RawSourceProvider(),
+            access_facade=None,
+            build_runtime_context=lambda question, plan, previous_context=None, understanding=None: {
+                "domain": "pest",
+                "region_name": "徐州市",
+            },
+            first_region_name=lambda query_result: "徐州市",
+        )
+
+        self.assertEqual(payload["knowledge"][0]["title"], "植保知识库")
+        self.assertEqual(payload["knowledge_policy"]["mode"], "augmentation")
+        self.assertTrue(payload["knowledge_policy"]["should_retrieve"])
+
 
 if __name__ == "__main__":
     unittest.main()

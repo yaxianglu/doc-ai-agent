@@ -148,12 +148,12 @@ def run_knowledge_node(
     """执行知识检索节点，统一处理异常并返回可选知识列表。"""
     knowledge_policy = decide_knowledge_policy(understanding=understanding, plan=plan)
     if not knowledge_policy.get("should_retrieve"):
-        return {"knowledge": None, "knowledge_policy": knowledge_policy}
+        return {"knowledge": [], "knowledge_policy": knowledge_policy}
     if source_provider is None:
         disabled_policy = dict(knowledge_policy)
         disabled_policy["should_retrieve"] = False
         disabled_policy["reason"] = "knowledge_source_unavailable"
-        return {"knowledge": None, "knowledge_policy": disabled_policy}
+        return {"knowledge": [], "knowledge_policy": disabled_policy}
     context = build_runtime_context(
         understanding.get("normalized_question") or question,
         plan,

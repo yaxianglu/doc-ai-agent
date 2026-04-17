@@ -114,6 +114,32 @@ class CountingSemanticParser:
 
 
 class QueryPlannerTests(unittest.TestCase):
+    def test_planner_emits_finite_plan_type_for_ranking_query(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("近3个星期虫情最严重的地方是哪里？")
+
+        self.assertEqual(plan["plan_type"], "ranking_query")
+        self.assertEqual(plan["planner_template"], "ranking_query")
+
+    def test_planner_emits_clarify_plan_type_for_low_signal_question(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("h d k j h sa d k l j")
+
+        self.assertEqual(plan["plan_type"], "clarify_query")
+        self.assertEqual(plan["planner_template"], "clarify_query")
+
+    def test_planner_task_graph_uses_only_restricted_templates(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("过去3个月常州哪个县虫情最重，未来两周会不会继续升高？")
+
+        self.assertEqual(
+            sorted(task["template"] for task in plan["restricted_task_graph"]["tasks"]),
+            ["forecast", "merge", "rank"],
+        )
+
     def test_planner_marks_boolean_answer_form_for_yes_no_forecast_question(self):
         planner = QueryPlanner(None)
 
@@ -1715,6 +1741,21 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["intent"], "data_query")
         self.assertEqual(plan["route"]["query_type"], "pest_top")
         self.assertEqual(plan["route"]["region_level"], "county")
+
+    def test_explicit_joint_risk_county_question_routes_to_joint_risk(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("最近7天联合风险最高的是哪些县？")
+
+        self.assertEqual(plan["route"]["query_type"], "joint_risk")
+        self.assertEqual(plan["route"]["region_level"], "county")
+
+    def test_generic_risk_ranking_question_does_not_force_joint_risk(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("过去半年风险最高的是哪些地区？")
+
+        self.assertNotEqual(plan["route"]["query_type"], "joint_risk")
 
     def test_pronoun_county_question_without_context_requests_clarification(self):
         planner = QueryPlanner(None)

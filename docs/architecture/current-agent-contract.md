@@ -45,6 +45,11 @@
   - `task_graph`
   - `memory_state`
   - `response_meta`
+- `evidence` 可增量扩展但不改变既有字段语义，例如：
+  - `knowledge_policy`：显式说明当前问题是否允许知识增强
+  - `evidence_layers.internal_facts`：内部结构化事实证据
+  - `evidence_layers.external_knowledge`：外部知识增强证据
+  - `knowledge` / `knowledge_sources`：保持兼容的知识列表字段
 
 ## Regression Gate
 
