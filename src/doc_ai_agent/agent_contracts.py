@@ -29,6 +29,8 @@ class AnalysisSynthesisPayload:
     knowledge: list[dict]
     knowledge_sources: list
     generation_mode: str
+    knowledge_policy: dict = field(default_factory=dict)
+    evidence_layers: dict = field(default_factory=dict)
     context_trace: list[str] = field(default_factory=list)
 
     def to_evidence(self) -> dict:
@@ -43,6 +45,10 @@ class AnalysisSynthesisPayload:
             "knowledge_sources": list(self.knowledge_sources),
             "generation_mode": self.generation_mode,
         }
+        if self.knowledge_policy:
+            evidence["knowledge_policy"] = dict(self.knowledge_policy)
+        if self.evidence_layers:
+            evidence["evidence_layers"] = dict(self.evidence_layers)
         if self.context_trace:
             evidence["context_trace"] = list(self.context_trace)
         return evidence

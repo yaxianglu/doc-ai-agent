@@ -276,6 +276,7 @@ def build_query_plan(
     needs_explanation: bool,
     needs_forecast: bool,
     needs_advice: bool,
+    semantic_metric: dict | None = None,
 ) -> dict:
     """构建统一 query_plan。
 
@@ -316,22 +317,26 @@ def build_query_plan(
 
     query_type = str(route.get("query_type") or "")
     normalized_route = _normalized_route(route)
-    aggregation = _aggregation_for_query_type(query_type, answer_mode, "agri_analysis" if domain else "conversation")
+    semantic_metric_payload = dict(semantic_metric or {})
+    aggregation = str(semantic_metric_payload.get("aggregation") or "") or _aggregation_for_query_type(query_type, answer_mode, "agri_analysis" if domain else "conversation")
+    slots = {
+        "domain": domain,
+        "metric": str(semantic_metric_payload.get("metric") or "") or _metric_for_query_type(query_type, domain),
+        "time_range": _time_range_payload(historical_window),
+        "region_scope": _region_scope_payload(route, region_name, "agri_analysis" if domain else "conversation"),
+        "aggregation": aggregation,
+        "k": (route.get("top_n") or 1) if aggregation == "top_k" else None,
+        "need_explanation": bool(needs_explanation),
+        "need_forecast": bool(needs_forecast or future_window),
+        "need_advice": bool(needs_advice),
+    }
+    if semantic_metric_payload:
+        slots["semantic_metric"] = semantic_metric_payload
     return {
         "version": "v1",
         "goal": "agri_analysis" if domain else "conversation",
         "intent": "clarification" if needs_clarification else ("analysis" if plan_intent == "data_query" or domain else plan_intent),
-        "slots": {
-            "domain": domain,
-            "metric": _metric_for_query_type(query_type, domain),
-            "time_range": _time_range_payload(historical_window),
-            "region_scope": _region_scope_payload(route, region_name, "agri_analysis" if domain else "conversation"),
-            "aggregation": aggregation,
-            "k": (route.get("top_n") or 1) if aggregation == "top_k" else None,
-            "need_explanation": bool(needs_explanation),
-            "need_forecast": bool(needs_forecast or future_window),
-            "need_advice": bool(needs_advice),
-        },
+        "slots": slots,
         "constraints": {
             "must_use_structured_data": bool(domain),
             "allow_clarification": not is_greeting,

@@ -10,6 +10,7 @@ from .answer_style import (
     polish_conclusion_text,
     polish_explanation_text,
 )
+from .response_assembler import build_evidence_layers
 
 
 def first_region_name(response: dict) -> str:
@@ -187,6 +188,7 @@ def synthesize_analysis_response(
     query_result: dict,
     forecast_result: dict,
     knowledge: list[dict],
+    knowledge_policy: dict | None,
     explanation_text: str,
     explanation_sources: list,
     advice_text: str,
@@ -208,6 +210,13 @@ def synthesize_analysis_response(
         forecast=dict(forecast_result.get("forecast") or {}),
         knowledge=list(knowledge),
         knowledge_sources=list(advice_sources or explanation_sources or knowledge),
+        knowledge_policy=dict(knowledge_policy or {}),
+        evidence_layers=build_evidence_layers(
+            query_result=query_result,
+            forecast_result=forecast_result,
+            knowledge=knowledge,
+            knowledge_policy=knowledge_policy,
+        ),
         generation_mode="analysis_synthesis",
         context_trace=list(plan.get("context_trace") or []),
     )

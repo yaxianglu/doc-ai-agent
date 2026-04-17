@@ -82,6 +82,62 @@ class RequestUnderstandingTests(unittest.TestCase):
     def setUp(self):
         self.understanding = RequestUnderstanding()
 
+    def test_resolves_alert_count_metric_for_alert_trend_query(self):
+        result = self.understanding.analyze("今年以来预警数量趋势如何？")
+
+        self.assertEqual(result["semantic_metric"]["metric"], "alert_count")
+        self.assertEqual(result["semantic_metric"]["aggregation"], "trend")
+        self.assertEqual(result["semantic_metric"]["time_scope_mode"], "year_since")
+
+    def test_resolves_ranking_basis_for_topn_query(self):
+        result = self.understanding.analyze("近3个星期虫情最严重的前5个地区")
+
+        self.assertEqual(result["semantic_metric"]["metric"], "pest_severity")
+        self.assertEqual(result["semantic_metric"]["aggregation"], "top_k")
+        self.assertEqual(result["semantic_metric"]["ranking_basis"], "severity")
+
+    def test_resolves_region_scope_for_county_question(self):
+        result = self.understanding.analyze("近30天徐州市哪个县虫情最严重？")
+
+        self.assertEqual(result["semantic_metric"]["geo_scope_mode"], "county_scope")
+
+    def test_memory_policy_allows_weak_slot_inheritance(self):
+        result = self.understanding.analyze(
+            "那未来两周呢",
+            context={
+                "domain": "pest",
+                "region_name": "徐州市",
+                "window": {"window_type": "months", "window_value": 5},
+                "memory_policy": {
+                    "allowed_slots": ["domain", "region", "time_window"],
+                    "forbidden_slots": ["facts", "rank_results", "forecast_results"],
+                },
+            },
+        )
+
+        self.assertTrue(result["used_context"])
+        self.assertEqual(result["memory_policy"]["inheritance_decision"], "allow")
+        self.assertIn("domain", result["memory_policy"]["inherited_slots"])
+        self.assertIn("region", result["memory_policy"]["inherited_slots"])
+
+    def test_memory_policy_blocks_fact_conclusion_inheritance(self):
+        result = self.understanding.analyze(
+            "还是这个结论吗",
+            context={
+                "domain": "pest",
+                "region_name": "徐州市",
+                "last_answer": "徐州市最近虫情最高",
+                "memory_policy": {
+                    "allowed_slots": ["domain", "region", "time_window"],
+                    "forbidden_slots": ["facts", "rank_results", "forecast_results"],
+                },
+            },
+        )
+
+        self.assertFalse(result["used_context"])
+        self.assertEqual(result["memory_policy"]["inheritance_decision"], "block")
+        self.assertIn("facts", result["memory_policy"]["blocked_slots"])
+
     def test_filters_meta_talk_and_builds_execution_plan(self):
         result = self.understanding.analyze(
             "我其实不太确定怎么表达，但你先帮我看看过去5个月虫情最严重的地方是哪里，"

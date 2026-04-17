@@ -51,6 +51,8 @@ from .request_understanding_reasoning import (
 from .query_plan import canonical_understanding_payload
 from .query_dsl import infer_answer_form, normalize_answer_form, query_dsl_from_understanding
 from .input_guard import classify_input_quality
+from .memory_policy import evaluate_memory_policy
+from .semantic_metric_resolver import resolve_semantic_metric
 from .semantic_parser import SemanticParser
 
 CITY_ALIASES = {
@@ -163,8 +165,12 @@ class RequestUnderstanding:
         text = (question or "").strip()
         input_guard = classify_input_quality(text)
         semantic_parse = self.semantic_parser.parse(text, context=context)
+        memory_policy = evaluate_memory_policy(text, context)
         if input_guard["is_valid_input"]:
-            resolved_question, context_resolution = self._resolve_with_context(text, context)
+            if memory_policy.get("inheritance_decision") in {"block", "clarify"}:
+                resolved_question, context_resolution = text, []
+            else:
+                resolved_question, context_resolution = self._resolve_with_context(text, context)
         else:
             resolved_question, context_resolution = text, []
         cleaned, ignored = self._strip_noise(resolved_question)
@@ -294,7 +300,12 @@ class RequestUnderstanding:
             "fallback_reason": semantic_parse.fallback_reason,
             "trace": list(semantic_parse.trace),
             "semantic_parse": semantic_parse.to_dict(),
+            "memory_policy": memory_policy,
         }
+        if memory_policy.get("should_clarify"):
+            result["needs_clarification"] = True
+            result["semantic_parse"]["needs_clarification"] = True
+            result["semantic_parse"]["confidence"] = min(float(result["semantic_parse"].get("confidence") or 0.0), 0.3)
         result["canonical_understanding"] = canonical_understanding_payload(
             {
                 "intent": intent,
@@ -306,9 +317,10 @@ class RequestUnderstanding:
                 "historical_window": historical_window,
                 "future_window": future_window,
                 "followup_type": semantic_parse.followup_type,
-                "needs_clarification": semantic_parse.needs_clarification,
+                "needs_clarification": result["needs_clarification"],
             }
         )
+        result["semantic_metric"] = resolve_semantic_metric(cleaned, result)
         result["parsed_query"] = query_dsl_from_understanding(result).to_dict()
         return result
 

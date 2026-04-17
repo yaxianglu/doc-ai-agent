@@ -262,7 +262,9 @@ class FakeStructuredRepo:
         return 12
 
     def top_n_filtered(self, field, n, since, until=None, city=None, level=None, min_alert_value=None):
-        del field, since, until, city, level, min_alert_value
+        del since, until, city, level, min_alert_value
+        if field == "county":
+            return [{"name": "铜山区", "count": 12}, {"name": "沛县", "count": 9}][:n]
         return [{"name": "徐州市", "count": 12}][:n]
 
     def available_pest_time_range(self):
@@ -1252,6 +1254,78 @@ class AgentGraphTests(unittest.TestCase):
         self.assertIn("原因：", result["answer"])
         self.assertIn("依据：", result["answer"])
         self.assertIn("建议：", result["answer"])
+
+    def test_analysis_response_exposes_knowledge_policy_and_evidence_layers(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer(
+            "我不太会表达，你先看看过去5个月虫情最严重的地方是哪里，再解释一下为什么，最后给处置建议",
+            thread_id="thread-analysis-knowledge-policy",
+        )
+
+        self.assertEqual(result["mode"], "analysis")
+        self.assertEqual(result["evidence"]["knowledge_policy"]["mode"], "augmentation")
+        self.assertTrue(result["evidence"]["knowledge_policy"]["should_retrieve"])
+        self.assertEqual(result["evidence"]["evidence_layers"]["external_knowledge"]["source"], "external")
+        self.assertTrue(result["evidence"]["evidence_layers"]["external_knowledge"]["items"])
+        self.assertIn("historical_query", result["evidence"]["evidence_layers"]["internal_facts"])
+
+    def test_fact_query_response_exposes_disabled_knowledge_policy(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer("过去5个月虫情最严重的地方是哪里？", thread_id="thread-fact-knowledge-policy")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(result["evidence"]["knowledge_policy"]["mode"], "disabled")
+        self.assertFalse(result["evidence"]["knowledge_policy"]["should_retrieve"])
+        self.assertEqual(result["evidence"]["knowledge_policy"]["reason"], "fact_query_no_external_knowledge")
+
+    def test_county_alert_ranking_returns_county_answer_instead_of_scope_fallback(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("过去12周预警最多的是哪些县？", thread_id="thread-county-alert-top")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertNotIn("没有对齐到县级口径", result["answer"])
+        self.assertRegex(result["answer"], r"(县|区)")
+        self.assertEqual(result["evidence"]["historical_query"]["query_type"], "alerts_top")
+        self.assertEqual(result["evidence"]["analysis_context"]["region_level"], "county")
+
+    def test_explicit_joint_risk_ranking_routes_to_joint_risk(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("最近7天联合风险最高的是哪些县？", thread_id="thread-county-risk-top")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertNotIn("没有对齐到县级口径", result["answer"])
+        self.assertEqual(result["evidence"]["historical_query"]["query_type"], "joint_risk")
+        self.assertEqual(result["evidence"]["analysis_context"]["region_level"], "county")
+
+    def test_soil_bias_question_answers_low_or_high_dominance(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("常州市最近8周是低墒为主还是高墒为主？", thread_id="thread-soil-bias")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertRegex(result["answer"], r"(低墒为主|高墒为主)")
+        self.assertNotIn("墒情概况", result["answer"])
 
     def test_analysis_answer_uses_reranked_knowledge_grounding_order(self):
         backend = RecallThenRerankBackend()
@@ -2626,6 +2700,20 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["mode"], "advice")
         self.assertIn("请补充具体对象", result["answer"])
         self.assertNotIn("常州市", result["answer"])
+
+    def test_memory_policy_ambiguous_follow_up_prefers_clarification(self):
+        agent = DocAIAgent(
+            repo=FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("给我过去5个月徐州市虫情最严重的地区", thread_id="thread-memory-policy")
+        result = agent.answer("还是这个吗", thread_id="thread-memory-policy")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertEqual(result["evidence"]["generation_mode"], "clarification")
+        self.assertEqual(result["evidence"]["request_understanding"]["memory_policy"]["inheritance_decision"], "clarify")
+        self.assertIn("请补充", result["answer"])
 
 
 if __name__ == "__main__":

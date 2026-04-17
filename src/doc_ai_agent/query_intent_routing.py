@@ -21,6 +21,7 @@ from .agri_semantics import (
 from .input_guard import classify_input_quality
 from .query_dsl import QueryDSL, capabilities_from_semantics, infer_answer_form, normalize_answer_form, query_dsl_from_understanding
 from .query_plan import build_query_plan, execution_route
+from .restricted_planner import build_restricted_plan_metadata
 from .task_dsl import task_dsl_from_task_graph
 from .task_decomposition import build_task_graph
 
@@ -157,10 +158,14 @@ def infer_query_type(
     该函数按“更具体优先、通用兜底靠后”的顺序匹配，
     避免泛化规则过早截获更精确的问题类型。
     """
+    future_window = extract_future_window(question)
     if ("同时" in question or "共同" in question) and (("高虫情" in question or "虫情" in question) and ("低墒情" in question or "墒情" in question)):
         return "joint_risk"
+    if future_window is None and any(token in question for token in ["综合风险", "叠加风险", "联合风险"]) and any(
+        token in question for token in ["哪些县", "哪个县", "哪些区县", "哪个区县", "哪些地区", "哪些地方", "哪里", "哪儿", "最高"]
+    ):
+        return "joint_risk"
     has_region = extract_city(question) is not None or extract_county(question) is not None
-    future_window = extract_future_window(question)
     _, _, historical_window = extract_relative_window(question)
     has_explicit_historical_window = historical_window.get("window_type") != "none" or extract_day_range(question)[0] is not None
     has_alert_domain = any(token in question for token in ["预警", "报警", "告警"])
@@ -170,6 +175,12 @@ def infer_query_type(
         and any(token in question for token in ["数量", "条数", "多少", "增加", "减少", "上升", "下降", "趋势", "走势", "变化", "缓解"])
     ):
         return "alerts_trend"
+    if "最高" in question and "告警值" in question:
+        return "highest_values"
+    if "超过" in question and "告警值" in question:
+        return "threshold_summary"
+    if ("平均" in question and "告警值" in question) or ("按告警等级分组" in question and "平均" in question):
+        return "avg_by_level"
     if (
         ("只看预警" in question or "只看报警" in question or "只看告警" in question or has_alert_domain)
         and (has_ranking_intent(question) or re.search(r"前\s*\d+", question))
@@ -249,14 +260,8 @@ def infer_query_type(
         return "alerts_top"
     if "变化了多少" in question and "到" in question and "市" in question:
         return "city_day_change"
-    if "最高" in question and "告警值" in question:
-        return "highest_values"
-    if "超过" in question and "告警值" in question:
-        return "threshold_summary"
     if "连续两天" in question and "设备" in question:
         return "consecutive_devices"
-    if ("平均" in question and "告警值" in question) or ("按告警等级分组" in question and "平均" in question):
-        return "avg_by_level"
     if "top" in question.lower() or "Top" in question or "前5" in question or "前十" in question or re.search(r"前\s*\d+", question) or "最多" in question:
         return "top"
     if "虫情" in question or "墒情" in question or "虫害" in question:
@@ -492,6 +497,7 @@ def finalize_plan(
         needs_explanation=inferred_needs_explanation,
         needs_forecast=inferred_needs_forecast,
         needs_advice=inferred_needs_advice,
+        semantic_metric=understanding_payload.get("semantic_metric") if isinstance(understanding_payload.get("semantic_metric"), dict) else None,
     )
     finalized["query_plan"]["decomposition"] = build_task_graph(finalized["query_plan"])
     finalized["task_dsl"] = task_dsl_from_task_graph(
@@ -512,4 +518,20 @@ def finalize_plan(
     finalized["parsed_query"] = parsed_query
     finalized["capabilities"] = capabilities
     finalized["route"] = execution_route(finalized["query_plan"])
+    finalized.update(
+        build_restricted_plan_metadata(
+            intent=str(finalized.get("intent") or "advice"),
+            route=finalized["route"],
+            answer_mode=str(finalized.get("answer_mode") or ""),
+            needs_clarification=bool(finalized.get("needs_clarification")),
+            needs_explanation=inferred_needs_explanation,
+            needs_advice=inferred_needs_advice,
+            needs_forecast=inferred_needs_forecast,
+            domain=str(finalized.get("domain") or ""),
+            historical_window=dict(finalized.get("historical_window") or {}),
+            future_window=finalized.get("future_window") if isinstance(finalized.get("future_window"), dict) else None,
+            task_dsl=finalized.get("task_dsl"),
+            enabled_capabilities=capabilities,
+        )
+    )
     return finalized

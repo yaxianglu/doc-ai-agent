@@ -114,6 +114,10 @@ class AgentContractsTests(unittest.TestCase):
             forecast={"horizon_days": 14},
             knowledge=[{"title": "虫情监测与绿色防控技术"}],
             knowledge_sources=[{"title": "虫情监测与绿色防控技术"}],
+            evidence_layers={
+                "internal_facts": {"historical_query": {"query_type": "pest_overview", "region_name": "徐州市"}},
+                "external_knowledge": {"items": [{"title": "虫情监测与绿色防控技术"}], "source": "external"},
+            },
             generation_mode="analysis_synthesis",
             context_trace=["reused thread context domain=pest"],
         )
@@ -129,6 +133,9 @@ class AgentContractsTests(unittest.TestCase):
         self.assertEqual(response["response"]["evidence"]["generation_mode"], "analysis_synthesis")
         self.assertEqual(response["response"]["evidence"]["analysis_context"]["region_name"], "徐州市")
         self.assertEqual(response["response"]["data"]["historical"][0]["severity_score"], 86)
+        self.assertEqual(response["response"]["evidence"]["knowledge"][0]["title"], "虫情监测与绿色防控技术")
+        self.assertEqual(response["response"]["evidence"]["evidence_layers"]["external_knowledge"]["source"], "external")
+        self.assertEqual(response["response"]["evidence"]["evidence_layers"]["external_knowledge"]["items"][0]["title"], "虫情监测与绿色防控技术")
 
     def test_response_builder_outputs_structured_answer(self):
         structured = ResponseBuilder().build(

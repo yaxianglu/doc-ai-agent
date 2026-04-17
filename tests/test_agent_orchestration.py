@@ -5,6 +5,23 @@ from doc_ai_agent.task_dsl import task_dsl_from_task_graph
 
 
 class AgentOrchestrationTests(unittest.TestCase):
+    def test_route_target_stays_analysis_for_restricted_ranking_plan(self):
+        target = route_target(
+            {
+                "intent": "data_query",
+                "needs_clarification": False,
+                "plan_type": "ranking_query",
+            },
+            {
+                "needs_historical": True,
+                "needs_forecast": False,
+                "needs_explanation": False,
+                "needs_advice": False,
+            },
+        )
+
+        self.assertEqual(target, "analysis")
+
     def test_task_dsl_constrains_to_known_templates(self):
         payload = task_dsl_from_task_graph(
             {"goal": "agri_analysis"},

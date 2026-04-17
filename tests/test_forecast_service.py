@@ -134,6 +134,8 @@ class ForecastServiceTests(unittest.TestCase):
         )
 
         self.assertIn("confidence", result["forecast"])
+        self.assertTrue(result["forecast"]["eligibility"]["eligible"])
+        self.assertEqual(result["forecast"]["eligibility"]["fallback_mode"], "")
         self.assertIn("top_factors", result["forecast"])
         self.assertGreater(result["forecast"]["confidence"], 0)
         self.assertTrue(result["forecast"]["top_factors"])
@@ -252,6 +254,9 @@ class ForecastServiceTests(unittest.TestCase):
         )
 
         self.assertTrue(result["forecast"]["fallback"])
+        self.assertFalse(result["forecast"]["eligibility"]["eligible"])
+        self.assertEqual(result["forecast"]["eligibility"]["reason"], "insufficient_history")
+        self.assertEqual(result["forecast"]["eligibility"]["fallback_mode"], "conservative_trend")
         self.assertEqual(result["forecast"]["history_points"], 1)
         self.assertEqual(result["forecast"]["evidence_strength"], "weak")
         self.assertIn("暂以保守预测为主", result["answer"])
@@ -275,10 +280,56 @@ class ForecastServiceTests(unittest.TestCase):
         )
 
         self.assertTrue(result["forecast"]["fallback"])
+        self.assertFalse(result["forecast"]["eligibility"]["eligible"])
+        self.assertEqual(result["forecast"]["eligibility"]["reason"], "insufficient_history")
         self.assertEqual(result["forecast"]["history_points"], 0)
         self.assertEqual(result["forecast"]["evidence_strength"], "weak")
         self.assertIn("暂不做强预测", result["answer"])
         self.assertIn("样本覆盖 0 个观测日", result["answer"])
+
+    def test_forecast_region_rejects_unsupported_horizon(self):
+        result = self.service.forecast_region(
+            {
+                "query_type": "pest_forecast",
+                "since": "2026-03-01 00:00:00",
+                "city": "徐州市",
+                "region_level": "city",
+                "forecast_window": {"horizon_days": 365},
+            }
+        )
+
+        self.assertTrue(result["forecast"]["fallback"])
+        self.assertFalse(result["forecast"]["eligibility"]["eligible"])
+        self.assertEqual(result["forecast"]["eligibility"]["reason"], "unsupported_horizon")
+        self.assertEqual(result["forecast"]["eligibility"]["fallback_mode"], "trend_only")
+        self.assertIn("不建议做可靠预测", result["answer"])
+
+    def test_forecast_region_degrades_high_missingness_series(self):
+        class MissingHistoryRepo:
+            def pest_trend(self, since, until, region_name, region_level="city"):
+                return [
+                    {"date": "2026-03-25", "severity_score": None},
+                    {"date": "2026-03-26", "severity_score": 10},
+                    {"date": "2026-03-27", "severity_score": None},
+                    {"date": "2026-03-28", "severity_score": None},
+                    {"date": "2026-03-29", "severity_score": 13},
+                ]
+
+        service = ForecastService(MissingHistoryRepo())
+        result = service.forecast_region(
+            {
+                "query_type": "pest_forecast",
+                "since": "2026-03-01 00:00:00",
+                "city": "徐州市",
+                "region_level": "city",
+                "forecast_window": {"horizon_days": 14},
+            }
+        )
+
+        self.assertTrue(result["forecast"]["fallback"])
+        self.assertFalse(result["forecast"]["eligibility"]["eligible"])
+        self.assertEqual(result["forecast"]["eligibility"]["reason"], "high_missingness")
+        self.assertEqual(result["forecast"]["eligibility"]["fallback_mode"], "trend_only")
 
     def test_forecast_region_uses_contract_without_hasattr_discovery(self):
         with patch("doc_ai_agent.forecast_service.hasattr", side_effect=AssertionError("forecast_service hasattr should not be used"), create=True):
