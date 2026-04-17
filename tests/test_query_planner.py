@@ -206,6 +206,48 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["reason"], "context_explanation_follow_up")
         self.assertEqual(plan["route"]["query_type"], "pest_overview")
 
+    def test_context_follow_up_skips_standalone_historical_ranking_without_follow_up_cue(self):
+        real_planner = QueryPlanner(None)
+        planner = SimpleNamespace(
+            _is_greeting_question=QueryPlanner._is_greeting_question,
+            _domain_from_query_type=QueryPlanner._domain_from_query_type,
+            _extract_future_window=real_planner._extract_future_window,
+            _extract_relative_window=real_planner._extract_relative_window,
+            _extract_city=real_planner._extract_city,
+            _extract_county=real_planner._extract_county,
+            _query_type_for_region_follow_up=QueryPlanner._query_type_for_region_follow_up,
+            _query_type_for_window_follow_up=QueryPlanner._query_type_for_window_follow_up,
+            _query_type_for_domain_switch=QueryPlanner._query_type_for_domain_switch,
+            _asks_for_county_scope=QueryPlanner._asks_for_county_scope,
+        )
+
+        plan = build_context_follow_up_plan(
+            planner,
+            "过去5个月最严重的是哪里",
+            {
+                "domain": "pest",
+                "region_name": "重点地区",
+                "query_type": "pest_forecast",
+                "route": {
+                    "query_type": "pest_forecast",
+                    "city": None,
+                    "county": None,
+                    "region_level": "city",
+                    "forecast_window": {"window_type": "weeks", "window_value": 2, "horizon_days": 14},
+                },
+                "conversation_state": {"last_query_family": "forecast", "last_region_level": "city"},
+            },
+            understanding={
+                "followup_type": "none",
+                "needs_historical": True,
+                "needs_forecast": False,
+                "domain": "",
+                "region_name": "",
+            },
+        )
+
+        self.assertIsNone(plan)
+
     def test_query_plan_is_emitted_for_ranking_request(self):
         planner = QueryPlanner(None)
 
@@ -777,6 +819,14 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["intent"], "data_query")
         self.assertEqual(plan["route"]["query_type"], "empty_county_records")
 
+    def test_soil_missing_geo_query_uses_explicit_route(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("哪些墒情记录有县但没有经纬度？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "soil_missing_geo_records")
+
     def test_unmatched_region_query_uses_unmatched_region_route(self):
         planner = QueryPlanner(None)
 
@@ -1054,6 +1104,99 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertIsNone(plan["route"]["city"])
         self.assertIsNone(plan["route"]["county"])
 
+    def test_standalone_historical_ranking_does_not_inherit_stale_forecast_context(self):
+        planner = QueryPlanner(None)
+        plan = planner.plan(
+            "过去5个月最严重的是哪里？",
+            context={
+                "domain": "pest",
+                "region_name": "重点地区",
+                "query_type": "pest_forecast",
+                "route": {
+                    "query_type": "pest_forecast",
+                    "region_level": "county",
+                    "forecast_window": {"window_type": "weeks", "window_value": 2, "horizon_days": 14},
+                },
+                "conversation_state": {"last_query_family": "forecast", "last_region_level": "county"},
+            },
+        )
+
+        self.assertNotEqual(plan["route"]["query_type"], "pest_forecast")
+        self.assertTrue(plan["needs_clarification"])
+
+    def test_standalone_historical_ranking_without_punctuation_does_not_inherit_forecast_context(self):
+        planner = QueryPlanner(None)
+        plan = planner.plan(
+            "过去5个月最严重的是哪里",
+            context={
+                "domain": "pest",
+                "region_name": "重点地区",
+                "query_type": "pest_forecast",
+                "route": {
+                    "query_type": "pest_forecast",
+                    "region_level": "city",
+                    "forecast_window": {"window_type": "weeks", "window_value": 2, "horizon_days": 14},
+                },
+                "conversation_state": {"last_query_family": "forecast", "last_region_level": "city"},
+            },
+            understanding={
+                "original_question": "过去5个月最严重的是哪里？",
+                "normalized_question": "过去5个月最严重的是哪里",
+                "historical_query_text": "过去5个月最严重的是哪里",
+                "intent": "data_query",
+                "task_type": "ranking",
+                "answer_form": "rank",
+                "domain": "",
+                "window": {"window_type": "months", "window_value": 5},
+                "future_window": None,
+                "region_name": "",
+                "region_level": "",
+                "followup_type": "none",
+                "needs_clarification": False,
+                "needs_historical": True,
+                "needs_forecast": False,
+                "needs_explanation": False,
+                "needs_advice": False,
+                "confidence": 0.58,
+                "trace": ["normalize", "slots"],
+                "semantic_parse": {
+                    "normalized_query": "过去5个月最严重的是哪里？",
+                    "intent": "data_query",
+                    "domain": "",
+                    "task_type": "ranking",
+                    "region_name": "",
+                    "region_level": "",
+                    "historical_window": {"window_type": "months", "window_value": 5},
+                    "future_window": None,
+                    "followup_type": "none",
+                    "needs_clarification": False,
+                    "confidence": 0.58,
+                    "is_out_of_scope": False,
+                    "fallback_reason": "",
+                    "trace": ["normalize", "slots"],
+                },
+                "parsed_query": {
+                    "domain": "",
+                    "intent": ["data_query"],
+                    "task_type": "ranking",
+                    "answer_form": "rank",
+                    "region": {"name": "", "level": ""},
+                    "historical_window": {"kind": "history", "window_type": "months", "window_value": 5},
+                    "follow_up": False,
+                    "followup_type": "none",
+                    "needs_clarification": False,
+                    "capabilities": ["data_query"],
+                    "confidence": 0.58,
+                    "original_question": "过去5个月最严重的是哪里？",
+                    "resolved_question": "过去5个月最严重的是哪里？",
+                },
+            },
+        )
+
+        self.assertEqual(plan["reason"], "agri_domain_ambiguous")
+        self.assertTrue(plan["needs_clarification"])
+        self.assertEqual(plan["route"]["query_type"], "structured_agri")
+
     def test_short_city_follow_up_preserves_overview_intent(self):
         planner = QueryPlanner(None)
         plan = planner.plan(
@@ -1221,7 +1364,9 @@ class QueryPlannerTests(unittest.TestCase):
 
         plan = planner.plan("未来10天哪些县风险最高？")
 
-        self.assertTrue(plan["needs_clarification"])
+        self.assertFalse(plan["needs_clarification"])
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "pest_forecast")
         self.assertEqual(plan["route"]["region_level"], "county")
         self.assertIsNone(plan["route"]["county"])
         self.assertEqual(plan["route"]["forecast_window"]["window_type"], "days")
@@ -1506,6 +1651,15 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["route"]["query_type"], "alerts_trend")
         self.assertEqual(plan["answer_mode"], "trend")
 
+    def test_alert_trend_with_baojing_wording_uses_alerts_trend_query_type(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("过去1个月报警趋势有没有缓解？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "alerts_trend")
+        self.assertEqual(plan["answer_mode"], "trend")
+
     def test_alert_top_question_treats_baojing_as_data_query(self):
         planner = QueryPlanner(None)
 
@@ -1514,6 +1668,44 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(plan["intent"], "data_query")
         self.assertEqual(plan["route"]["query_type"], "alerts_top")
         self.assertEqual(plan["answer_mode"], "ranking")
+
+    def test_explicit_alert_only_ranking_does_not_route_to_joint_risk(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("我只看预警，不看虫情和墒情，最近30天哪里最多？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "alerts_top")
+        self.assertEqual(plan["query_plan"]["execution"]["route"]["query_type"], "alerts_top")
+
+    def test_watchlist_county_question_routes_to_county_ranking(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("从数据看，最近一个月最值得重点盯防的5个县是哪些？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "alerts_top")
+        self.assertEqual(plan["route"]["region_level"], "county")
+
+    def test_alert_many_devices_few_county_question_routes_to_alerts_top(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("最近30天哪些县报警次数多但设备数少？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "alerts_top")
+        self.assertEqual(plan["route"]["region_level"], "county")
+
+    def test_last_month_alert_ranking_uses_month_window(self):
+        planner = QueryPlanner(None)
+
+        plan = planner.plan("上个月报警最多的是哪些地区？")
+
+        self.assertEqual(plan["intent"], "data_query")
+        self.assertEqual(plan["route"]["query_type"], "alerts_top")
+        self.assertEqual(plan["route"]["window"]["window_type"], "months")
+        self.assertEqual(plan["route"]["window"]["window_value"], 1)
+        self.assertNotEqual(plan["route"]["since"], "1970-01-01 00:00:00")
 
     def test_county_advice_question_keeps_county_scope(self):
         planner = QueryPlanner(None)

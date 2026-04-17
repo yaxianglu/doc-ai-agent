@@ -55,6 +55,9 @@ class AdviceEngine:
         sections = [cls._prefixed_section("原因", reason)]
         if evidence:
             sections.append(cls._prefixed_section("依据", evidence))
+        combined = "\n".join(section for section in sections if section)
+        if "待核查" not in combined:
+            sections.append("待核查：原始监测点位、时间窗、阈值口径和现场处置记录是否匹配。")
         return "\n".join(section for section in sections if section)
 
     @classmethod

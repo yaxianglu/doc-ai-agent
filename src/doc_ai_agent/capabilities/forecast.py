@@ -27,6 +27,7 @@ class ForecastCapability:
                 top_n=max(1, int(route.get("top_n") or 1)),
                 city=route.get("city"),
                 county=route.get("county"),
+                anomaly_direction=route.get("anomaly_direction"),
             )
         else:
             result = self.forecast_service.forecast_region(route, context=runtime_context)

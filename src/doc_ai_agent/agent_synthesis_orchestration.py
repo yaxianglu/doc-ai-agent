@@ -91,7 +91,8 @@ def build_explanation_payload(
         region_name = str(plan_context.get("region_name") or "当前地区")
         return (
             f"当前证据不足：缺少足够的结构化监测证据，暂时不能可靠判断{region_name}这段时间异常背后的主要原因；"
-            "建议先确认该地区在所问时间窗内是否存在有效监测记录，再继续分析。",
+            "建议先确认该地区在所问时间窗内是否存在有效监测记录，再继续分析。"
+            " 待核查：原始监测点位、时间窗、阈值口径和现场处置记录是否匹配。",
             knowledge,
         )
     if reasoning_capability is not None:

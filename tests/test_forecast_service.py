@@ -35,6 +35,35 @@ class FakeForecastRepo:
         ][:top_n]
 
 
+class CountyForecastRepo(FakeForecastRepo):
+    def top_pest_regions(self, since, until, region_level="city", top_n=5, city=None, county=None):
+        if region_level == "county":
+            return [
+                {"region_name": "铜山区", "severity_score": 90, "record_count": 18, "active_days": 7},
+                {"region_name": "沛县", "severity_score": 75, "record_count": 14, "active_days": 6},
+            ][:top_n]
+        return super().top_pest_regions(since, until, region_level=region_level, top_n=top_n, city=city, county=county)
+
+    def top_soil_regions(self, since, until, region_level="city", top_n=5, anomaly_direction=None, city=None, county=None):
+        if region_level == "county" and anomaly_direction == "low":
+            return [
+                {"region_name": "如东县", "anomaly_score": 62, "abnormal_count": 8, "low_count": 8, "high_count": 0, "active_days": 1},
+            ][:top_n]
+        if region_level == "county" and anomaly_direction == "high":
+            return [
+                {"region_name": "启东市", "anomaly_score": 58, "abnormal_count": 7, "low_count": 0, "high_count": 7, "active_days": 1},
+            ][:top_n]
+        return super().top_soil_regions(
+            since,
+            until,
+            region_level=region_level,
+            top_n=top_n,
+            anomaly_direction=anomaly_direction,
+            city=city,
+            county=county,
+        )
+
+
 class ForecastServiceTests(unittest.TestCase):
     def setUp(self):
         self.service = ForecastService(FakeForecastRepo())
@@ -278,6 +307,74 @@ class ForecastServiceTests(unittest.TestCase):
 
         self.assertEqual(result["forecast"]["domain"], "soil")
         self.assertEqual(len(result["data"]), 2)
+
+    def test_forecast_top_regions_county_scope_uses_county_results(self):
+        service = ForecastService(CountyForecastRepo())
+
+        result = service.forecast_top_regions(
+            domain="pest",
+            since="2026-03-01 00:00:00",
+            horizon_days=10,
+            region_level="county",
+            top_n=2,
+            city="徐州市",
+        )
+
+        self.assertEqual(result["analysis_context"]["region_level"], "county")
+        self.assertEqual(result["data"][0]["region_name"], "铜山区")
+        self.assertIn("铜山区", result["answer"])
+        self.assertNotIn("徐州市", result["answer"])
+
+    def test_forecast_top_regions_preserves_low_soil_direction(self):
+        service = ForecastService(CountyForecastRepo())
+
+        result = service.forecast_top_regions(
+            domain="soil",
+            since="2026-03-01 00:00:00",
+            horizon_days=7,
+            region_level="county",
+            top_n=1,
+            city="南通市",
+            anomaly_direction="low",
+        )
+
+        self.assertEqual(result["data"][0]["region_name"], "如东县")
+        self.assertIn("低墒", result["answer"])
+        self.assertNotIn("高墒风险最高", result["answer"])
+
+    def test_forecast_top_regions_preserves_high_soil_direction(self):
+        service = ForecastService(CountyForecastRepo())
+
+        result = service.forecast_top_regions(
+            domain="soil",
+            since="2026-03-01 00:00:00",
+            horizon_days=7,
+            region_level="county",
+            top_n=1,
+            city="南通市",
+            anomaly_direction="high",
+        )
+
+        self.assertEqual(result["data"][0]["region_name"], "启东市")
+        self.assertIn("高墒", result["answer"])
+        self.assertNotIn("低墒风险最高", result["answer"])
+
+    def test_forecast_top_regions_weak_evidence_uses_conservative_wording(self):
+        service = ForecastService(CountyForecastRepo())
+
+        result = service.forecast_top_regions(
+            domain="soil",
+            since="2026-03-01 00:00:00",
+            horizon_days=7,
+            region_level="county",
+            top_n=1,
+            city="南通市",
+            anomaly_direction="low",
+        )
+
+        self.assertEqual(result["forecast"]["eligibility"]["reason"], "insufficient_history")
+        self.assertIn("暂以保守判断为主", result["answer"])
+        self.assertIn("样本覆盖较弱", result["answer"])
 
 
 if __name__ == "__main__":

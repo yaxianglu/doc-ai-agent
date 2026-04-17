@@ -8,6 +8,7 @@ class FakeAlertRepo:
     def __init__(self):
         self.last_pest_top_kwargs = {}
         self.last_soil_top_kwargs = {}
+        self.last_active_devices_kwargs = {}
 
     def count_since(self, since):
         del since
@@ -109,7 +110,14 @@ class FakeAlertRepo:
         del since, until, region_name, region_level
         return []
 
-    def top_active_devices(self, since, until=None, limit=10):
+    def top_active_devices(self, since, until=None, limit=10, city=None, county=None):
+        self.last_active_devices_kwargs = {
+            "since": since,
+            "until": until,
+            "limit": limit,
+            "city": city,
+            "county": county,
+        }
         return [
             {
                 "device_code": "SNS001",
@@ -147,6 +155,16 @@ class FakeAlertRepo:
                 "device_code": "SNS009",
                 "device_name": "未知设备",
                 "alert_level": "重旱",
+            }
+        ][:limit]
+
+    def soil_missing_geo_records(self, limit=20):
+        return [
+            {
+                "sample_time": "2026-04-12 08:00:00",
+                "city_name": "南通市",
+                "county_name": "如东县",
+                "device_sn": "SNS00204333",
             }
         ][:limit]
 
@@ -302,6 +320,38 @@ class ContractAlertRepo(FakeAlertRepo):
     pass
 
 
+class AlertOnlyRepo:
+    def count_since(self, since):
+        del since
+        return 0
+
+    def top_n(self, field, n, since):
+        del field, n, since
+        return []
+
+    def sample_alerts(self, since, limit=3):
+        del since, limit
+        return []
+
+    def available_alert_time_range(self):
+        return {
+            "min_time": "2025-06-26 00:00:00",
+            "max_time": "2025-12-24 00:00:00",
+        }
+
+    def count_filtered(self, since, until=None, city=None, level=None):
+        del since, until, city, level
+        return 0
+
+    def alerts_trend(self, since, until=None, city=None):
+        del since, until, city
+        return []
+
+    def top_n_filtered(self, field, n, since, until=None, city=None, level=None, min_alert_value=None):
+        del field, n, since, until, city, level, min_alert_value
+        return []
+
+
 class QueryEngineTests(unittest.TestCase):
     def setUp(self):
         self.repo = FakeAlertRepo()
@@ -316,6 +366,21 @@ class QueryEngineTests(unittest.TestCase):
         self.assertIn("最活跃的Top10台设备", result.answer)
         self.assertIn("SNS001", result.answer)
         self.assertEqual(result.data[0]["device_code"], "SNS001")
+
+    def test_active_devices_answer_preserves_county_scope(self):
+        result = self.engine.answer(
+            "如东县最近30天最活跃的是哪些设备？",
+            plan={
+                "query_type": "active_devices",
+                "top_n": 5,
+                "since": "2026-03-18 00:00:00",
+                "county": "如东县",
+                "region_level": "county",
+            },
+        )
+
+        self.assertEqual(self.repo.last_active_devices_kwargs["county"], "如东县")
+        self.assertIn("如东县", result.answer)
 
     def test_unknown_region_devices_answer_lists_devices(self):
         result = self.engine.answer(
@@ -343,6 +408,15 @@ class QueryEngineTests(unittest.TestCase):
 
         self.assertIn("没有匹配到区域", result.answer)
         self.assertIn("SNS009", result.answer)
+
+    def test_soil_missing_geo_records_answer_mentions_county_and_coordinates(self):
+        result = self.engine.answer(
+            "哪些墒情记录有县但没有经纬度？",
+            plan={"query_type": "soil_missing_geo_records", "since": "1970-01-01 00:00:00"},
+        )
+
+        self.assertIn("有县但没有经纬度", result.answer)
+        self.assertIn("如东县", result.answer)
 
     def test_latest_soil_device_returns_latest_soil_record(self):
         result = self.engine.answer(
@@ -499,6 +573,105 @@ class QueryEngineTests(unittest.TestCase):
         self.assertIn("虫情趋势：整体上升", pest_result.answer)
         self.assertIn("暂未缓解", soil_result.answer)
         self.assertRegex(joint_result.answer, r"^是。")
+
+    def test_soil_overview_without_structured_soil_repo_keeps_soil_domain_answer(self):
+        engine = QueryEngine(AlertOnlyRepo())
+
+        result = engine.answer(
+            "常州市最近8周是低墒为主还是高墒为主？",
+            plan={
+                "query_type": "soil_overview",
+                "since": "2026-02-20 00:00:00",
+                "city": "常州市",
+                "region_level": "city",
+            },
+        )
+
+        self.assertIn("墒情", result.answer)
+        self.assertNotIn("预警信息共", result.answer)
+        self.assertEqual(result.evidence["query_type"], "soil_overview")
+
+    def test_pest_trend_without_structured_repo_keeps_pest_trend_language(self):
+        engine = QueryEngine(AlertOnlyRepo())
+
+        result = engine.answer(
+            "过去5个月虫情总体是上升还是下降？",
+            plan={
+                "query_type": "pest_trend",
+                "since": "2025-11-18 00:00:00",
+                "region_level": "city",
+            },
+        )
+
+        self.assertIn("虫情趋势", result.answer)
+        self.assertRegex(result.answer, r"(无法判断|暂无可用)")
+        self.assertNotIn("预警信息共", result.answer)
+        self.assertEqual(result.evidence["query_type"], "pest_trend")
+
+    def test_soil_trend_without_structured_repo_keeps_soil_trend_language(self):
+        engine = QueryEngine(AlertOnlyRepo())
+
+        result = engine.answer(
+            "近两个月墒情有没有缓解？",
+            plan={
+                "query_type": "soil_trend",
+                "since": "2026-02-16 00:00:00",
+                "region_level": "city",
+            },
+        )
+
+        self.assertIn("墒情趋势", result.answer)
+        self.assertRegex(result.answer, r"(无法判断|暂无可用)")
+        self.assertNotIn("预警信息共", result.answer)
+        self.assertEqual(result.evidence["query_type"], "soil_trend")
+
+    def test_joint_risk_without_structured_repo_keeps_county_scope_language(self):
+        engine = QueryEngine(AlertOnlyRepo())
+
+        result = engine.answer(
+            "最近7天联合风险最高的是哪些县？",
+            plan={
+                "query_type": "joint_risk",
+                "since": "2026-04-10 00:00:00",
+                "region_level": "county",
+            },
+        )
+
+        self.assertRegex(result.answer, r"(县级|区县|县)")
+        self.assertIn("联合风险", result.answer)
+        self.assertEqual(result.evidence["query_type"], "joint_risk")
+
+    def test_cross_signal_gap_without_structured_repo_keeps_county_scope_language(self):
+        engine = QueryEngine(AlertOnlyRepo())
+
+        result = engine.answer(
+            "最近30天哪些县预警多但虫情并不高？",
+            plan={
+                "query_type": "alerts_high_pest_low",
+                "since": "2026-03-18 00:00:00",
+                "region_level": "county",
+            },
+        )
+
+        self.assertIn("县级", result.answer)
+        self.assertIn("预警多但虫情并不高", result.answer)
+        self.assertEqual(result.evidence["query_type"], "alerts_high_pest_low")
+
+    def test_alerts_top_no_data_mentions_county_scope_when_field_is_county(self):
+        engine = QueryEngine(AlertOnlyRepo())
+
+        result = engine.answer(
+            "过去12周预警最多的是哪些县？",
+            plan={
+                "query_type": "alerts_top",
+                "since": "2026-01-23 00:00:00",
+                "field": "county",
+                "top_n": 5,
+            },
+        )
+
+        self.assertIn("区县", result.answer)
+        self.assertEqual(result.evidence["query_type"], "alerts_top")
 
     def test_pest_trend_no_data_answer_includes_reason_range_and_retry(self):
         engine = QueryEngine(EmptyTrendRepo())

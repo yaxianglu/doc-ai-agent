@@ -302,6 +302,7 @@ class AlertRepository(AnalyticsRepository):
         n: int,
         since: str,
         until: Optional[str] = None,
+        city: Optional[str] = None,
         min_alert_value: Optional[float] = None,
     ) -> List[dict]:
         """按字段做带阈值过滤的 TopN 统计。"""
@@ -313,6 +314,9 @@ class AlertRepository(AnalyticsRepository):
         if until:
             where.append("alert_time < ?")
             params.append(until)
+        if city:
+            where.append("city = ?")
+            params.append(city)
         if min_alert_value is not None:
             where.append("CAST(alert_value AS REAL) > ?")
             params.append(float(min_alert_value))
@@ -360,18 +364,26 @@ class AlertRepository(AnalyticsRepository):
                 )
             return rows
 
-    def latest_by_device(self, device_code: str) -> Optional[dict]:
+    def latest_by_device(self, device_code: str, since: str | None = None, until: str | None = None) -> Optional[dict]:
         """查询某设备最近一次告警记录。"""
         with self._connect() as conn:
+            where = ["device_code = ?"]
+            params: list[object] = [device_code]
+            if since:
+                where.append("alert_time >= ?")
+                params.append(since)
+            if until:
+                where.append("alert_time < ?")
+                params.append(until)
             cur = conn.execute(
-                """
+                f"""
                 SELECT alert_time, alert_level, disposal_suggestion, city, county, device_code, device_name
                 FROM alerts
-                WHERE device_code = ?
+                WHERE {' AND '.join(where)}
                 ORDER BY alert_time DESC
                 LIMIT 1
                 """,
-                (device_code,),
+                tuple(params),
             )
             row = cur.fetchone()
             if row is None:
@@ -438,13 +450,26 @@ class AlertRepository(AnalyticsRepository):
                 )
             return rows
 
-    def top_active_devices(self, since: str, until: Optional[str] = None, limit: int = 10) -> List[dict]:
+    def top_active_devices(
+        self,
+        since: str,
+        until: Optional[str] = None,
+        limit: int = 10,
+        city: Optional[str] = None,
+        county: Optional[str] = None,
+    ) -> List[dict]:
         """统计一段时间内最活跃的设备。"""
         where = ["alert_time >= ?", "device_code IS NOT NULL", "TRIM(device_code) != ''"]
         params: list[object] = [since]
         if until:
             where.append("alert_time < ?")
             params.append(until)
+        if city:
+            where.append("city = ?")
+            params.append(city)
+        if county:
+            where.append("county = ?")
+            params.append(county)
         params.append(max(1, int(limit)))
         with self._connect() as conn:
             cur = conn.execute(
@@ -562,6 +587,11 @@ class AlertRepository(AnalyticsRepository):
                 }
                 for r in cur.fetchall()
             ]
+
+    def soil_missing_geo_records(self, limit: int = 20) -> List[dict]:
+        """SQLite 告警仓库不承载墒情明细，默认返回空结果以兼容统一接口。"""
+        del limit
+        return []
 
     def subtype_ratio(self, alert_type: str, alert_subtype: str, since: str) -> dict:
         """计算某子类型在指定告警类型中的占比。"""

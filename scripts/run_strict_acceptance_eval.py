@@ -27,9 +27,9 @@ def _timestamp_slug() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
-def _thread_id_for(category: str, known: dict[str, str]) -> str:
+def _thread_id_for(category: str, known: dict[str, str], run_scope: str) -> str:
     if category not in known:
-        known[category] = f"strict-eval-{len(known) + 1}"
+        known[category] = f"strict-eval-{run_scope}-{len(known) + 1}"
     return known[category]
 
 
@@ -55,12 +55,13 @@ def run_eval(*, question_bank: Path, append_banks: list[Path]) -> list[dict]:
     suite_index = _load_suite_index()
     app = AgentApp(AppConfig.from_env(os.environ))
     app.refresh()
+    run_scope = _timestamp_slug()
     thread_ids: dict[str, str] = {}
     results: list[dict] = []
     for item in questions:
         turns = list(item.get("turns") or [])
         if turns:
-            thread_id = f"strict-eval-multi-{int(item['index'])}"
+            thread_id = f"strict-eval-multi-{run_scope}-{int(item['index'])}"
             turn_results: list[dict] = []
             final_response: dict = {}
             total_seconds = 0.0
@@ -96,7 +97,7 @@ def run_eval(*, question_bank: Path, append_banks: list[Path]) -> list[dict]:
             )
             continue
 
-        response = app.chat(item["question"], thread_id=_thread_id_for(item["category"], thread_ids))
+        response = app.chat(item["question"], thread_id=_thread_id_for(item["category"], thread_ids, run_scope))
         results.append(
             {
                 "index": item["index"],

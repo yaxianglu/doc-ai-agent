@@ -46,6 +46,50 @@ def normalize_follow_up_question(text: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
+def _replace_first_placeholder(text: str, placeholders: tuple[str, ...], replacement: str) -> str:
+    for placeholder in placeholders:
+        if placeholder in text:
+            return text.replace(placeholder, replacement, 1)
+    return text
+
+
+def resolve_pending_placeholder_question(
+    text: str,
+    *,
+    pending_question: str,
+    city_aliases: dict[str, str],
+    invalid_region_phrases: set[str],
+) -> str:
+    """把“补充对象”的短回复拼回上一轮 placeholder 问题。"""
+    cleaned = normalize_spaces(text)
+    if not cleaned or not pending_question:
+        return ""
+
+    resolved_region = extract_region(cleaned, city_aliases, invalid_region_phrases) or ""
+    if resolved_region:
+        if resolved_region.endswith(("县", "区")):
+            return _replace_first_placeholder(
+                pending_question,
+                ("某县", "某个县", "这个县", "该县", "某区", "某个区", "这个区", "该区"),
+                resolved_region,
+            )
+        if resolved_region.endswith("市"):
+            return _replace_first_placeholder(
+                pending_question,
+                ("某市", "某个市", "这个市", "该市", "某地区", "某区域", "这个地区", "该地区", "这个区域", "该区域"),
+                resolved_region,
+            )
+
+    device_code_match = re.search(r"SNS\d+", cleaned, re.IGNORECASE)
+    if device_code_match:
+        return _replace_first_placeholder(
+            pending_question,
+            ("某设备", "某个设备", "这个设备", "该设备"),
+            device_code_match.group(0).upper(),
+        )
+    return ""
+
+
 def is_greeting(text: str, greeting_patterns: set[str]) -> bool:
     """判断是否是问候语，避免被误判为业务追问。"""
     stripped = normalize_follow_up_question(text).lower()
@@ -236,11 +280,46 @@ def resolve_with_context(
 
     pending_question = normalize_spaces(str(context.get("pending_user_question") or ""))
     pending_clarification = str(context.get("pending_clarification") or "")
+    if pending_question and pending_clarification == "placeholder_entity":
+        resolved_placeholder = resolve_pending_placeholder_question(
+            cleaned,
+            pending_question=pending_question,
+            city_aliases=city_aliases,
+            invalid_region_phrases=invalid_region_phrases,
+        )
+        if resolved_placeholder and resolved_placeholder != pending_question:
+            return resolved_placeholder, ["resolved_placeholder_entity_from_pending_question"]
     if pending_question and pending_clarification == "agri_domain":
         if contains_pest(cleaned):
             return inject_domain_into_question(pending_question, "pest"), ["resolved_agri_domain_from_pending_question"]
         if contains_soil(cleaned):
             return inject_domain_into_question(pending_question, "soil"), ["resolved_agri_domain_from_pending_question"]
+    if pending_question and pending_clarification == "generic_intent":
+        generic_follow_up_cues = (
+            "预警",
+            "报警",
+            "虫情",
+            "墒情",
+            "设备",
+            "按县",
+            "按市",
+            "按区",
+            "趋势",
+            "走势",
+            "原因",
+            "依据",
+            "具体数据",
+        )
+        if len(cleaned) <= 20 and any(token in cleaned for token in generic_follow_up_cues):
+            return normalize_spaces(f"{pending_question} {cleaned}"), ["resolved_generic_intent_from_pending_question"]
+
+    last_question = normalize_spaces(str(context.get("last_question") or ""))
+    last_answer = normalize_spaces(str(context.get("last_answer") or ""))
+    if (
+        "未知区域" in f"{pending_question}{last_question}{last_answer}"
+        and any(token in cleaned for token in ["哪些设备", "对应的是哪些设备", "对应哪些设备"])
+    ):
+        return "未知区域对应的是哪些设备", ["resolved_unknown_region_device_follow_up"]
 
     domain = str(context.get("domain") or "")
     region_name = normalize_spaces(str(context.get("region_name") or ""))

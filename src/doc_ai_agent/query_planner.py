@@ -92,6 +92,7 @@ class QueryPlanner:
         "sms_empty",
         "soil_abnormal_devices",
         "soil_detail",
+        "soil_missing_geo_records",
         "soil_only_abnormal_devices",
         "subtype_ratio",
         "city_day_change",
@@ -136,7 +137,9 @@ class QueryPlanner:
         if not isinstance(understanding, dict):
             return None
         semantic_parse = understanding.get("semantic_parse")
-        if isinstance(semantic_parse, dict):
+        resolved_question = str(understanding.get("resolved_question") or "")
+        original_question = str(understanding.get("original_question") or "")
+        if isinstance(semantic_parse, dict) and not (resolved_question and original_question and resolved_question != original_question):
             return SemanticParseResult.from_dict(semantic_parse)
         parsed_query = understanding.get("parsed_query")
         if not isinstance(parsed_query, dict):
@@ -634,6 +637,52 @@ class QueryPlanner:
         if context_follow_up := self._context_follow_up_plan(original_question, context, understanding):
             # 若识别为上下文追问，优先复用线程状态，避免重复抽取和重复提问。
             return self._finalize_plan(context_follow_up, question, context=context, understanding=understanding)
+        if (
+            understanding is None
+            and parse_result.intent == "data_query"
+            and parse_result.domain == "pest"
+            and parse_result.task_type == "ranking"
+            and any(token in question for token in ["风险最高", "最需要关注"])
+            and not any(token in question for token in ["联合风险", "虫情", "虫害", "墒情", "低墒", "高墒", "预警", "报警", "告警"])
+        ):
+            semantic_understanding = {
+                "intent": parse_result.intent,
+                "domain": parse_result.domain,
+                "task_type": parse_result.task_type,
+                "region_name": parse_result.region_name,
+                "region_level": parse_result.region_level,
+                "window": dict(parse_result.historical_window or {"window_type": "all", "window_value": None}),
+                "future_window": dict(parse_result.future_window) if isinstance(parse_result.future_window, dict) else None,
+                "answer_form": "rank",
+                "needs_historical": bool((parse_result.historical_window or {}).get("window_type") not in {"all", "none", ""}),
+                "needs_forecast": isinstance(parse_result.future_window, dict),
+                "needs_explanation": False,
+                "needs_advice": False,
+            }
+            default_query_type = "pest_forecast" if semantic_understanding["needs_forecast"] else "pest_top"
+            route = route_from_canonical_understanding(
+                semantic_understanding,
+                self._build_route(question, default_query_type),
+            )
+            if semantic_understanding["needs_forecast"]:
+                return self._finalize_plan({
+                    "intent": "data_query",
+                    "confidence": max(semantic_confidence, 0.88),
+                    "route": route,
+                    "needs_clarification": False,
+                    "clarification": None,
+                    "reason": "semantic_forecast_data_query",
+                    "context_trace": ["semantic parse reused"],
+                }, question, context=context, understanding=semantic_understanding)
+            return self._finalize_plan({
+                "intent": "data_query",
+                "confidence": max(semantic_confidence, 0.86),
+                "route": route,
+                "needs_clarification": False,
+                "clarification": None,
+                "reason": "semantic_generic_risk_data_query",
+                "context_trace": ["semantic generic risk default reused"],
+            }, question, context=context, understanding=semantic_understanding)
         if self._is_generic_priority_advice_question(question):
             return self._finalize_plan({
                 "intent": "advice",
@@ -735,15 +784,56 @@ class QueryPlanner:
                 "context_trace": [],
             }, question, context=context, understanding=understanding)
 
+        if (
+            parse_result.future_window
+            and not parse_result.domain
+            and (
+                re.search(r"未来.*(会怎样|怎么样|趋势|风险|变化)", question)
+                or re.search(r"(会怎样|怎么样|趋势|风险|变化).*(未来|下周)", question)
+            )
+        ):
+            return self._finalize_plan({
+                "intent": "advice",
+                "confidence": 0.45,
+                "route": self._build_route(question, "structured_agri"),
+                "needs_clarification": True,
+                "clarification": "你想看虫情还是墒情？比如可以问：未来两周虫情会怎样，或者未来两周墒情会怎样。",
+                "reason": "agri_domain_ambiguous",
+                "context_trace": ["future forecast requires explicit domain"],
+            }, question, context=context, understanding=understanding)
+
         if self._needs_agri_domain_clarification(question):
+            clarification = "你想看虫情还是墒情？比如可以问：近3个星期虫情最严重的地方是哪里，或者近3个星期墒情异常最严重的地方是哪里。"
+            if any(token in question for token in ["原因", "为什么", "为啥", "建议", "处置"]):
+                clarification = (
+                    "原因：你这句里的“最严重”还没明确是虫情还是墒情，直接混答会导致县级排行、原因解释和建议口径不一致。\n"
+                    "依据：虫情通常按虫口/严重度排行，墒情通常按低墒或高墒异常排行，两者不能直接用同一指标解释。\n"
+                    "待核查：请先确认看虫情还是墒情；确认后我再按县返回排行、原因和建议。"
+                )
             return self._finalize_plan({
                 "intent": "advice",
                 "confidence": 0.4,
                 "route": self._build_route(question, "structured_agri"),
                 "needs_clarification": True,
-                "clarification": "你想看虫情还是墒情？比如可以问：近3个星期虫情最严重的地方是哪里，或者近3个星期墒情异常最严重的地方是哪里。",
+                "clarification": clarification,
                 "reason": "agri_domain_ambiguous",
                 "context_trace": [],
+            }, question, context=context, understanding=understanding)
+
+        if (
+            re.search(r"(最多|最高|最突出)", question)
+            and re.search(r"(哪里|哪儿|哪些地区|哪些地方|哪个县|哪些县|按县|按市)", question)
+            and not re.search(r"(虫情|虫害|墒情|预警|报警|设备)", question)
+            and "风险" not in question
+        ):
+            return self._finalize_plan({
+                "intent": "advice",
+                "confidence": 0.4,
+                "route": self._build_route(question, "structured_agri"),
+                "needs_clarification": True,
+                "clarification": "你想看虫情、墒情还是预警？比如可以问：最近30天预警最多的是哪里，或者最近30天虫情最严重的是哪里。",
+                "reason": "generic_ambiguous",
+                "context_trace": ["generic ranking needs metric domain clarification"],
             }, question, context=context, understanding=understanding)
 
         heuristic_query_type = self._infer_query_type(question)

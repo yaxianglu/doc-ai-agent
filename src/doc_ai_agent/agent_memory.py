@@ -6,6 +6,8 @@ from __future__ import annotations
 def query_family_from_type(query_type: str) -> str:
     """把 query_type 折叠成稳定的查询家族，便于跨轮追问复用。"""
     normalized = str(query_type or "")
+    if normalized == "active_devices":
+        return "activity"
     if normalized.endswith("_top") or normalized in {"top", "joint_risk"}:
         return "ranking"
     if normalized.endswith("_trend") or normalized == "city_day_change":
@@ -218,6 +220,9 @@ def build_memory_snapshot(
     if plan.get("reason") == "agri_domain_ambiguous":
         pending_user_question = question
         pending_clarification = "agri_domain"
+    elif plan.get("reason") == "placeholder_entity_clarification":
+        pending_user_question = question
+        pending_clarification = "placeholder_entity"
     elif plan.get("reason") in {"generic_ambiguous", "ambiguous", "low_signal"}:
         pending_user_question = question
         pending_clarification = "generic_intent"

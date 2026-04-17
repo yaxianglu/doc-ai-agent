@@ -85,6 +85,8 @@ def _query_type_from_canonical_understanding(canonical: dict, fallback_query_typ
     task_type = str(canonical.get("task_type") or "")
     future_window = canonical.get("future_window")
     historical_window = canonical.get("historical_window") or {}
+    if str(fallback_query_type).startswith("alerts_"):
+        return fallback_query_type
     if domain not in {"pest", "soil", "mixed"}:
         return fallback_query_type
     if task_type == "joint_risk" or domain == "mixed":

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from .request_context_resolution import resolve_pending_placeholder_question
+
 
 def query_type_for_domain_switch(previous_query_type: str, next_domain: str) -> str:
     """在“切换领域”时保留原任务形态（forecast/detail/trend/top）。"""
@@ -22,6 +24,8 @@ def query_type_for_domain_switch(previous_query_type: str, next_domain: str) -> 
 
 def query_type_for_region_follow_up(previous_query_type: str, domain: str) -> str:
     """在“切换地区”时保持分析类型不变，仅替换领域前缀。"""
+    if previous_query_type == "active_devices":
+        return "active_devices"
     if previous_query_type.endswith("_forecast"):
         return f"{domain}_forecast"
     if previous_query_type.endswith("_detail"):
@@ -35,6 +39,8 @@ def query_type_for_region_follow_up(previous_query_type: str, domain: str) -> st
 
 def query_type_for_window_follow_up(previous_query_type: str, domain: str) -> str:
     """在“切换时间窗”时推导新 query_type。"""
+    if previous_query_type == "active_devices":
+        return "active_devices"
     if previous_query_type.endswith("_forecast"):
         return f"{domain}_forecast"
     if previous_query_type.endswith("_detail"):
@@ -151,11 +157,49 @@ def resolve_follow_up_question(question: str, *, history: object, context: dict 
         last_user_question = pending_user_question
     if not last_assistant_reply and pending_clarification == "agri_domain":
         last_assistant_reply = "你想看虫情还是墒情？"
+    if pending_user_question and pending_clarification == "placeholder_entity":
+        resolved_placeholder = resolve_pending_placeholder_question(
+            current,
+            pending_question=pending_user_question,
+            city_aliases={"南京": "南京市", "苏州": "苏州市", "徐州": "徐州市", "南通": "南通市", "宿迁": "宿迁市", "常州": "常州市"},
+            invalid_region_phrases=set(),
+        )
+        if resolved_placeholder and resolved_placeholder != pending_user_question:
+            return resolved_placeholder
     if not last_assistant_reply and pending_clarification == "generic_intent":
         last_assistant_reply = "你希望我做数据统计，还是生成处置建议？"
 
     if not last_user_question:
         return current
+
+    generic_follow_up_cues = (
+        "预警",
+        "报警",
+        "虫情",
+        "墒情",
+        "设备",
+        "按县",
+        "按市",
+        "按区",
+        "趋势",
+        "走势",
+        "原因",
+        "依据",
+        "具体数据",
+    )
+    is_generic_context_clarification = (
+        pending_clarification == "generic_intent"
+        and len(current) <= 20
+        and any(token in current for token in generic_follow_up_cues)
+    )
+    if is_generic_context_clarification:
+        return f"{last_user_question} {current}"
+
+    if (
+        "未知区域" in f"{last_user_question}{last_assistant_reply}"
+        and any(token in current for token in ["哪些设备", "对应的是哪些设备", "对应哪些设备"])
+    ):
+        return "未知区域对应的是哪些设备？"
 
     is_domain_follow_up = current in {"虫情", "虫害", "墒情", "低墒", "高墒"} and "虫情还是墒情" in last_assistant_reply
     is_intent_follow_up = current in {"数据统计", "统计", "查数据", "数据", "处置建议", "建议"} and "数据统计" in last_assistant_reply and "处置建议" in last_assistant_reply

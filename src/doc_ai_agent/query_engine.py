@@ -1076,9 +1076,55 @@ class QueryEngine:
         since = str(plan.get("since") or "1970-01-01 00:00:00")
         until = plan.get("until") or None
         region_name, region_level = self._extract_region(question, plan)
-        data = self.repo.soil_trend(since, until, region_name or None, region_level=region_level)
         since_scope = self._format_since_scope(since)
         scope_prefix = self._scope_prefix(region_name, since_scope)
+        if (
+            any(token in question for token in ["墒情", "低墒", "高墒", "偏低", "偏高"])
+            and any(token in question for token in ["低墒", "高墒", "偏低", "偏高"])
+            and any(token in question for token in ["为主", "偏低还是偏高", "低墒还是高墒", "主要是低墒还是高墒"])
+        ):
+            rows = self.repo.top_soil_regions(
+                since,
+                until,
+                region_level=region_level,
+                top_n=max(3, int(plan.get("top_n") or 5)),
+                anomaly_direction=None,
+                city=plan.get("city"),
+                county=plan.get("county"),
+            )
+            if rows:
+                low_total = int(sum(int(row.get("low_count") or 0) for row in rows))
+                high_total = int(sum(int(row.get("high_count") or 0) for row in rows))
+                if low_total > high_total:
+                    dominant = "低墒为主"
+                elif high_total > low_total:
+                    dominant = "高墒为主"
+                else:
+                    dominant = "低墒和高墒接近"
+                answer = f"{scope_prefix}墒情异常以{dominant}，低墒{low_total}次，高墒{high_total}次。"
+                return QueryResult(
+                    answer=answer,
+                    data=rows,
+                    evidence={
+                        "rule": "基于地区异常分布聚合 low_count / high_count 判断墒情异常方向",
+                        "sql": "top_soil_regions",
+                        "query_type": "soil_overview",
+                        "region_name": region_name,
+                        "region_level": region_level,
+                        "since": since,
+                        "until": until,
+                        "city": plan.get("city"),
+                        "county": plan.get("county"),
+                        "bias_summary": {
+                            "dominant": dominant,
+                            "low_total": low_total,
+                            "high_total": high_total,
+                        },
+                        "available_data_ranges": [],
+                        "no_data_reasons": [],
+                    },
+                )
+        data = self.repo.soil_trend(since, until, region_name or None, region_level=region_level)
         if not data:
             answer = f"{scope_prefix}暂无可用墒情概况数据。"
             suffix = self._available_soil_range_suffix()
@@ -1351,7 +1397,8 @@ class QueryEngine:
             answer = f"自{since[:10]}以来，Top{top_n}为：" + "；".join([f"{i+1}.{r['name']}({r['count']})" for i, r in enumerate(data)])
         else:
             suffix = self._available_alert_range_suffix()
-            answer = f"自{since[:10]}以来，暂无可用于 Top{top_n} 排行的数据。"
+            scope_label = "区县" if field == "county" else "地区"
+            answer = f"自{since[:10]}以来，暂无可用于{scope_label} Top{top_n} 排行的数据。"
             if suffix:
                 answer = f"{answer}{suffix}"
         return QueryResult(
@@ -1389,6 +1436,184 @@ class QueryEngine:
                 )
                 if not data
                 else [],
+            },
+        )
+
+    def _answer_missing_soil_overview(self, question: str, plan: dict) -> QueryResult:
+        since = str(plan.get("since") or "1970-01-01 00:00:00")
+        until = plan.get("until") or None
+        region_name, region_level = self._extract_region(question, plan)
+        since_scope = self._format_since_scope(since)
+        scope_prefix = self._scope_prefix(region_name, since_scope)
+        answer = f"{scope_prefix}暂无可用墒情概况数据。"
+        suffix = self._available_soil_range_suffix()
+        if suffix:
+            answer = f"{answer}{suffix}"
+        else:
+            answer = f"{answer}当前运行环境尚未接入墒情结构化监测数据。"
+        return QueryResult(
+            answer=answer,
+            data=[],
+            evidence={
+                "query_type": "soil_overview",
+                "sql": "soil_overview_unavailable",
+                "since": since,
+                "until": until,
+                "region_name": region_name,
+                "region_level": region_level,
+                "available_data_ranges": self._available_soil_ranges(),
+                "no_data_reasons": [
+                    {
+                        "source": "soil",
+                        "code": "no_data_loaded",
+                        "message": "当前运行环境尚未接入可用的墒情结构化数据。",
+                    }
+                ],
+                "recovery_suggestions": [
+                    {
+                        "source": "soil",
+                        "action": "check_data_import",
+                        "title": "检查墒情数据接入",
+                        "message": "可以先确认墒情结构化监测数据是否已导入或同步完成。",
+                    }
+                ],
+            },
+        )
+
+    def _answer_missing_structured_trend(self, question: str, plan: dict, *, domain: str) -> QueryResult:
+        since = str(plan.get("since") or "1970-01-01 00:00:00")
+        until = plan.get("until") or None
+        region_name, region_level = self._extract_region(question, plan)
+        since_scope = self._format_since_scope(since)
+        scope_prefix = self._scope_prefix(region_name, since_scope)
+        if domain == "pest":
+            answer = f"{scope_prefix}虫情趋势暂无可用结构化数据，当前无法判断是上升、下降还是波动。"
+            available_ranges = self._available_pest_ranges()
+            suffix = self._available_pest_range_suffix()
+            source = "pest"
+            message = "当前运行环境尚未接入可用的虫情结构化趋势数据。"
+        else:
+            answer = f"{scope_prefix}墒情趋势暂无可用结构化数据，当前无法判断是否缓解、加重或波动。"
+            available_ranges = self._available_soil_ranges()
+            suffix = self._available_soil_range_suffix()
+            source = "soil"
+            message = "当前运行环境尚未接入可用的墒情结构化趋势数据。"
+        if suffix:
+            answer = f"{answer}{suffix}"
+        return QueryResult(
+            answer=answer,
+            data=[],
+            evidence={
+                "query_type": f"{domain}_trend",
+                "sql": f"{domain}_trend_unavailable",
+                "since": since,
+                "until": until,
+                "region_name": region_name,
+                "region_level": region_level,
+                "available_data_ranges": available_ranges,
+                "no_data_reasons": [
+                    {
+                        "source": source,
+                        "code": "no_data_loaded",
+                        "message": message,
+                    }
+                ],
+                "recovery_suggestions": [
+                    {
+                        "source": source,
+                        "action": "check_data_import",
+                        "title": f"检查{'虫情' if domain == 'pest' else '墒情'}趋势数据接入",
+                        "message": f"可以先确认{'虫情' if domain == 'pest' else '墒情'}结构化趋势数据是否已导入或同步完成。",
+                    }
+                ],
+            },
+        )
+
+    def _answer_missing_joint_risk(self, question: str, plan: dict) -> QueryResult:
+        since = str(plan.get("since") or "1970-01-01 00:00:00")
+        until = plan.get("until") or None
+        region_level = str(plan.get("region_level") or "city")
+        city = plan.get("city")
+        county = plan.get("county")
+        region_label = str(county or city or ("县级范围" if region_level == "county" else "当前范围"))
+        answer = f"{region_label}暂无可用联合风险结果。"
+        pest_suffix = self._available_pest_range_suffix()
+        soil_suffix = self._available_soil_range_suffix(anomaly_direction="low")
+        if pest_suffix or soil_suffix:
+            answer = f"{answer}{pest_suffix}{soil_suffix}"
+        else:
+            answer = f"{answer}当前运行环境尚未接入联合风险所需的虫情与墒情结构化数据。"
+        return QueryResult(
+            answer=answer,
+            data=[],
+            evidence={
+                "query_type": "joint_risk",
+                "sql": "joint_risk_unavailable",
+                "since": since,
+                "until": until,
+                "region_level": region_level,
+                "city": city,
+                "county": county,
+                "available_data_ranges": self._available_pest_ranges() + self._available_soil_ranges(anomaly_direction="low"),
+                "no_data_reasons": [
+                    {
+                        "source": "joint_risk",
+                        "code": "no_data_loaded",
+                        "message": "当前运行环境尚未接入联合风险所需的结构化数据。",
+                    }
+                ],
+                "recovery_suggestions": [
+                    {
+                        "source": "joint_risk",
+                        "action": "check_data_import",
+                        "title": "检查联合风险数据接入",
+                        "message": "可以先确认虫情与墒情结构化数据是否都已导入，再生成联合风险排行。",
+                    }
+                ],
+            },
+        )
+
+    def _answer_missing_cross_signal_gap(self, question: str, plan: dict, *, query_type: str) -> QueryResult:
+        since = str(plan.get("since") or "1970-01-01 00:00:00")
+        until = plan.get("until") or None
+        region_level = str(plan.get("region_level") or "county")
+        city = plan.get("city")
+        county = plan.get("county")
+        scope_label = "县级范围" if region_level == "county" else "当前范围"
+        if query_type == "alerts_high_pest_low":
+            pattern = "预警多但虫情并不高"
+            required = "预警与虫情结构化数据"
+        else:
+            pattern = "虫情高但预警并不多"
+            required = "虫情与预警结构化数据"
+        answer = f"{scope_label}暂无可用“{pattern}”对比结果。当前运行环境尚未接入{required}，无法可靠生成县级反差排行。"
+        return QueryResult(
+            answer=answer,
+            data=[],
+            evidence={
+                "query_type": query_type,
+                "sql": f"{query_type}_unavailable",
+                "since": since,
+                "until": until,
+                "region_level": region_level,
+                "city": city,
+                "county": county,
+                "available_data_ranges": self._available_alert_ranges() + self._available_pest_ranges(),
+                "no_data_reasons": [
+                    {
+                        "source": query_type,
+                        "code": "no_data_loaded",
+                        "message": f"当前运行环境尚未接入{required}。",
+                    }
+                ],
+                "recovery_suggestions": [
+                    {
+                        "source": query_type,
+                        "action": "check_data_import",
+                        "title": "检查交叉信号数据接入",
+                        "message": f"可以先确认{required}是否已导入，再生成县级反差排行。",
+                    }
+                ],
             },
         )
 
@@ -1552,6 +1777,21 @@ class QueryEngine:
                 if soil_repo is not None:
                     return self._answer_soil_top(question, plan)
 
+        if query_type == "soil_overview" and soil_repo is None:
+            return self._answer_missing_soil_overview(question, plan)
+
+        if query_type == "pest_trend" and pest_repo is None:
+            return self._answer_missing_structured_trend(question, plan, domain="pest")
+
+        if query_type == "soil_trend" and soil_repo is None:
+            return self._answer_missing_structured_trend(question, plan, domain="soil")
+
+        if query_type == "joint_risk" and joint_risk_repo is None:
+            return self._answer_missing_joint_risk(question, plan)
+
+        if query_type in {"alerts_high_pest_low", "pest_high_alerts_low"} and (monitoring_repo is None or analytics_repo is None):
+            return self._answer_missing_cross_signal_gap(question, plan, query_type=query_type)
+
         if query_type == "alerts_trend":
             return self._answer_alerts_trend(question, plan)
 
@@ -1561,14 +1801,21 @@ class QueryEngine:
         if query_type in {"pest_top", "soil_top", "structured_agri"}:
             field = "county" if "区县" in question or "县" in question else "city"
             top_n = int(plan.get("top_n") or 5)
+            city = plan.get("city") or None
             if analytics_repo is not None:
-                data = analytics_repo.top_n_filtered(field, top_n, since)
+                data = analytics_repo.top_n_filtered(field, top_n, since, city=city)
             else:
                 data = self.repo.top_n(field, top_n, since)
+            data = [row for row in data if str(row.get("name") or "").strip()]
             label = "虫情" if query_type == "pest_top" or "虫" in question else "墒情"
-            answer = f"自{since[:10]}以来，{label}最需要关注的Top{top_n}地区为：" + "；".join(
-                [f"{i+1}.{r['name']}({r['count']})" for i, r in enumerate(data)]
-            )
+            scope_label = f"{city}下县级" if city and field == "county" else ("县级" if field == "county" else "地区")
+            if data:
+                answer = f"自{since[:10]}以来，{label}最需要关注的Top{top_n}{scope_label}为：" + "；".join(
+                    [f"{i+1}.{r['name']}({r['count']})" for i, r in enumerate(data)]
+                )
+            else:
+                prefix = "从数据看，" if "从数据看" in question else ""
+                answer = f"{prefix}自{since[:10]}以来，暂未找到{scope_label}{label}排行数据。"
             return QueryResult(
                 answer=answer,
                 data=data,
@@ -1576,6 +1823,8 @@ class QueryEngine:
                     "sql": f"SELECT {field}, COUNT(*) FROM alerts WHERE alert_time >= ? GROUP BY {field} ORDER BY COUNT(*) DESC LIMIT {top_n}",
                     "since": since,
                     "query_type": query_type,
+                    "city": city,
+                    "county": plan.get("county"),
                 },
             )
 
@@ -1638,9 +1887,16 @@ class QueryEngine:
         if query_type == "active_devices":
             top_n = max(1, int(plan.get("top_n") or 10))
             until = plan.get("until") or None
-            data = self.repo.top_active_devices(since, until=until, limit=top_n)
+            city = plan.get("city") or None
+            county = plan.get("county") or None
+            data = self.repo.top_active_devices(since, until=until, limit=top_n, city=city, county=county)
             since_scope = self._format_since_scope(since)
-            prefix = f"{since_scope}，" if since_scope else "历史上，"
+            region_scope = str(county or city or "")
+            prefix_parts = []
+            if region_scope:
+                prefix_parts.append(region_scope)
+            prefix_parts.append(since_scope if since_scope else "历史上")
+            prefix = "，".join(prefix_parts) + "，"
             details = "；".join(
                 f"{idx+1}.{row['device_code']}（预警{row['alert_count']}次，活跃{row['active_days']}天）"
                 for idx, row in enumerate(data)
@@ -1649,7 +1905,7 @@ class QueryEngine:
             return QueryResult(
                 answer=answer,
                 data=data,
-                evidence={"sql": "top_active_devices", "since": since, "until": until, "top_n": top_n},
+                evidence={"sql": "top_active_devices", "since": since, "until": until, "top_n": top_n, "city": city, "county": county},
             )
 
         if query_type == "unknown_region_devices":
@@ -1700,20 +1956,52 @@ class QueryEngine:
                 evidence={"sql": "unmatched_region_records"},
             )
 
+        if query_type == "soil_missing_geo_records":
+            fetcher = getattr(self.repo, "soil_missing_geo_records", None)
+            rows = fetcher(limit=max(1, int(plan.get("top_n") or 20))) if callable(fetcher) else []
+            if rows:
+                details = "；".join(
+                    f"{idx+1}.{row.get('sample_time', '')[:10]} {row.get('county_name') or row.get('county') or ''} {row.get('device_sn') or row.get('device_code') or ''}"
+                    for idx, row in enumerate(rows[:10])
+                )
+                answer = f"有县但没有经纬度的墒情记录共{len(rows)}条，示例：{details}。"
+            else:
+                answer = "当前没有查到有县但没有经纬度的墒情记录。"
+            return QueryResult(
+                answer=answer,
+                data=rows,
+                evidence={"sql": "soil_missing_geo_records"},
+            )
+
         if query_type == "latest_device":
-            m = re.search(r"(SNS\d+)", question)
-            if not m:
+            device_code = str(plan.get("device_code") or "")
+            if not device_code:
+                m = re.search(r"(SNS\d+)", question)
+                device_code = m.group(1) if m else ""
+            if not device_code:
                 return QueryResult(answer="未识别到设备编码。", data=[], evidence={"sql": ""})
-            device_code = m.group(1)
-            row = self.repo.latest_by_device(device_code)
+            since = plan.get("since")
+            until = plan.get("until") or None
+            row = self.repo.latest_by_device(device_code, since=since, until=until)
             if row is None:
+                window = dict(plan.get("window") or {})
+                if str(window.get("window_type") or "all") != "all":
+                    return QueryResult(
+                        answer=f"最近{window.get('window_value')}天内未找到设备{device_code}的预警记录。",
+                        data=[],
+                        evidence={"sql": "SELECT ... WHERE device_code = ? AND alert_time >= ?"},
+                    )
                 return QueryResult(answer=f"未找到设备{device_code}的预警记录。", data=[], evidence={"sql": "SELECT ... WHERE device_code = ?"})
             disposal = str(row.get("disposal_suggestion") or "").strip()
             disposal_text = f"，处置建议：{disposal}" if disposal else ""
+            window = dict(plan.get("window") or {})
+            window_prefix = ""
+            if str(window.get("window_type") or "all") == "days" and window.get("window_value"):
+                window_prefix = f"最近{window.get('window_value')}天内，"
             return QueryResult(
-                answer=f"设备{device_code}最近一次预警时间{row['alert_time']}，等级{row['alert_level']}{disposal_text}。",
+                answer=f"{window_prefix}设备{device_code}最近一次预警时间{row['alert_time']}，等级{row['alert_level']}{disposal_text}。",
                 data=[row],
-                evidence={"sql": "SELECT ... WHERE device_code = ? ORDER BY alert_time DESC LIMIT 1"},
+                evidence={"sql": "SELECT ... WHERE device_code = ? ORDER BY alert_time DESC LIMIT 1", "query_type": "latest_device"},
             )
 
         if query_type == "latest_soil_device":

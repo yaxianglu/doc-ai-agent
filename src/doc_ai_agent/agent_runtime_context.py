@@ -114,11 +114,18 @@ def build_runtime_context(
     """融合问题、路由与历史上下文，构造执行时上下文。"""
     previous_context = dict(previous_context or {})
     understanding = dict(understanding or {})
+    followup_type = str(understanding.get("followup_type") or "none")
+    allow_context_slots = bool(
+        understanding.get("used_context")
+        or followup_type != "none"
+        or "reused_region_from_memory" in list(understanding.get("context_resolution") or [])
+    )
+    safe_previous_context = previous_context if allow_context_slots else {}
     route = normalize_historical_route(
         question=understanding.get("historical_query_text") or question,
         route=plan_route(plan),
         understanding=understanding,
-        previous_context=previous_context,
+        previous_context=safe_previous_context,
         build_route=build_route,
         infer_region_level_from_name=infer_region_level_from_name,
     )
@@ -132,14 +139,14 @@ def build_runtime_context(
             "route": {},
             "forecast": {},
         }
-    inherited_region = previous_context.get("region_name") if understanding.get("reuse_region_from_context", True) else ""
+    inherited_region = safe_previous_context.get("region_name") if understanding.get("reuse_region_from_context", True) else ""
     return {
-        "domain": derive_domain(question, route, previous_context),
+        "domain": derive_domain(question, route, safe_previous_context),
         "region_name": route.get("county") or route.get("city") or inherited_region or "",
-        "region_level": route.get("region_level") or str((previous_context.get("route") or {}).get("region_level") or ""),
-        "query_type": route.get("query_type") or previous_context.get("query_type") or "",
-        "answer_form": route.get("answer_form") or previous_context.get("answer_form") or "",
-        "window": route.get("window") or previous_context.get("window") or {},
-        "route": route or previous_context.get("route") or {},
-        "forecast": previous_context.get("forecast") or {},
+        "region_level": route.get("region_level") or str((safe_previous_context.get("route") or {}).get("region_level") or ""),
+        "query_type": route.get("query_type") or safe_previous_context.get("query_type") or "",
+        "answer_form": route.get("answer_form") or safe_previous_context.get("answer_form") or "",
+        "window": route.get("window") or safe_previous_context.get("window") or {},
+        "route": route or safe_previous_context.get("route") or {},
+        "forecast": safe_previous_context.get("forecast") or {},
     }

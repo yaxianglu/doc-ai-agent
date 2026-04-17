@@ -616,6 +616,8 @@ class RequestUnderstanding:
         if "今年以来" in text:
             current_year = datetime.now().year
             return {"window_type": "year_since", "window_value": current_year}
+        if "上个月" in text or "上月" in text:
+            return {"window_type": "months", "window_value": 1}
         if re.search(r"(?:过去|最近|近|这)半年", text):
             return {"window_type": "months", "window_value": 6}
         if "半年内" in text:

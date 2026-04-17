@@ -117,6 +117,86 @@ class AnswerGuardTests(unittest.TestCase):
         self.assertIsNone(result["retry_route"]["county"])
         self.assertEqual(result["retry_route"]["region_level"], "county")
 
+    def test_retries_county_scope_mismatch_from_generic_count_to_alerts_top(self):
+        result = self.guard.review(
+            question="最近7天风险最高的是哪些县？",
+            understanding={"domain": "", "needs_forecast": False},
+            plan={"route": {"query_type": "count", "region_level": "county", "since": "2026-04-10 00:00:00"}},
+            query_result={},
+            forecast_result={},
+            response={
+                "mode": "data_query",
+                "answer": "自2026-04-10以来，预警信息共 0 条。",
+                "data": [],
+                "evidence": {},
+            },
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["action"], "retry")
+        self.assertEqual(result["violations"][0]["code"], "county_scope_mismatch")
+        self.assertEqual(result["retry_route"]["query_type"], "alerts_top")
+        self.assertEqual(result["retry_route"]["region_level"], "county")
+
+    def test_retries_watchlist_county_mismatch_from_alerts_top_to_pest_top(self):
+        result = self.guard.review(
+            question="从数据看，最近一个月最值得重点盯防的5个县是哪些？",
+            understanding={"domain": "pest", "needs_forecast": False},
+            plan={"route": {"query_type": "alerts_top", "region_level": "county", "since": "2026-03-18 00:00:00"}},
+            query_result={},
+            forecast_result={},
+            response={
+                "mode": "data_query",
+                "answer": "自2026-03-18以来，Top5为：1.常州市(12)；2.徐州市(9)。",
+                "data": [],
+                "evidence": {},
+            },
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["action"], "retry")
+        self.assertEqual(result["violations"][0]["code"], "county_scope_mismatch")
+        self.assertEqual(result["retry_route"]["query_type"], "pest_top")
+        self.assertEqual(result["retry_route"]["region_level"], "county")
+
+    def test_retries_watchlist_domain_mismatch_from_alerts_top_to_pest_top(self):
+        result = self.guard.review(
+            question="从数据看，最近一个月最值得重点盯防的5个县是哪些？",
+            understanding={"domain": "pest", "needs_forecast": False},
+            plan={"route": {"query_type": "alerts_top", "region_level": "county", "since": "2026-03-18 00:00:00"}},
+            query_result={},
+            forecast_result={},
+            response={
+                "mode": "data_query",
+                "answer": "自2026-03-18以来，暂无可用于区县 Top5 排行的数据。当前可用告警数据范围为 2025-06-26 至 2025-12-24。",
+                "data": [],
+                "evidence": {},
+            },
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["action"], "retry")
+        self.assertEqual(result["violations"][0]["code"], "domain_mismatch")
+        self.assertEqual(result["retry_route"]["query_type"], "pest_top")
+
+    def test_county_scope_guard_accepts_county_level_no_data_answer(self):
+        result = self.guard.review(
+            question="最近6周虫情和墒情叠加风险最高的是哪些县？",
+            understanding={"domain": "pest", "needs_forecast": False},
+            plan={"route": {"query_type": "joint_risk", "region_level": "county"}},
+            query_result={},
+            forecast_result={},
+            response={
+                "mode": "data_query",
+                "answer": "县级范围暂无可用联合风险结果。当前运行环境尚未接入联合风险所需的虫情与墒情结构化数据。",
+                "data": [],
+                "evidence": {},
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "pass")
+
     def test_falls_back_when_answer_time_range_conflicts_with_question(self):
         result = self.guard.review(
             question="最近30天预警最多的是哪些地区？",
@@ -150,6 +230,35 @@ class AnswerGuardTests(unittest.TestCase):
         self.assertEqual(result["action"], "fallback")
         self.assertEqual(result["violations"][0]["code"], "invalid_input_business_answer")
         self.assertIn("没看懂", result["fallback_answer"])
+
+    def test_fact_query_answer_rejects_external_knowledge_as_primary_support(self):
+        result = self.guard.review(
+            question="最近30天徐州预警多少次？",
+            understanding={"domain": "alerts", "needs_forecast": False},
+            plan={"route": {"query_type": "alerts_count"}},
+            query_result={
+                "answer": "最近30天徐州预警 12 次。",
+                "data": [{"region_name": "徐州市", "alert_count": 12}],
+                "evidence": {"query_type": "alerts_count"},
+            },
+            forecast_result={},
+            response={
+                "mode": "data_query",
+                "answer": "最近30天徐州预警 12 次。",
+                "data": [{"region_name": "徐州市", "alert_count": 12}],
+                "evidence": {
+                    "historical_query": {"query_type": "alerts_count"},
+                    "knowledge": [{"title": "农业防灾手册"}],
+                    "knowledge_policy": {"mode": "disabled", "should_retrieve": False},
+                    "response_meta": {"source_types": ["knowledge"]},
+                },
+            },
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["action"], "fallback")
+        self.assertEqual(result["violations"][0]["code"], "fact_query_external_knowledge_mixed")
+        self.assertIn("重新回答", result["fallback_answer"])
 
 
 if __name__ == "__main__":
