@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -97,7 +98,16 @@ def _is_advice_or_explanation_question(question: str) -> bool:
 
 def _is_domain_ambiguous_question(question: str) -> bool:
     """识别是否缺少虫情/墒情领域限定。"""
-    return "最严重的是哪里" in question and not _contains_any(question, ["虫情", "墒情", "预警", "设备"])
+    if _contains_any(question, ["虫情", "墒情", "预警", "设备"]):
+        return False
+    if "最严重的是哪里" in question:
+        return True
+    if re.search(r"(最多|最高|最突出).*(哪里|哪儿|哪些地区|哪些地方|哪个县|哪些县)", question):
+        return True
+    return bool(
+        "未来" in question
+        and _contains_any(question, ["会怎样", "怎么样", "趋势", "风险", "变化"])
+    )
 
 
 def _is_boundary_question(item: dict, question: str) -> bool:
@@ -293,7 +303,10 @@ def _score_item(item: dict) -> dict:
             "answer": answer,
         }
 
-    if _is_domain_ambiguous_question(question) and _contains_any(answer, ["虫情还是墒情", "虫情还是墒情？", "你想看虫情还是墒情"]):
+    if _is_domain_ambiguous_question(question) and (
+        _contains_any(answer, ["虫情还是墒情", "虫情还是墒情？", "你想看虫情还是墒情"])
+        or all(token in answer for token in ["虫情", "墒情", "预警"])
+    ):
         return {
             "index": int(item["index"]),
             "category": str(item.get("category") or ""),

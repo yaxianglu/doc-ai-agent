@@ -30,9 +30,9 @@ def _load_questions() -> list[dict]:
     ]
 
 
-def _thread_id_for(category: str, known: dict[str, str]) -> str:
+def _thread_id_for(category: str, known: dict[str, str], run_scope: str) -> str:
     if category not in known:
-        known[category] = f"acceptance-{len(known) + 1}"
+        known[category] = f"acceptance-{run_scope}-{len(known) + 1}"
     return known[category]
 
 
@@ -41,6 +41,7 @@ def main() -> int:
     app = AgentApp(cfg)
     app.refresh()
     questions = _load_questions()
+    run_scope = str(int(time.time()))
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     thread_ids: dict[str, str] = {}
     results: list[dict] = []
@@ -52,7 +53,7 @@ def main() -> int:
         started = time.perf_counter()
         try:
             if turns:
-                thread_id = f"acceptance-multi-{int(item['index'])}"
+                thread_id = f"acceptance-multi-{run_scope}-{int(item['index'])}"
                 turn_results: list[dict] = []
                 response = {}
                 for turn in turns:
@@ -67,7 +68,7 @@ def main() -> int:
                         }
                     )
             else:
-                response = app.chat(question, thread_id=_thread_id_for(category, thread_ids))
+                response = app.chat(question, thread_id=_thread_id_for(category, thread_ids, run_scope))
             elapsed = round(time.perf_counter() - started, 2)
             results.append(
                 {

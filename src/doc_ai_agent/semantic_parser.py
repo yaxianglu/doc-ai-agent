@@ -401,6 +401,8 @@ class SemanticParser:
     def _extract_past_window(cls, text: str) -> dict:
         if "今年以来" in text:
             return {"window_type": "year_since", "window_value": datetime.now().year}
+        if "上个月" in text or "上月" in text:
+            return {"window_type": "months", "window_value": 1}
         if re.search(r"(?:过去|最近|近|这)半年", text) or "半年内" in text:
             return {"window_type": "months", "window_value": 6}
         if m := re.search(r"(?:过去|最近|近|进)(\d+|[一二两三四五六七八九十])个?月", text):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .forecast_eligibility import evaluate_ranking_eligibility, evaluate_series_eligibility
 from .forecast_engine import ForecastEngine
 from .repository_contracts import AlertQueryRepository, ForecastRankingRepository, PestForecastTrendRepository, SoilForecastTrendRepository
 
@@ -226,6 +227,12 @@ class ForecastService:
             return "预测模型在当前样本上运行失败，当前改用回退预测"
         if reason == "insufficient_history":
             return "历史样本不足，当前以回退预测为主"
+        if reason == "unsupported_horizon":
+            return "预测窗口超出当前模型适用范围"
+        if reason == "high_missingness":
+            return "历史样本缺失率较高，当前只建议查看趋势"
+        if reason == "extreme_volatility":
+            return "历史波动过大，当前只建议查看趋势"
         if reason == "aggregate_count_only":
             return "当前只有聚合计数，预测证据较弱"
         return "当前使用回退预测方案"
@@ -322,6 +329,22 @@ class ForecastService:
             f"低墒 {int(cls._safe_float(row.get('low_count')))} / 高墒 {int(cls._safe_float(row.get('high_count')))}",
         ]
 
+    @classmethod
+    def _ranking_support_points(cls, row: dict) -> int:
+        explicit_days = cls._safe_float(row.get("active_days"))
+        if explicit_days > 0:
+            return int(explicit_days)
+        record_count = cls._safe_float(row.get("record_count") or row.get("abnormal_count"))
+        return int(min(max(record_count, 0), 30))
+
+    @staticmethod
+    def _soil_direction_label(anomaly_direction: str | None) -> str:
+        if anomaly_direction == "low":
+            return "低墒"
+        if anomaly_direction == "high":
+            return "高墒"
+        return "墒情"
+
     def forecast_region(self, route: dict, context: dict | None = None) -> dict:
         """面向单地区生成预测回答与结构化 forecast 证据。"""
         domain = str((context or {}).get("domain") or route.get("query_type", "")).replace("_forecast", "")
@@ -337,7 +360,7 @@ class ForecastService:
                 region_name,
                 region_level=str(route.get("region_level") or "city"),
             )
-            projection = self.backend.forecast_series(series, date_key="date", value_key="severity_score", horizon_days=horizon_days)
+            value_key = "severity_score"
             stats = self._series_stats(series, "severity_score")
         else:
             repo = self._soil_trend_repo()
@@ -349,8 +372,21 @@ class ForecastService:
                 region_name,
                 region_level=str(route.get("region_level") or "city"),
             )
-            projection = self.backend.forecast_series(series, date_key="date", value_key="avg_anomaly_score", horizon_days=horizon_days)
+            value_key = "avg_anomaly_score"
             stats = self._series_stats(series, "avg_anomaly_score")
+
+        eligibility = evaluate_series_eligibility(series, value_key=value_key, horizon_days=horizon_days)
+        if not eligibility.eligible and eligibility.reason in {"unsupported_horizon", "high_missingness", "extreme_volatility"}:
+            return self._ineligible_region_forecast(
+                route,
+                domain=domain,
+                region_name=region_name,
+                horizon_days=horizon_days,
+                history_points=len(series),
+                eligibility=eligibility.to_dict(),
+            )
+
+        projection = self.backend.forecast_series(series, date_key="date", value_key=value_key, horizon_days=horizon_days)
 
         # 将预测值与历史峰值/均值/最近值结合，得到更稳定的风险指数。
         risk_index = self._risk_index_from_series(
@@ -401,6 +437,48 @@ class ForecastService:
                 "history_points": projection.history_points,
                 "fallback": projection.fallback,
                 "fallback_reason": projection.fallback_reason,
+                "eligibility": eligibility.to_dict(),
+            },
+            "analysis_context": {"domain": domain, "region_name": region_name, "region_level": str(route.get("region_level") or "city")},
+        }
+
+    def _ineligible_region_forecast(
+        self,
+        route: dict,
+        *,
+        domain: str,
+        region_name: str,
+        horizon_days: int,
+        history_points: int,
+        eligibility: dict,
+    ) -> dict:
+        label = "虫情" if domain == "pest" else "墒情"
+        confidence = 0.28 if eligibility.get("reason") == "unsupported_horizon" else 0.24
+        reason_text = self._fallback_reason_text(str(eligibility.get("reason") or ""))
+        answer = (
+            f"{region_name}{self._horizon_phrase(horizon_days)}{label}当前不建议做可靠预测"
+            f"（置信度{confidence:.2f}，样本覆盖 {history_points} 个观测日）。"
+            f"依据：{reason_text}，建议先看历史趋势。"
+        )
+        return {
+            "answer": answer,
+            "data": [],
+            "forecast": {
+                "domain": domain,
+                "mode": "region",
+                "horizon_days": horizon_days,
+                "projected_score": 0.0,
+                "risk_index": 0.0,
+                "risk_level": "低",
+                "confidence": confidence,
+                "evidence_strength": "weak",
+                "top_factors": [reason_text, f"样本覆盖 {history_points} 个观测日"],
+                "forecast_backend": "eligibility_gate",
+                "model_name": "eligibility_gate",
+                "history_points": history_points,
+                "fallback": True,
+                "fallback_reason": str(eligibility.get("reason") or ""),
+                "eligibility": dict(eligibility),
             },
             "analysis_context": {"domain": domain, "region_name": region_name, "region_level": str(route.get("region_level") or "city")},
         }
@@ -465,6 +543,7 @@ class ForecastService:
         until: str | None = None,
         city: str | None = None,
         county: str | None = None,
+        anomaly_direction: str | None = None,
     ) -> dict:
         """面向区域排行场景输出批量预测与排序结果。"""
         ranking_repo = self._forecast_ranking_repo()
@@ -481,7 +560,7 @@ class ForecastService:
                 until,
                 region_level=region_level,
                 top_n=top_n,
-                anomaly_direction=None,
+                anomaly_direction=anomaly_direction,
                 city=city,
                 county=county,
             )
@@ -491,7 +570,8 @@ class ForecastService:
             ]
         else:
             if analytics_repo is not None:
-                raw = analytics_repo.top_n_filtered("city", top_n, since)
+                field = "county" if region_level == "county" else "city"
+                raw = analytics_repo.top_n_filtered(field, top_n, since, until=until, city=city)
             else:
                 raw = []
             ranked = [
@@ -500,6 +580,11 @@ class ForecastService:
             ]
 
         ranked.sort(key=lambda row: float(row.get("projected_score") or 0), reverse=True)
+        eligibility = evaluate_ranking_eligibility(row_count=len(ranked), horizon_days=horizon_days)
+        support_points = [self._ranking_support_points(row) for row in ranked[:top_n]]
+        history_points = max(support_points, default=0)
+        if eligibility.eligible and ranked and history_points < 2:
+            eligibility = type(eligibility)(False, "insufficient_history", "conservative_trend", "low")
         max_score = max((self._safe_float(row.get("projected_score")) for row in ranked), default=0.0)
         for row in ranked:
             if max_score > 0:
@@ -511,14 +596,26 @@ class ForecastService:
             row["confidence"] = self._ranking_confidence(row, horizon_days=horizon_days)
             row["top_factors"] = self._ranking_factors(row, domain=domain)
 
-        label = "虫情" if domain == "pest" else "墒情"
-        answer = f"{self._horizon_phrase(horizon_days)}{label}风险最高的地区为：" + "；".join(
+        label = "虫情" if domain == "pest" else self._soil_direction_label(anomaly_direction)
+        scope_label = "县区" if region_level == "county" else "地区"
+        lead = (
+            f"{self._horizon_phrase(horizon_days)}{label}风险暂以保守判断为主："
+            if not eligibility.eligible
+            else f"{self._horizon_phrase(horizon_days)}{label}风险最高的{scope_label}为："
+        )
+        answer = lead + "；".join(
             f"{idx+1}.{row['region_name']}（{row['risk_level']}，置信度{row['confidence']:.2f}）" for idx, row in enumerate(ranked[:top_n])
         )
         overall_confidence = round(sum(float(row.get("confidence") or 0) for row in ranked[:top_n]) / max(len(ranked[:top_n]), 1), 2) if ranked else 0.2
+        evidence_strength = "weak" if not eligibility.eligible or history_points < 3 else "medium"
+        support_text = f"样本覆盖 {history_points} 个观测日"
+        if not eligibility.eligible:
+            evidence_text = f"{support_text}，样本覆盖较弱，当前按历史风险强度排序并保守解释。"
+        else:
+            evidence_text = f"{support_text}，按历史风险强度排序，结合记录覆盖与活跃天数估计置信度。"
         answer = (
             f"{answer}。整体置信度{overall_confidence:.2f}。"
-            "依据：按历史风险强度排序，结合记录覆盖与活跃天数估计置信度。"
+            f"依据：{evidence_text}"
         )
         return {
             "answer": answer,
@@ -529,13 +626,14 @@ class ForecastService:
                 "horizon_days": horizon_days,
                 "risk_level": "高" if ranked else "低",
                 "confidence": overall_confidence,
-                "evidence_strength": "medium" if ranked else "weak",
-                "top_factors": ["按历史风险强度排序", "结合记录覆盖与活跃天数估计置信度"],
+                "evidence_strength": evidence_strength,
+                "top_factors": [support_text, "按历史风险强度排序", "结合记录覆盖与活跃天数估计置信度"],
                 "forecast_backend": "statsforecast",
                 "model_name": "AutoETS",
-                "history_points": len(ranked),
-                "fallback": False,
-                "fallback_reason": "",
+                "history_points": history_points,
+                "fallback": not eligibility.eligible,
+                "fallback_reason": "" if eligibility.eligible else eligibility.reason,
+                "eligibility": eligibility.to_dict(),
             },
             "analysis_context": {"domain": domain, "region_name": "", "region_level": region_level},
         }

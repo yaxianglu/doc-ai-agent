@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +8,15 @@ from doc_ai_agent.acceptance_eval import compare_scored_runs, load_question_bank
 
 
 class AcceptanceEvalTests(unittest.TestCase):
+    @staticmethod
+    def _load_script_module(name: str, relative_path: str):
+        path = Path(__file__).resolve().parents[1] / relative_path
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
+
     def test_load_question_bank_reads_fixed_140_cases(self):
         question_bank = load_question_bank(
             Path(__file__).resolve().parents[1] / "evals" / "strict_acceptance_140.json"
@@ -68,6 +78,24 @@ class AcceptanceEvalTests(unittest.TestCase):
                 "seconds": 0.1,
                 "answer": "你想看虫情还是墒情？比如可以问：近3个星期虫情最严重的地方是哪里。",
             },
+            {
+                "index": 124,
+                "category": "多轮上下文",
+                "question": "未来两周会怎样？",
+                "ok": True,
+                "mode": "advice",
+                "seconds": 0.1,
+                "answer": "你想看虫情还是墒情？比如可以问：未来两周虫情会怎样，或者未来两周墒情会怎样。",
+            },
+            {
+                "index": 129,
+                "category": "多轮上下文",
+                "question": "最近30天最多的是哪里？",
+                "ok": True,
+                "mode": "advice",
+                "seconds": 0.1,
+                "answer": "你想看虫情、墒情还是预警？比如可以问：最近30天预警最多的是哪里，或者最近30天虫情最严重的是哪里。",
+            },
         ]
 
         scored = score_run(raw)
@@ -75,6 +103,10 @@ class AcceptanceEvalTests(unittest.TestCase):
         self.assertGreaterEqual(by_index[27]["score"], 8.5)
         self.assertNotIn("misrouted_to_advice", by_index[27]["checks_failed"])
         self.assertGreaterEqual(by_index[46]["score"], 8.5)
+        self.assertGreaterEqual(by_index[124]["score"], 8.5)
+        self.assertNotIn("forecast_missing_confidence", by_index[124]["checks_failed"])
+        self.assertGreaterEqual(by_index[129]["score"], 8.5)
+        self.assertNotIn("misrouted_to_advice", by_index[129]["checks_failed"])
 
     def test_compare_scored_runs_reports_regressions_and_improvements(self):
         previous = {
@@ -244,6 +276,21 @@ class AcceptanceEvalTests(unittest.TestCase):
         self.assertIn("forecast", by_suite)
         self.assertEqual(by_suite["ood"][0]["index"], 54)
         self.assertEqual(by_suite["forecast"][0]["index"], 24)
+
+    def test_eval_thread_ids_are_namespaced_per_run(self):
+        strict_eval = self._load_script_module("run_strict_acceptance_eval", "scripts/run_strict_acceptance_eval.py")
+        acceptance_suite = self._load_script_module("run_acceptance_suite", "scripts/run_acceptance_suite.py")
+
+        strict_known: dict[str, str] = {}
+        acceptance_known: dict[str, str] = {}
+
+        strict_a = strict_eval._thread_id_for("多轮上下文", strict_known, "run-a")
+        strict_b = strict_eval._thread_id_for("多轮上下文", {}, "run-b")
+        acceptance_a = acceptance_suite._thread_id_for("多轮上下文", acceptance_known, "run-a")
+        acceptance_b = acceptance_suite._thread_id_for("多轮上下文", {}, "run-b")
+
+        self.assertNotEqual(strict_a, strict_b)
+        self.assertNotEqual(acceptance_a, acceptance_b)
 
     def test_score_run_penalizes_trend_missing_direction_and_county_scope_mismatch(self):
         raw = [

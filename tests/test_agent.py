@@ -367,6 +367,64 @@ class FakeStructuredRepo:
             {"date": "2026-04-13", "alert_count": 12},
         ]
 
+    def top_active_devices(self, since, until=None, limit=10, city=None, county=None):
+        del since, until, city
+        region = county or ""
+        return [
+            {
+                "device_code": "SNS-RD-001" if region == "如东县" else "SNS001",
+                "device_name": "如东虫情设备" if region == "如东县" else "设备1",
+                "alert_count": 5,
+                "active_days": 3,
+                "last_alert_time": "2026-04-13 10:00:00",
+            },
+            {
+                "device_code": "SNS-RD-002" if region == "如东县" else "SNS002",
+                "device_name": "如东墒情设备" if region == "如东县" else "设备2",
+                "alert_count": 4,
+                "active_days": 2,
+                "last_alert_time": "2026-04-12 10:00:00",
+            },
+        ][:limit]
+
+    def latest_by_device(self, device_code, since=None, until=None):
+        del until
+        if device_code != "SNS00204659":
+            return None
+        if since and since >= "2026-04-10 00:00:00":
+            return {
+                "alert_time": "2026-04-13 10:00:00",
+                "alert_level": "橙色预警",
+                "disposal_suggestion": "建议先排查设备点位，再复核周边田块。",
+                "city": "常州市",
+                "county": "武进区",
+                "device_code": device_code,
+                "device_name": "常州设备1",
+            }
+        return {
+            "alert_time": "2025-12-24 00:00:00",
+            "alert_level": "涝渍",
+            "disposal_suggestion": "建议尽快排水散墒。",
+            "city": "常州市",
+            "county": "武进区",
+            "device_code": device_code,
+            "device_name": "常州设备1",
+        }
+
+    def unknown_region_devices(self, limit=20):
+        return [
+            {
+                "device_code": "SNS-UNK-001",
+                "device_name": "未知区域设备1",
+                "alert_count": 6,
+            },
+            {
+                "device_code": "SNS-UNK-002",
+                "device_name": "未知区域设备2",
+                "alert_count": 4,
+            },
+        ][:limit]
+
 
 class CountyRankingRepo(FakeStructuredRepo):
     def __init__(self):
@@ -789,6 +847,25 @@ class AgentTests(unittest.TestCase):
                 self.assertIn(f"ood:{reason}", result["evidence"]["request_understanding"]["trace"])
                 self.assertEqual(result["evidence"]["response_meta"]["fallback_reason"], reason)
 
+    def test_capability_boundary_questions_return_scope_statement(self):
+        agent = DocAIAgent(
+            AlertRepository(self.db),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        cases = [
+            "你支持查股价吗",
+            "你主要能回答什么问题",
+            "不是农情，我想问体育新闻",
+            "先别查农情，告诉我你是谁",
+        ]
+        for index, question in enumerate(cases):
+            with self.subTest(question=question):
+                result = agent.answer(question, thread_id=f"thread-capability-{index}")
+                self.assertIn("我目前主要支持", result["answer"])
+                self.assertIn("农情", result["answer"])
+                self.assertNotIn("数据统计，还是生成处置建议", result["answer"])
+
     def test_short_english_fragment_returns_invalid_input_clarification(self):
         agent = DocAIAgent(
             AlertRepository(self.db),
@@ -993,6 +1070,15 @@ class AgentTests(unittest.TestCase):
         self.assertNotIn("你希望我做数据统计", result["answer"])
         self.assertIn("Top", result["answer"])
         self.assertEqual(result["evidence"]["query_type"], "alerts_top")
+
+    def test_last_month_alert_top_question_does_not_fall_back_to_all_time(self):
+        result = self.agent.answer("上个月报警最多的是哪些地区？")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(result["evidence"]["query_type"], "alerts_top")
+        self.assertEqual(result["evidence"]["window"]["window_type"], "months")
+        self.assertEqual(result["evidence"]["window"]["window_value"], 1)
+        self.assertNotIn("历史以来", result["answer"])
 
     def test_threshold_summary_stays_data_only(self):
         result = self.agent.answer("告警值超过20的预警主要在哪些城市？")
@@ -1740,6 +1826,81 @@ class AgentGraphTests(unittest.TestCase):
         self.assertIn("依据", result["answer"])
         self.assertIn("待核查", result["answer"])
 
+    def test_standalone_generic_explanation_does_not_reuse_stale_thread_context(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        agent.answer("为什么最近虫情变严重了？", thread_id="thread-generic-stale")
+        agent.answer("为什么这个县的墒情异常最多？", thread_id="thread-generic-stale")
+        agent.answer("过去两个月虫情上升的主要原因是什么？", thread_id="thread-generic-stale")
+        agent.answer("为什么同一个市里不同县差异这么明显？", thread_id="thread-generic-stale")
+        result = agent.answer("从数据看，这次异常最可能的原因是什么？", thread_id="thread-generic-stale")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("原因", result["answer"])
+        self.assertIn("依据", result["answer"])
+        self.assertIn("待核查", result["answer"])
+        self.assertNotIn("1970-01-01", result["answer"])
+        self.assertNotIn("Top5", result["answer"])
+
+    def test_standalone_generic_advice_does_not_reuse_stale_thread_context(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        agent.answer("为什么最近虫情变严重了？", thread_id="thread-advice-stale")
+        agent.answer("从数据看，这次异常最可能的原因是什么？", thread_id="thread-advice-stale")
+        result = agent.answer("给我一个分轻重缓急的行动建议。", thread_id="thread-advice-stale")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("建议", result["answer"])
+        self.assertNotIn("1970-01-01", result["answer"])
+        self.assertNotIn("Top5", result["answer"])
+
+    def test_generic_future_county_risk_sequence_keeps_forecast_contract(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        first = agent.answer("未来10天哪些县风险最高？", thread_id="thread-generic-future-risk")
+        second = agent.answer("你的证据够吗？", thread_id="thread-generic-future-risk")
+        third = agent.answer("如果证据弱，你应该怎么回答？", thread_id="thread-generic-future-risk")
+
+        self.assertEqual(first["mode"], "data_query")
+        self.assertIn("风险最高", first["answer"])
+        self.assertEqual(first["evidence"]["forecast"]["mode"], "ranking")
+        self.assertIn("置信度", first["answer"])
+        self.assertIn("样本覆盖", first["answer"])
+
+        self.assertIn("依据：", second["answer"])
+        self.assertIn("置信度", second["answer"])
+        self.assertIn("样本覆盖", second["answer"])
+
+        self.assertIn("置信度", third["answer"])
+        self.assertIn("样本覆盖", third["answer"])
+
+    def test_generic_future_forecast_follow_up_can_set_domain_and_region_then_explain(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("未来两周会怎样？", thread_id="thread-generic-forecast-follow-up")
+        agent.answer("我说的是虫情。", thread_id="thread-generic-forecast-follow-up")
+        agent.answer("只看常州。", thread_id="thread-generic-forecast-follow-up")
+        result = agent.answer("依据是什么？", thread_id="thread-generic-forecast-follow-up")
+
+        self.assertIn("依据：", result["answer"])
+        self.assertIn("置信度", result["answer"])
+        self.assertIn("样本覆盖", result["answer"])
+        self.assertIn("常州", result["answer"])
+
     def test_unknown_region_explanation_returns_mapping_reasoning(self):
         agent = DocAIAgent(
             FakeStructuredRepo(),
@@ -1753,6 +1914,75 @@ class AgentGraphTests(unittest.TestCase):
         self.assertIn("未知区域", result["answer"])
         self.assertIn("待核查", result["answer"])
 
+    def test_unknown_region_device_follow_up_reuses_context(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("为什么会出现未知区域？", thread_id="thread-unknown-region-devices")
+        result = agent.answer("对应的是哪些设备？", thread_id="thread-unknown-region-devices")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertIn("未知区域对应的设备有", result["answer"])
+        self.assertIn("SNS-UNK-001", result["answer"])
+        self.assertNotIn("数据统计，还是生成处置建议", result["answer"])
+
+    def test_generic_alert_clarification_follow_up_recovers_data_query(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        first = agent.answer("最近30天最多的是哪里？", thread_id="thread-alert-clarify-follow-up")
+        result = agent.answer("我说的是预警，不是报警。", thread_id="thread-alert-clarify-follow-up")
+
+        self.assertEqual(first["mode"], "advice")
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(result["evidence"]["historical_query"]["query_type"], "alerts_top")
+        self.assertNotIn("数据统计，还是生成处置建议", result["answer"])
+
+    def test_generic_top_question_asks_metric_domain_clarification(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        result = agent.answer("最近30天最多的是哪里？", thread_id="thread-generic-top-clarify")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("虫情", result["answer"])
+        self.assertIn("墒情", result["answer"])
+        self.assertIn("预警", result["answer"])
+        self.assertNotIn("数据统计，还是生成处置建议", result["answer"])
+
+    def test_device_window_follow_up_reuses_device_context(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("设备 SNS00204659 最近一次预警是什么？", thread_id="thread-device-window-follow-up")
+        result = agent.answer("最近7天呢？", thread_id="thread-device-window-follow-up")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertIn("SNS00204659", result["answer"])
+        self.assertNotIn("数据统计，还是生成处置建议", result["answer"])
+
+    def test_trend_follow_up_after_ranking_switches_query_family(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("最近30天虫情最高的是哪些县？", thread_id="thread-ranking-to-trend")
+        agent.answer("只看常州。", thread_id="thread-ranking-to-trend")
+        result = agent.answer("趋势呢？", thread_id="thread-ranking-to-trend")
+
+        self.assertEqual(result["mode"], "data_query")
+        self.assertEqual(result["evidence"]["historical_query"]["query_type"], "pest_trend")
+        self.assertIn("趋势", result["answer"])
+
     def test_explanation_without_structured_evidence_reports_insufficient_evidence(self):
         agent = DocAIAgent(
             EmptyStructuredRepo(),
@@ -1764,6 +1994,7 @@ class AgentGraphTests(unittest.TestCase):
 
         self.assertEqual(result["mode"], "analysis")
         self.assertIn("证据不足", result["answer"])
+        self.assertIn("待核查", result["answer"])
         self.assertNotIn("峰值0", result["answer"])
         self.assertNotIn("最近值0", result["answer"])
 
@@ -1784,6 +2015,22 @@ class AgentGraphTests(unittest.TestCase):
         advice_section = result["answer"].split("建议：", 1)[1]
         self.assertIn("复核高值点位", advice_section)
         self.assertIn("分区处置", advice_section)
+
+    def test_generic_composite_severity_question_returns_explanation_style_clarification(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        result = agent.answer("先给我过去5个月最严重的县，再解释原因，再给建议", thread_id="thread-generic-composite")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("原因：", result["answer"])
+        self.assertIn("依据：", result["answer"])
+        self.assertIn("待核查", result["answer"])
+        self.assertIn("按县", result["answer"])
+        self.assertNotIn("你希望我做数据统计", result["answer"])
 
     def test_colloquial_reason_and_advice_variant_returns_expert_sections(self):
         agent = DocAIAgent(
@@ -1995,6 +2242,38 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["analysis_context"]["domain"], "pest")
         self.assertEqual(result["evidence"]["analysis_context"]["region_name"], "")
         self.assertNotIn("徐州市", result["answer"])
+
+    def test_standalone_historical_ranking_after_forecast_does_not_reuse_forecast_intent(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        agent.answer("未来两周虫情会怎样？", thread_id="thread-stale-forecast")
+        result = agent.answer("过去5个月最严重的是哪里？", thread_id="thread-stale-forecast")
+
+        self.assertNotIn("未来两周", result["answer"])
+        self.assertNotIn("保守预测", result["answer"])
+        self.assertNotEqual(result["evidence"]["analysis_context"]["query_type"], "pest_forecast")
+
+    def test_placeholder_county_clarification_chain_keeps_pending_question_context(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+
+        first = agent.answer("某县下面有哪些设备出现过异常？", thread_id="thread-placeholder-county")
+        second = agent.answer("如东县。", thread_id="thread-placeholder-county")
+        third = agent.answer("最近30天最活跃的是哪些？", thread_id="thread-placeholder-county")
+
+        self.assertIn("请补充具体对象", first["answer"])
+        self.assertEqual(second["mode"], "data_query")
+        self.assertEqual(second["evidence"]["analysis_context"]["region_name"], "如东县")
+        self.assertNotIn("请补充具体对象", second["answer"])
+        self.assertEqual(third["mode"], "data_query")
+        self.assertEqual(third["evidence"]["analysis_context"]["region_name"], "如东县")
+        self.assertNotIn("generic_intent", json.dumps(third["evidence"], ensure_ascii=False))
+        self.assertNotIn("请补充要看的地区", third["answer"])
 
     def test_domain_clarification_for_dataset_question_returns_detail_data(self):
         agent = DocAIAgent(

@@ -817,6 +817,7 @@ class MySQLRepository(AnalyticsRepository):
         n: int,
         since: str,
         until: Optional[str] = None,
+        city: Optional[str] = None,
         min_alert_value: Optional[float] = None,
     ) -> List[dict]:
         """支持时间窗与阈值过滤的 TopN 统计。"""
@@ -826,6 +827,8 @@ class MySQLRepository(AnalyticsRepository):
         where = [f"alert_time >= {self._quote(since)}"]
         if until:
             where.append(f"alert_time < {self._quote(until)}")
+        if city:
+            where.append(f"city = {self._quote(city)}")
         if min_alert_value is not None:
             where.extend(
                 [
@@ -874,8 +877,13 @@ class MySQLRepository(AnalyticsRepository):
         """
         return self._fetch_json(sql)
 
-    def latest_by_device(self, device_code: str) -> Optional[dict]:
+    def latest_by_device(self, device_code: str, since: str | None = None, until: str | None = None) -> Optional[dict]:
         """按设备编码查询最新一条告警。"""
+        where = [f"device_code = {self._quote(device_code)}"]
+        if since:
+            where.append(f"alert_time >= {self._quote(since)}")
+        if until:
+            where.append(f"alert_time < {self._quote(until)}")
         sql = f"""
         SELECT JSON_OBJECT(
           'alert_time', DATE_FORMAT(alert_time, '%Y-%m-%d %H:%i:%s'),
@@ -887,7 +895,7 @@ class MySQLRepository(AnalyticsRepository):
           'device_name', device_name
         )
         FROM alerts
-        WHERE device_code = {self._quote(device_code)}
+        WHERE {' AND '.join(where)}
         ORDER BY alert_time DESC
         LIMIT 1;
         """
@@ -956,6 +964,28 @@ class MySQLRepository(AnalyticsRepository):
             ORDER BY abnormal_count DESC, last_sample_time DESC, device_sn ASC
             LIMIT {max(1, int(limit))}
           ) base
+        ) q;
+        """
+        return self._fetch_json(sql)
+
+    def soil_missing_geo_records(self, limit: int = 20) -> List[dict]:
+        """查询已识别区县但缺失经纬度的墒情记录。"""
+        sql = f"""
+        SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
+        FROM (
+          SELECT JSON_OBJECT(
+            'device_sn', device_sn,
+            'device_name', device_name,
+            'city_name', city_name,
+            'county_name', county_name,
+            'sample_time', DATE_FORMAT(sample_time, '%Y-%m-%d %H:%i:%s')
+          ) AS item
+          FROM fact_soil_moisture
+          WHERE county_name IS NOT NULL
+            AND TRIM(county_name) != ''
+            AND (longitude IS NULL OR latitude IS NULL)
+          ORDER BY sample_time DESC
+          LIMIT {max(1, int(limit))}
         ) q;
         """
         return self._fetch_json(sql)
@@ -1055,9 +1085,18 @@ class MySQLRepository(AnalyticsRepository):
         """
         return self._fetch_json(sql)
 
-    def top_active_devices(self, since: str, until: Optional[str] = None, limit: int = 10) -> List[dict]:
+    def top_active_devices(
+        self,
+        since: str,
+        until: Optional[str] = None,
+        limit: int = 10,
+        city: Optional[str] = None,
+        county: Optional[str] = None,
+    ) -> List[dict]:
         """统计时间窗内最活跃的告警设备。"""
         until_sql = f"AND alert_time < {self._quote(until)}" if until else ""
+        city_sql = f"AND city = {self._quote(city)}" if city else ""
+        county_sql = f"AND county = {self._quote(county)}" if county else ""
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (
@@ -1078,6 +1117,8 @@ class MySQLRepository(AnalyticsRepository):
             FROM alerts
             WHERE alert_time >= {self._quote(since)}
               {until_sql}
+              {city_sql}
+              {county_sql}
               AND device_code IS NOT NULL
               AND TRIM(device_code) != ''
             GROUP BY device_code, device_name

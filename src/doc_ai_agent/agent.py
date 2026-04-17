@@ -45,6 +45,7 @@ from .query_planner import QueryPlanner
 from .query_engine import QueryEngine
 from .request_understanding import RequestUnderstanding
 from .repository import AlertRepository
+from .response_assembler import attach_query_execution_evidence, build_forecast_only_response
 from .response_builder import ResponseBuilder
 
 
@@ -59,6 +60,7 @@ class AgentState(TypedDict, total=False):
     query_result: dict
     forecast_result: dict
     knowledge: list[dict]
+    knowledge_policy: dict
     response: dict
     orchestration_state: dict
 
@@ -286,15 +288,24 @@ class DocAIAgent:
     def _load_memory_node(self, state: AgentState) -> dict:
         thread_id = str(state.get("thread_id") or "default")
         persisted = {} if thread_id.startswith("__stateless__:") else self.memory_store.load(thread_id)
+        persisted = dict(persisted)
+        persisted.setdefault(
+            "memory_policy",
+            {
+                "allowed_slots": ["domain", "region", "time_window", "referent"],
+                "forbidden_slots": ["facts", "rank_results", "forecast_results"],
+            },
+        )
         return {
             "thread_id": thread_id,
             "memory_context": dict(persisted),
             "understanding": {},
             "plan": {},
-            "query_result": {},
-            "forecast_result": {},
-            "knowledge": [],
-            "response": {},
+            "query_result": None,
+            "forecast_result": None,
+            "knowledge": None,
+            "knowledge_policy": None,
+            "response": None,
         }
 
     def _understand_request_node(self, state: AgentState) -> dict:
@@ -464,7 +475,7 @@ class DocAIAgent:
     def _forecast_node(self, state: AgentState) -> dict:
         forecast_context = self._resolve_forecast_context(state)
         if not forecast_context.enabled:
-            return {"forecast_result": {}, "orchestration_state": self._orchestration_state(state)}
+            return {"forecast_result": None, "orchestration_state": self._orchestration_state(state)}
         forecast_route = dict(forecast_context.route or {})
         runtime_context = dict(forecast_context.runtime_context)
         if forecast_route.get("forecast_mode") == "ranking":
@@ -501,7 +512,13 @@ class DocAIAgent:
         )
         result["orchestration_state"] = self._orchestration_state(
             state,
-            task_results={"knowledge": {"count": len(result.get("knowledge") or [])}},
+            task_results={
+                "knowledge": {
+                    "count": len(result.get("knowledge") or []),
+                    "policy": dict(result.get("knowledge_policy") or {}),
+                }
+            },
+            evidence={"knowledge_policy": dict(result.get("knowledge_policy") or {})},
         )
         return result
 
@@ -635,12 +652,15 @@ class DocAIAgent:
         query_result = dict(state.get("query_result") or {})
         forecast_result = dict(state.get("forecast_result") or {})
         knowledge = list(state.get("knowledge") or [])
+        knowledge_policy = dict(state.get("knowledge_policy") or {})
 
         if not (understanding.get("needs_forecast") or understanding.get("needs_explanation") or understanding.get("needs_advice")):
             if query_result:
-                merged_evidence = dict(query_result.get("evidence") or {})
-                merged_evidence["execution_plan"] = self._execution_plan(state)
-                query_result["evidence"] = merged_evidence
+                query_result = attach_query_execution_evidence(
+                    query_result,
+                    self._execution_plan(state),
+                    knowledge_policy=knowledge_policy,
+                )
                 return {
                     "response": query_result,
                     "orchestration_state": self._orchestration_state(
@@ -655,22 +675,17 @@ class DocAIAgent:
             and not understanding.get("needs_explanation")
             and not understanding.get("needs_advice")
         ):
-            evidence = {
-                **dict(forecast_result),
-                "execution_plan": self._execution_plan(state),
-                "generation_mode": "forecast",
-            }
+            response = build_forecast_only_response(
+                forecast_result,
+                self._execution_plan(state),
+                knowledge_policy=knowledge_policy,
+            )
             return {
-                "response": {
-                    "mode": "data_query",
-                    "answer": forecast_result.get("answer", ""),
-                    "data": forecast_result.get("data", []),
-                    "evidence": evidence,
-                },
+                "response": response,
                 "orchestration_state": self._orchestration_state(
                     state,
                     task_results={"synthesize": {"mode": "data_query", "answer": forecast_result.get("answer", "")}},
-                    evidence={"response": evidence},
+                    evidence={"response": dict(response.get("evidence") or {})},
                 ),
             }
 
@@ -712,6 +727,7 @@ class DocAIAgent:
             query_result=query_result,
             forecast_result=forecast_result,
             knowledge=knowledge,
+            knowledge_policy=knowledge_policy,
             explanation_text=explanation_text,
             explanation_sources=explanation_sources,
             advice_text=advice_text,
@@ -898,10 +914,11 @@ class DocAIAgent:
                 "memory_context": {},
                 "understanding": {},
                 "plan": {},
-                "query_result": {},
-                "forecast_result": {},
-                "knowledge": [],
-                "response": {},
+                "query_result": None,
+                "forecast_result": None,
+                "knowledge": None,
+                "knowledge_policy": None,
+                "response": None,
             },
             config={"configurable": {"thread_id": effective_thread_id}},
         )

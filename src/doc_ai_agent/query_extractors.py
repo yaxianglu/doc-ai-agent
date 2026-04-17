@@ -226,6 +226,9 @@ def extract_relative_window(question: str) -> tuple[Optional[str], Optional[str]
     now = datetime.now()
     if "今年以来" in question:
         return f"{now.year}-01-01 00:00:00", None, {"window_type": "year_since", "window_value": now.year}
+    if "上个月" in question or "上月" in question:
+        since = now - timedelta(days=30)
+        return since.strftime("%Y-%m-%d 00:00:00"), None, {"window_type": "months", "window_value": 1}
     if re.search(r"(?:过去|最近|近|这)半年", question) or "半年内" in question:
         since = now - timedelta(days=30 * 6)
         return since.strftime("%Y-%m-%d 00:00:00"), None, {"window_type": "months", "window_value": 6}

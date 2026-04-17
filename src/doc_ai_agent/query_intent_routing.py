@@ -163,8 +163,26 @@ def infer_query_type(
     future_window = extract_future_window(question)
     _, _, historical_window = extract_relative_window(question)
     has_explicit_historical_window = historical_window.get("window_type") != "none" or extract_day_range(question)[0] is not None
+    has_alert_domain = any(token in question for token in ["预警", "报警", "告警"])
+    if (
+        has_alert_domain
+        and has_trend_intent(question)
+        and any(token in question for token in ["数量", "条数", "多少", "增加", "减少", "上升", "下降", "趋势", "走势", "变化", "缓解"])
+    ):
+        return "alerts_trend"
+    if (
+        ("只看预警" in question or "只看报警" in question or "只看告警" in question or has_alert_domain)
+        and (has_ranking_intent(question) or re.search(r"前\s*\d+", question))
+    ):
+        return "alerts_top"
+    if "重点盯防" in question and ("县" in question or "区县" in question):
+        return "alerts_top"
     if "预警" in question and "虫情" in question and any(token in question for token in ["并不高", "不高", "不算高"]):
         return "alerts_high_pest_low"
+    if any(token in question for token in ["预警", "报警", "告警"]) and "设备数少" in question and any(
+        token in question for token in ["次数多", "报警多", "预警多", "告警多"]
+    ):
+        return "alerts_top"
     if "虫情" in question and any(token in question for token in ["预警", "报警", "告警"]) and any(token in question for token in ["并不多", "不多", "不算多"]):
         return "pest_high_alerts_low"
     if has_region and any(token in question for token in ["哪个县", "哪个区", "哪些县", "哪些区", "最重", "最异常", "最严重", "最高", "最多"]):
@@ -178,6 +196,8 @@ def infer_query_type(
         return "soil_only_abnormal_devices"
     if "设备" in question and "墒情" in question and "异常" in question:
         return "soil_abnormal_devices"
+    if "设备" in question and "异常" in question:
+        return "active_devices"
     if future_window and not has_explicit_historical_window and ("虫情" in question or "虫害" in question):
         return "pest_forecast"
     if future_window and not has_explicit_historical_window and "墒情" in question:
@@ -207,6 +227,8 @@ def infer_query_type(
         return "unknown_region_devices"
     if ("县字段" in question or "county字段" in question.lower()) and "为空" in question:
         return "empty_county_records"
+    if "墒情" in question and "有县" in question and "没有经纬度" in question:
+        return "soil_missing_geo_records"
     if "没有匹配到区域" in question or "未匹配到区域" in question:
         return "unmatched_region_records"
     if "处置建议" in question and ("镇" in question or "街道" in question):
@@ -307,7 +329,7 @@ def needs_agri_domain_clarification(question: str, *, build_route) -> bool:
     """判断是否需要先澄清农业领域（虫情/墒情）。"""
     has_agri_domain = re.search(r"(虫情|虫害|墒情)", question) is not None
     asks_severity = re.search(r"(受灾|灾情|最严重|最重)", question) is not None
-    asks_region = re.search(r"(地方|地区|哪里|哪儿)", question) is not None
+    asks_region = re.search(r"(地方|地区|哪里|哪儿|哪个县|哪些县|哪几个县|哪个区|哪些区|县|区县)", question) is not None
     asks_generic_agri = re.search(r"(受灾|灾情|灾害)", question) is not None
     asks_dataset_or_overview = re.search(r"(数据|情况|概况|整体|总体|态势|走势|趋势)", question) is not None
     route = build_route(question, "structured_agri")

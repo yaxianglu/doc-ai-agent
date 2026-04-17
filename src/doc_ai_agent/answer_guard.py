@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .agri_semantics import asks_county_scope, has_trend_intent
+from .agri_semantics import asks_county_scope, has_ranking_intent, has_trend_intent
 from .input_guard import classify_input_quality
 from .query_plan import execution_route
 from .request_understanding_reasoning import has_negated_trend
@@ -255,6 +255,17 @@ class AnswerGuard:
         return f"这次回答和你的问题没有完全对齐。我建议我按原问题“{question}”重新生成一次更保守的答案。"
 
     @staticmethod
+    def _is_fact_query(route: dict, understanding: dict, query_result: dict) -> bool:
+        query_type = str(
+            route.get("query_type")
+            or (query_result.get("evidence") or {}).get("query_type")
+            or ""
+        )
+        if any(query_type.endswith(suffix) for suffix in ["_count", "_top", "_trend", "_overview"]):
+            return True
+        return bool(route) and not (understanding.get("needs_explanation") or understanding.get("needs_advice") or understanding.get("needs_forecast"))
+
+    @staticmethod
     def _retry_route_for_violation(question: str, route: dict, expected_domain: str, violations: list[dict]) -> dict:
         """为可恢复的问题生成一次内部重试 route。"""
         if not violations:
@@ -265,10 +276,32 @@ class AnswerGuard:
             if updated.get("city") and updated.get("county") == updated.get("city"):
                 updated["county"] = None
                 return updated
+            if (
+                str(updated.get("query_type") or "") == "alerts_top"
+                and any(token in question for token in ["重点盯防", "最需要关注", "风险最高"])
+                and not any(token in question for token in ["预警", "报警", "告警"])
+            ):
+                updated["query_type"] = "pest_top"
+                updated["top_n"] = int(updated.get("top_n") or 5)
+                return updated
+            if str(updated.get("query_type") or "") in {"count", ""} and has_ranking_intent(question):
+                updated["query_type"] = "alerts_top"
+                updated["top_n"] = int(updated.get("top_n") or 5)
+                return updated
         if "domain_mismatch" in codes and expected_domain == "alerts":
             if str(updated.get("query_type") or "") in {"top", "count", "", "structured_agri"}:
                 updated["query_type"] = "alerts_top" if not has_trend_intent(question) else "alerts_trend"
                 return updated
+        if (
+            "domain_mismatch" in codes
+            and expected_domain == "pest"
+            and str(updated.get("query_type") or "") == "alerts_top"
+            and any(token in question for token in ["重点盯防", "最需要关注", "风险最高"])
+            and not any(token in question for token in ["预警", "报警", "告警"])
+        ):
+            updated["query_type"] = "pest_top"
+            updated["top_n"] = int(updated.get("top_n") or 5)
+            return updated
         return {}
 
     def review(
@@ -316,6 +349,11 @@ class AnswerGuard:
         rewritten_answer = answer
         question_time_hint = self._explicit_time_hint(question)
         answer_time_hint = self._explicit_time_hint(answer)
+        response_evidence = dict(response.get("evidence") or {})
+        knowledge_policy = dict(response_evidence.get("knowledge_policy") or {})
+        has_external_knowledge = bool(response_evidence.get("knowledge")) or bool(
+            ((response_evidence.get("evidence_layers") or {}).get("external_knowledge") or {}).get("items")
+        )
 
         if "1970-01-01" in answer:
             soft_violations.append({"code": "internal_default_time_exposed", "message": "回答暴露了内部默认时间。"})
@@ -329,8 +367,14 @@ class AnswerGuard:
         elif expected_domain and expected_domain not in answer_domains and answer_domains & {"alerts", "pest", "soil"}:
             hard_violations.append({"code": "domain_mismatch", "message": "回答领域与问题不一致。"})
 
+        if self._is_fact_query(route, understanding, query_result) and has_external_knowledge and knowledge_policy.get("mode") == "disabled":
+            hard_violations.append({"code": "fact_query_external_knowledge_mixed", "message": "事实型回答混入了被禁用的外部知识证据。"})
+
         if county_scope:
-            mentions_county = bool(re.search(r"[^\s，。；：]{1,12}(县|区|区县)", answer)) or "区县" in answer
+            mentions_county = (
+                bool(re.search(r"[^\s，。；：]{1,12}(县|区|区县)", answer))
+                or any(token in answer for token in ["区县", "县级", "县一级", "按县"])
+            )
             if not mentions_county:
                 hard_violations.append({"code": "county_scope_mismatch", "message": "用户要求县级结果，但回答没有按县级返回。"})
 

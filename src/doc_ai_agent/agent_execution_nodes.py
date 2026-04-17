@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .agent_contracts import ForecastExecutionContext
+from .knowledge_policy import decide_knowledge_policy
 
 
 def build_query_result_payload(result, route: dict) -> dict:
@@ -38,11 +39,11 @@ def run_query_node(
     if compare_request:
         return {"query_result": answer_compare_request(question, compare_request, understanding, plan, memory_context)}
     if not understanding.get("needs_historical") and plan.get("intent") != "data_query":
-        return {"query_result": {}}
+        return {"query_result": None}
     question_for_query = understanding.get("historical_query_text") or question
     route = normalize_historical_route(question_for_query, plan_route(plan), understanding, memory_context)
     if route.get("query_type") in {"pest_forecast", "soil_forecast"}:
-        return {"query_result": {}}
+        return {"query_result": None}
     if data_query_capability is not None:
         result, capability = data_query_capability.execute(question_for_query, route)
         payload = build_query_result_payload(result, route)
@@ -99,6 +100,13 @@ def build_forecast_execution_context(
     forecast_county = route.get("county") or None
     if forecast_mode == "ranking" and region_level == "county":
         forecast_county = region_name or forecast_county
+    question_for_direction = str(understanding.get("original_question") or question or "")
+    if any(token in question_for_direction for token in ["低墒", "偏低", "缺水", "干旱", "太干"]):
+        anomaly_direction = "low"
+    elif any(token in question_for_direction for token in ["高墒", "偏高", "偏湿", "过湿", "涝渍"]):
+        anomaly_direction = "high"
+    else:
+        anomaly_direction = route.get("anomaly_direction")
     forecast_route = {
         "query_type": f"{domain}_forecast",
         "since": route.get("since") or memory_context.get("route", {}).get("since") or "1970-01-01 00:00:00",
@@ -110,6 +118,7 @@ def build_forecast_execution_context(
         "window": route.get("window") or understanding.get("window") or memory_context.get("window") or {"window_type": "all", "window_value": None},
         "forecast_window": future_window,
         "forecast_mode": forecast_mode,
+        "anomaly_direction": anomaly_direction,
     }
     runtime_context = {
         "domain": domain,
@@ -137,10 +146,14 @@ def run_knowledge_node(
     first_region_name,
 ) -> dict:
     """执行知识检索节点，统一处理异常并返回可选知识列表。"""
-    if not (understanding.get("needs_explanation") or understanding.get("needs_advice")):
-        return {"knowledge": []}
+    knowledge_policy = decide_knowledge_policy(understanding=understanding, plan=plan)
+    if not knowledge_policy.get("should_retrieve"):
+        return {"knowledge": None, "knowledge_policy": knowledge_policy}
     if source_provider is None:
-        return {"knowledge": []}
+        disabled_policy = dict(knowledge_policy)
+        disabled_policy["should_retrieve"] = False
+        disabled_policy["reason"] = "knowledge_source_unavailable"
+        return {"knowledge": None, "knowledge_policy": disabled_policy}
     context = build_runtime_context(
         understanding.get("normalized_question") or question,
         plan,
@@ -167,7 +180,7 @@ def run_knowledge_node(
             limit=3,
             context=context,
         )
-    return {"knowledge": knowledge}
+    return {"knowledge": knowledge, "knowledge_policy": knowledge_policy}
 
 
 def build_advice_response(

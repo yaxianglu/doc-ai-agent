@@ -17,7 +17,7 @@ def _is_time_series(series: list[dict]) -> bool:
 
 def _is_ranking_rows(series: list[dict]) -> bool:
     """判断查询结果是否为地区排行列表。"""
-    return bool(series) and isinstance(series[0], dict) and "region_name" in series[0] and not _is_time_series(series)
+    return bool(series) and isinstance(series[0], dict) and ("region_name" in series[0] or "name" in series[0]) and not _is_time_series(series)
 
 
 def _reasoning_point_date(point: dict) -> str:
@@ -103,12 +103,16 @@ def build_data_grounded_explanation(
     if _is_ranking_rows(series):
         top = series[0]
         metric_key, metric_label, domain_label = _reasoning_metric_key(domain, series)
-        score = _reasoning_format_metric(float(top.get(metric_key) or top.get("anomaly_score") or 0))
-        record_count = int(top.get("record_count") or top.get("abnormal_count") or 0)
-        top_region = str(top.get("region_name") or region_name or "当前地区")
+        score = _reasoning_format_metric(float(top.get(metric_key) or top.get("anomaly_score") or top.get("count") or 0))
+        record_count = int(top.get("record_count") or top.get("abnormal_count") or top.get("count") or 0)
+        top_region = str(top.get("region_name") or top.get("name") or region_name or "当前地区")
+        if not domain_label or ("name" in top and "count" in top and "region_name" not in top):
+            domain_label = "预警/风险"
+            metric_label = "记录数"
         return (
             f"从当前排行汇总看，{top_region}{domain_label}排在最前，{metric_label}{score}，相关记录{record_count}条。"
             f"这说明它当前更突出，但这类汇总排行本身还不足以单独判断成因；如果要继续解释原因，最好结合{top_region}的逐日趋势和现场记录再判断。"
+            "待核查项包括该县原始记录是否完整、设备点位是否稳定、阈值口径是否一致，以及现场处置是否与异常抬升时段对应。"
         )
 
     summary = _reasoning_series_summary(domain, series)
@@ -180,13 +184,18 @@ def build_data_grounded_advice(
     if _is_ranking_rows(series):
         top = series[0]
         metric_key, metric_label, domain_label = _reasoning_metric_key(domain, series)
-        score = _reasoning_format_metric(float(top.get(metric_key) or top.get("anomaly_score") or 0))
-        record_count = int(top.get("record_count") or top.get("abnormal_count") or 0)
-        top_region = str(top.get("region_name") or region_name or "当前地区")
+        score = _reasoning_format_metric(float(top.get(metric_key) or top.get("anomaly_score") or top.get("count") or 0))
+        record_count = int(top.get("record_count") or top.get("abnormal_count") or top.get("count") or 0)
+        top_region = str(top.get("region_name") or top.get("name") or region_name or "当前地区")
         if domain == "pest":
             return (
                 f"{top_region}当前在排行中最突出，{metric_label}{score}、记录{record_count}条，"
                 "建议先围绕该县复核高值点位和监测设备，再对连续异常地块做分区处置。"
+            )
+        if "name" in top and "count" in top and "region_name" not in top:
+            return (
+                f"{top_region}当前在县级排行中最突出，记录{record_count}条，"
+                "建议先核对该县设备点位、异常记录和处置闭环，再按持续多日、仍在抬升、影响范围大的顺序安排巡查。"
             )
         return (
             f"{top_region}当前在排行中最突出，{metric_label}{score}、异常记录{record_count}条，"
