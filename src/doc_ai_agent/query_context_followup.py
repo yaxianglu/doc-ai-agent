@@ -112,6 +112,19 @@ def _asks_forecast_support(question: str) -> bool:
     )
 
 
+def _context_device_codes(previous_route: dict, conversation_state: dict) -> list[str]:
+    """提取上一轮可被“其中/分别”引用的设备编码列表。"""
+    raw_codes = previous_route.get("device_codes") or conversation_state.get("last_device_codes") or []
+    if not isinstance(raw_codes, list):
+        return []
+    device_codes: list[str] = []
+    for item in raw_codes:
+        device_code = str(item or "").strip()
+        if device_code and device_code not in device_codes:
+            device_codes.append(device_code)
+    return device_codes
+
+
 def build_context_follow_up_plan(planner, question: str, context: dict | None, understanding: dict | None = None) -> dict | None:
     """基于线程上下文构造追问计划。
 
@@ -176,6 +189,7 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None, u
     city = planner._extract_city(question)
     county = planner._extract_county(question)
     device_code = str(previous_route.get("device_code") or context.get("route", {}).get("device_code") or "")
+    device_codes = _context_device_codes(previous_route, conversation_state)
     ranking_follow_up = _asks_region_ranking(planner, question)
     trend_follow_up = has_trend_intent(question)
     has_explicit_historical_window = relative_window.get("window_type") not in {"all", "none", ""}
@@ -223,6 +237,56 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None, u
             "clarification": None,
             "reason": "context_device_window_follow_up",
             "context_trace": trace + [f"reuse device={device_code} and switch window={relative_window['window_type']}:{relative_window['window_value']}"],
+        }
+
+    if (
+        previous_query_type == "active_devices"
+        and explicit_domain == "soil"
+        and device_codes
+        and any(token in question for token in ["其中", "墒情设备", "墒情的", "土壤"])
+    ):
+        route = dict(previous_route)
+        route["query_type"] = "soil_abnormal_devices"
+        route["device_codes"] = list(device_codes)
+        route["top_n"] = len(device_codes)
+        if relative_window.get("window_type") != "none":
+            route["since"] = relative_since
+            route["until"] = relative_until
+            route["window"] = relative_window
+        return {
+            "intent": "data_query",
+            "confidence": 0.93,
+            "route": route,
+            "needs_clarification": False,
+            "clarification": None,
+            "reason": "context_active_devices_soil_filter_follow_up",
+            "context_trace": trace + [f"filter previous active device referent count={len(device_codes)} to soil abnormal devices"],
+        }
+
+    if (
+        previous_query_type == "soil_abnormal_devices"
+        and device_codes
+        and (
+            relative_window.get("window_type") != "none"
+            or any(token in question for token in ["异常次数", "分别多少", "分别", "多少次"])
+        )
+    ):
+        route = dict(previous_route)
+        route["query_type"] = "soil_abnormal_devices"
+        route["device_codes"] = list(device_codes)
+        route["top_n"] = len(device_codes)
+        if relative_window.get("window_type") != "none":
+            route["since"] = relative_since
+            route["until"] = relative_until
+            route["window"] = relative_window
+        return {
+            "intent": "data_query",
+            "confidence": 0.92,
+            "route": route,
+            "needs_clarification": False,
+            "clarification": None,
+            "reason": "context_soil_device_count_window_follow_up",
+            "context_trace": trace + [f"reuse soil device referent count={len(device_codes)} for abnormal counts"],
         }
 
     if any(token in question for token in ["按县", "按区", "按市", "再细到县", "再细到区", "再细到市"]) and previous_query_family in {"ranking", "overview"} and domain in {"pest", "soil", "mixed"}:
@@ -456,6 +520,8 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None, u
         route["query_type"] = (
             "active_devices"
             if previous_query_type == "active_devices"
+            else "soil_abnormal_devices"
+            if previous_query_type == "soil_abnormal_devices"
             else planner._query_type_for_window_follow_up(previous_query_type, domain)
         )
         if relative_window.get("window_type") != "none":

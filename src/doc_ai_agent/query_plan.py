@@ -168,6 +168,12 @@ def _normalized_route(route: dict | None) -> dict:
     top_n = raw.get("top_n")
     if top_n not in {None, ""}:
         top_n = max(1, int(top_n))
+    device_codes = []
+    if isinstance(raw.get("device_codes"), list):
+        for item in raw.get("device_codes") or []:
+            device_code = str(item or "").strip()
+            if device_code and device_code not in device_codes:
+                device_codes.append(device_code)
     return {
         "query_type": str(raw.get("query_type") or ""),
         "since": str(raw.get("since") or "1970-01-01 00:00:00"),
@@ -175,6 +181,7 @@ def _normalized_route(route: dict | None) -> dict:
         "city": raw.get("city"),
         "county": raw.get("county"),
         "device_code": raw.get("device_code"),
+        "device_codes": device_codes,
         "region_level": str(raw.get("region_level") or ("county" if raw.get("county") else "city")),
         "window": dict(raw.get("window") or {"window_type": "all", "window_value": None}),
         "top_n": top_n,

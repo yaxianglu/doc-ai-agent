@@ -45,7 +45,7 @@ from .query_planner import QueryPlanner
 from .query_engine import QueryEngine
 from .request_understanding import RequestUnderstanding
 from .repository import AlertRepository
-from .response_assembler import attach_query_execution_evidence, build_forecast_only_response
+from .response_assembler import attach_query_execution_evidence, build_forecast_evidence_followup_response, build_forecast_only_response
 from .response_builder import ResponseBuilder
 
 
@@ -669,12 +669,42 @@ class DocAIAgent:
                         evidence={"response": dict(query_result.get("evidence") or {})},
                     ),
                 }
+        if understanding.get("followup_subtype") == "evidence_followup" and forecast_result.get("forecast"):
+            response = build_forecast_evidence_followup_response(
+                question=state.get("question", ""),
+                forecast_result=forecast_result,
+                execution_plan=self._execution_plan(state),
+                knowledge_policy=knowledge_policy,
+            )
+            return {
+                "response": response,
+                "orchestration_state": self._orchestration_state(
+                    state,
+                    task_results={"synthesize": {"mode": "data_query", "answer": response.get("answer", "")}},
+                    evidence={"response": dict(response.get("evidence") or {})},
+                ),
+            }
         if (
             understanding.get("needs_forecast")
             and not understanding.get("needs_historical")
             and not understanding.get("needs_explanation")
             and not understanding.get("needs_advice")
         ):
+            if understanding.get("followup_subtype") == "evidence_followup" and forecast_result.get("forecast"):
+                response = build_forecast_evidence_followup_response(
+                    question=state.get("question", ""),
+                    forecast_result=forecast_result,
+                    execution_plan=self._execution_plan(state),
+                    knowledge_policy=knowledge_policy,
+                )
+                return {
+                    "response": response,
+                    "orchestration_state": self._orchestration_state(
+                        state,
+                        task_results={"synthesize": {"mode": "data_query", "answer": response.get("answer", "")}},
+                        evidence={"response": dict(response.get("evidence") or {})},
+                    ),
+                }
             response = build_forecast_only_response(
                 forecast_result,
                 self._execution_plan(state),

@@ -6,7 +6,7 @@ from __future__ import annotations
 def query_family_from_type(query_type: str) -> str:
     """把 query_type 折叠成稳定的查询家族，便于跨轮追问复用。"""
     normalized = str(query_type or "")
-    if normalized == "active_devices":
+    if normalized in {"active_devices", "soil_abnormal_devices", "soil_only_abnormal_devices"}:
         return "activity"
     if normalized.endswith("_top") or normalized in {"top", "joint_risk"}:
         return "ranking"
@@ -60,6 +60,21 @@ def memory_slot_ttl(source: str) -> int:
     if source in {"inferred", "legacy"}:
         return 2
     return 0
+
+
+def memory_device_codes_from_response(response: dict) -> list[str]:
+    """从上一轮结构化结果中提取可被“其中/分别”引用的设备列表。"""
+    data = response.get("data")
+    if not isinstance(data, list):
+        return []
+    device_codes: list[str] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        device_code = str(item.get("device_code") or item.get("device_sn") or "").strip()
+        if device_code and device_code not in device_codes:
+            device_codes.append(device_code)
+    return device_codes
 
 
 def build_memory_slot(
@@ -134,6 +149,10 @@ def build_memory_snapshot(
     query_plan = dict(plan.get("query_plan") or {})
     query_plan_intent = str(query_plan.get("intent") or plan.get("intent") or "")
     query_type = analysis_context.get("query_type") or route.get("query_type") or previous_context.get("query_type") or ""
+    device_codes = memory_device_codes_from_response(response)
+    if device_codes and query_type in {"active_devices", "soil_abnormal_devices", "soil_only_abnormal_devices"}:
+        route = dict(route)
+        route["device_codes"] = list(device_codes)
     answer_form = memory_scalar_value(
         understanding.get("answer_form")
         or analysis_context.get("answer_form")
@@ -273,6 +292,7 @@ def build_memory_snapshot(
             "last_query_family": query_family_from_type(query_type),
             "last_region_level": region_level,
             "last_answer_form": answer_form,
+            "last_device_codes": list(device_codes),
         },
         "slots": slots,
     }
