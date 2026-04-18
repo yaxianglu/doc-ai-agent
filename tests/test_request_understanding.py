@@ -776,6 +776,75 @@ class RequestUnderstandingTests(unittest.TestCase):
             },
         )
 
+    def test_domain_refine_follow_up_emits_followup_subtype(self):
+        result = self.understanding.analyze(
+            "其中虫情的呢？",
+            context={
+                "domain": "",
+                "region_name": "",
+                "pending_clarification": "agri_domain",
+                "answer_form": "rank",
+                "route": {"query_type": "structured_agri", "region_level": "city"},
+                "conversation_state": {"last_query_family": "ranking", "last_region_level": "city"},
+            },
+        )
+
+        self.assertEqual(result["followup_type"], "domain_follow_up")
+        self.assertEqual(result["followup_subtype"], "domain_refine")
+
+    def test_granularity_refine_follow_up_emits_followup_subtype(self):
+        result = self.understanding.analyze(
+            "按县给我看。",
+            context={
+                "domain": "pest",
+                "region_name": "常州市",
+                "answer_form": "rank",
+                "route": {"query_type": "pest_top", "region_level": "city", "city": "常州市"},
+                "conversation_state": {"last_query_family": "ranking", "last_region_level": "city"},
+            },
+        )
+
+        self.assertEqual(result["followup_subtype"], "granularity_refine")
+        self.assertEqual(result["memory_policy"]["inheritance_decision"], "allow")
+
+    def test_region_refine_follow_up_emits_followup_subtype(self):
+        result = self.understanding.analyze(
+            "只看常州市。",
+            context={
+                "domain": "pest",
+                "region_name": "徐州市",
+                "answer_form": "rank",
+                "route": {"query_type": "pest_top", "region_level": "county"},
+                "conversation_state": {"last_query_family": "ranking", "last_region_level": "county"},
+            },
+        )
+
+        self.assertEqual(result["followup_type"], "region_follow_up")
+        self.assertEqual(result["followup_subtype"], "region_refine")
+        self.assertEqual(result["region_name"], "常州市")
+
+    def test_memory_policy_exposes_extended_inherited_slots(self):
+        result = self.understanding.analyze(
+            "只看常州市。",
+            context={
+                "domain": "pest",
+                "region_name": "常州市",
+                "device_code": "SNS00204659",
+                "answer_form": "rank",
+                "route": {"query_type": "pest_top", "region_level": "county", "city": "常州市"},
+                "conversation_state": {
+                    "last_query_family": "ranking",
+                    "last_region_level": "county",
+                    "last_answer_form": "rank",
+                },
+            },
+        )
+
+        self.assertIn("query_family", result["memory_policy"]["inherited_slots"])
+        self.assertIn("region_level", result["memory_policy"]["inherited_slots"])
+        self.assertIn("answer_form", result["memory_policy"]["inherited_slots"])
+        self.assertIn("referent", result["memory_policy"]["inherited_slots"])
+
 
 if __name__ == "__main__":
     unittest.main()
