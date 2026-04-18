@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .agri_semantics import extract_crop_hint, extract_scene_hint
 from .agent_contracts import AnalysisResponseEnvelope, AnalysisSynthesisPayload
 from .answer_style import (
     compose_analysis_answer,
@@ -52,6 +53,12 @@ def build_plan_context(
         plan_context["region_name"] = first_region_name(query_result)
     if forecast_result.get("forecast"):
         plan_context["forecast"] = forecast_result["forecast"]
+    crop = extract_crop_hint(question, str(plan_context.get("crop") or ""))
+    scene = extract_scene_hint(question, str(plan_context.get("scene") or ""))
+    if crop:
+        plan_context["crop"] = crop
+    if scene:
+        plan_context["scene"] = scene
     return plan_context
 
 
@@ -216,6 +223,7 @@ def synthesize_analysis_response(
             forecast_result=forecast_result,
             knowledge=knowledge,
             knowledge_policy=knowledge_policy,
+            analysis_context=plan_context,
         ),
         generation_mode="analysis_synthesis",
         context_trace=list(plan.get("context_trace") or []),

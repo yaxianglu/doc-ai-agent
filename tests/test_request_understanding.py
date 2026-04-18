@@ -227,6 +227,21 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["domain"], "")
         self.assertEqual(result["region_name"], "")
 
+    def test_explicit_device_alert_fields_stay_data_query_under_context(self):
+        result = self.understanding.analyze(
+            "设备SNS00204659最近一次预警时间、等级、处置建议是什么？",
+            context={
+                "domain": "soil",
+                "region_name": "徐州市",
+                "last_question": "过去5个月墒情最严重的地方是哪里，未来两周会怎样，为什么，给建议",
+            },
+        )
+
+        self.assertEqual(result["intent"], "data_query")
+        self.assertEqual(result["task_type"], "data_detail")
+        self.assertFalse(result["used_context"])
+        self.assertFalse(result["needs_advice"])
+
     def test_preserves_region_trend_question_in_historical_query_text(self):
         result = self.understanding.analyze("徐州市最近60天虫情趋势如何？")
 

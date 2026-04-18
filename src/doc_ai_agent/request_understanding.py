@@ -48,6 +48,7 @@ from .request_understanding_reasoning import (
     infer_task_type,
     needs_historical_data,
 )
+from .query_extractors import asks_explicit_alert_record_fields
 from .query_plan import canonical_understanding_payload
 from .query_dsl import infer_answer_form, normalize_answer_form, query_dsl_from_understanding
 from .input_guard import classify_input_quality
@@ -226,10 +227,14 @@ class RequestUnderstanding:
                 normalize_city_mentions,
             )
         )
+        if task_type == "unknown" and asks_explicit_alert_record_fields(cleaned):
+            task_type = "data_detail"
         intent = self._resolve_intent(
             semantic_intent=semantic_parse.intent,
             structured_intent=str(structured.get("intent") or ""),
         )
+        if asks_explicit_alert_record_fields(cleaned):
+            intent = "data_query"
         needs_forecast_flag = needs_forecast(cleaned, future_window, needs_advice_flag)
         needs_historical = needs_historical_data(cleaned, historical_window, future_window, domain, task_type, region_name)
 

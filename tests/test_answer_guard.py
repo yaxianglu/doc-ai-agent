@@ -54,6 +54,30 @@ class AnswerGuardTests(unittest.TestCase):
         self.assertIn("样本覆盖 12 个观测日", result["rewritten_answer"])
         self.assertIn("依据：", result["rewritten_answer"])
 
+    def test_rewrites_weak_forecast_evidence_to_conservative_language(self):
+        result = self.guard.review(
+            question="如果证据弱，你应该怎么回答？",
+            understanding={"domain": "pest", "needs_forecast": True},
+            plan={"route": {"query_type": "pest_forecast"}},
+            query_result={},
+            forecast_result={
+                "forecast": {
+                    "confidence": 0.18,
+                    "history_points": 3,
+                    "top_factors": ["样本覆盖 3 个观测日", "最近值高于窗口均值"],
+                }
+            },
+            response={"mode": "data_query", "answer": "未来两周虫情一定会继续恶化。", "data": [], "evidence": {}},
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["action"], "rewrite")
+        self.assertEqual(result["violations"][0]["code"], "forecast_weak_evidence_overclaim")
+        self.assertIn("待核查", result["rewritten_answer"])
+        self.assertIn("趋势判断", result["rewritten_answer"])
+        self.assertIn("样本覆盖 3 个观测日", result["rewritten_answer"])
+        self.assertNotIn("一定会继续恶化", result["rewritten_answer"])
+
     def test_falls_back_when_domain_is_misaligned(self):
         result = self.guard.review(
             question="最近30天预警最多的是哪些地区？",
@@ -189,6 +213,24 @@ class AnswerGuardTests(unittest.TestCase):
             response={
                 "mode": "data_query",
                 "answer": "县级范围暂无可用联合风险结果。当前运行环境尚未接入联合风险所需的虫情与墒情结构化数据。",
+                "data": [],
+                "evidence": {},
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "pass")
+
+    def test_county_scope_guard_does_not_block_explanation_followup(self):
+        result = self.guard.review(
+            question="为什么会这样？",
+            understanding={"domain": "pest", "needs_explanation": True, "needs_advice": False, "needs_forecast": False},
+            plan={"route": {"query_type": "pest_top", "region_level": "county", "city": "常州市"}},
+            query_result={},
+            forecast_result={},
+            response={
+                "mode": "advice",
+                "answer": "原因：近期监测值连续抬升，县域高值点位更集中。\n依据：最近值、峰值和活跃天数都在上行。\n待核查：高值点位复核、阈值口径和现场处置记录。",
                 "data": [],
                 "evidence": {},
             },
