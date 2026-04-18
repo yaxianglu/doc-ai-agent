@@ -12,6 +12,9 @@ FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "multiturn_hu
 
 
 class HumanScoreRegressionRepo:
+    def __init__(self):
+        self.last_abnormal_soil_devices_kwargs = {}
+
     def count_since(self, since):
         del since
         return 22
@@ -112,6 +115,64 @@ class HumanScoreRegressionRepo:
         if city:
             rows = [row for row in rows if row["region_name"] == city]
         return rows[:top_n]
+
+    def top_active_devices(self, since, until=None, limit=10, city=None, county=None):
+        del since, until, city, county
+        return [
+            {
+                "device_code": "SNS001",
+                "device_name": "活跃设备1",
+                "alert_count": 8,
+                "active_days": 4,
+                "last_alert_time": "2026-04-10 10:00:00",
+            },
+            {
+                "device_code": "SNS002",
+                "device_name": "活跃设备2",
+                "alert_count": 7,
+                "active_days": 3,
+                "last_alert_time": "2026-04-09 10:00:00",
+            },
+            {
+                "device_code": "SNS003",
+                "device_name": "活跃设备3",
+                "alert_count": 6,
+                "active_days": 3,
+                "last_alert_time": "2026-04-08 10:00:00",
+            },
+        ][:limit]
+
+    def abnormal_soil_devices(self, since, until=None, city=None, county=None, limit=10, device_codes=None):
+        self.last_abnormal_soil_devices_kwargs = {
+            "since": since,
+            "until": until,
+            "city": city,
+            "county": county,
+            "limit": limit,
+            "device_codes": list(device_codes or []),
+        }
+        rows = [
+            {
+                "device_sn": "SNS001",
+                "device_name": "活跃设备1",
+                "city_name": "南通市",
+                "county_name": "如东县",
+                "abnormal_count": 3,
+                "last_sample_time": "2026-04-10 09:00:00",
+            },
+            {
+                "device_sn": "SNS003",
+                "device_name": "活跃设备3",
+                "city_name": "常州市",
+                "county_name": "新北区",
+                "abnormal_count": 1,
+                "last_sample_time": "2026-04-09 09:00:00",
+            },
+        ]
+        allowed = set(device_codes or [])
+        if allowed:
+            rows = [row for row in rows if row["device_sn"] in allowed]
+        return rows[:limit]
 
 
 class HumanScoreRegressionSourceProvider:
@@ -264,6 +325,45 @@ class MultiTurnHumanScoreRegressionTests(unittest.TestCase):
         self.assertIn("趋势判断", result["answer"])
         self.assertIn("样本覆盖", result["answer"])
         self.assertNotIn("一定会继续恶化", result["answer"])
+
+    def test_group_17_evidence_sufficiency_follow_up_answers_directly(self):
+        agent = self._agent(memory_name="multiturn-human-evidence-sufficiency.json")
+
+        agent.answer("未来10天哪些县风险最高？", thread_id="human-score-17-evidence")
+        result = agent.answer("你的证据够吗？", thread_id="human-score-17-evidence")
+
+        self.assertIn("证据", result["answer"])
+        self.assertIn("样本覆盖", result["answer"])
+        self.assertIn("置信度", result["answer"])
+        self.assertTrue("基本够" in result["answer"] or "偏弱" in result["answer"] or "不足" in result["answer"])
+        self.assertNotIn("未来两周虫情风险最高", result["answer"])
+        self.assertNotIn("台风", result["answer"])
+        self.assertNotIn("处置建议", result["answer"])
+
+    def test_group_19_active_device_follow_up_filters_soil_devices_and_reuses_list_for_7_days(self):
+        agent = self._agent(memory_name="multiturn-human-active-device-soil.json")
+
+        agent.answer("给我列出最近最活跃的10台设备。", thread_id="human-score-19")
+        second = agent.answer("其中墒情设备有哪些？", thread_id="human-score-19")
+        third = agent.answer("最近7天异常次数分别多少？", thread_id="human-score-19")
+
+        self.assertEqual(second["mode"], "data_query")
+        self.assertEqual(second["evidence"]["historical_query"]["query_type"], "soil_abnormal_devices")
+        self.assertIn("SNS001", second["answer"])
+        self.assertIn("SNS003", second["answer"])
+        self.assertEqual(
+            second["evidence"]["historical_query"]["device_codes"],
+            ["SNS001", "SNS002", "SNS003"],
+        )
+        self.assertEqual(third["mode"], "data_query")
+        self.assertEqual(third["evidence"]["historical_query"]["query_type"], "soil_abnormal_devices")
+        self.assertEqual(third["evidence"]["historical_query"]["window"]["window_type"], "days")
+        self.assertEqual(third["evidence"]["historical_query"]["window"]["window_value"], 7)
+        self.assertEqual(
+            third["evidence"]["historical_query"]["device_codes"],
+            ["SNS001", "SNS003"],
+        )
+        self.assertIn("SNS001", third["answer"])
 
     def test_generic_metric_clarification_follow_up_uses_context_domain_instead_of_generic_intent(self):
         agent = self._agent(memory_name="multiturn-human-slot-clarify.json")

@@ -927,6 +927,7 @@ class MySQLRepository(AnalyticsRepository):
         city: Optional[str] = None,
         county: Optional[str] = None,
         limit: int = 10,
+        device_codes: Optional[List[str]] = None,
     ) -> List[dict]:
         """查询指定时间窗内出现过墒情异常的设备。"""
         where = [
@@ -939,6 +940,10 @@ class MySQLRepository(AnalyticsRepository):
             where.append(f"city_name = {self._quote(city)}")
         if county:
             where.append(f"county_name = {self._quote(county)}")
+        normalized_device_codes = [str(item).strip() for item in (device_codes or []) if str(item).strip()]
+        if normalized_device_codes:
+            quoted_codes = ", ".join(self._quote(item) for item in normalized_device_codes)
+            where.append(f"device_sn IN ({quoted_codes})")
         sql = f"""
         SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
         FROM (

@@ -2026,10 +2026,31 @@ class QueryEngine:
             until = plan.get("until") or None
             city = plan.get("city")
             county = plan.get("county")
-            data = self.repo.abnormal_soil_devices(since, until=until, city=city, county=county, limit=top_n) if hasattr(self.repo, "abnormal_soil_devices") else []
+            device_codes = [
+                str(item).strip()
+                for item in (plan.get("device_codes") or [])
+                if str(item).strip()
+            ] if isinstance(plan.get("device_codes"), list) else []
+            if hasattr(self.repo, "abnormal_soil_devices"):
+                try:
+                    data = self.repo.abnormal_soil_devices(
+                        since,
+                        until=until,
+                        city=city,
+                        county=county,
+                        limit=top_n,
+                        device_codes=device_codes or None,
+                    )
+                except TypeError:
+                    data = self.repo.abnormal_soil_devices(since, until=until, city=city, county=county, limit=top_n)
+            else:
+                data = []
             scope_parts = [part for part in [city, county] if part]
             scope_text = "".join(scope_parts)
-            prefix = f"{scope_text}墒情异常设备有：" if scope_text else "墒情异常设备有："
+            if device_codes:
+                prefix = "上述设备中，墒情异常设备有："
+            else:
+                prefix = f"{scope_text}墒情异常设备有：" if scope_text else "墒情异常设备有："
             details = "；".join(
                 f"{idx+1}.{row['device_sn']}（{row.get('device_name') or '未命名设备'}，异常{row['abnormal_count']}次）"
                 for idx, row in enumerate(data)
@@ -2037,7 +2058,16 @@ class QueryEngine:
             return QueryResult(
                 answer=f"{prefix}{details}。",
                 data=data,
-                evidence={"sql": "abnormal_soil_devices", "query_type": "soil_abnormal_devices", "city": city, "county": county, "since": since, "until": until},
+                evidence={
+                    "sql": "abnormal_soil_devices",
+                    "query_type": "soil_abnormal_devices",
+                    "city": city,
+                    "county": county,
+                    "since": since,
+                    "until": until,
+                    "window": dict(plan.get("window") or {}),
+                    "device_codes": list(device_codes),
+                },
             )
 
         if query_type == "soil_only_abnormal_devices":

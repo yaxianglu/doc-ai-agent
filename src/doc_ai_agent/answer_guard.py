@@ -402,6 +402,8 @@ class AnswerGuard:
         should_enforce_county_scope = county_scope and not (
             understanding.get("needs_explanation") or understanding.get("needs_advice")
         )
+        if str(understanding.get("followup_subtype") or "") == "evidence_followup":
+            should_enforce_county_scope = False
         if should_enforce_county_scope:
             mentions_county = (
                 bool(re.search(r"[^\s，。；：]{1,12}(县|区|区县)", answer))
@@ -419,11 +421,14 @@ class AnswerGuard:
         forecast_needed = bool(understanding.get("needs_forecast")) or bool((forecast_result.get("forecast") or {}).get("domain"))
         if forecast_needed:
             weak_evidence_question = any(token in str(question or "") for token in ["证据弱", "证据够", "怎么回答", "如何回答"])
+            evidence_followup = str(understanding.get("followup_subtype") or "") == "evidence_followup"
             overclaim = any(token in str(rewritten_answer or "") for token in ["一定", "必然", "肯定"])
-            if forecast_result.get("forecast") and self._is_weak_forecast_evidence(forecast_result) and (weak_evidence_question or overclaim):
+            if forecast_result.get("forecast") and self._is_weak_forecast_evidence(forecast_result) and (weak_evidence_question or overclaim) and not evidence_followup:
                 soft_violations.append({"code": "forecast_weak_evidence_overclaim", "message": "预测证据较弱时，回答应使用保守表述。"})
                 rewritten_answer = self._rewrite_weak_forecast_answer(rewritten_answer, forecast_result, route)
-            missing_support = "置信度" not in rewritten_answer or "依据：" not in rewritten_answer or "样本覆盖" not in rewritten_answer
+            missing_support = "置信度" not in rewritten_answer or "样本覆盖" not in rewritten_answer
+            if not evidence_followup:
+                missing_support = missing_support or "依据：" not in rewritten_answer
             if missing_support and forecast_result.get("forecast"):
                 soft_violations.append({"code": "forecast_missing_support", "message": "预测回答缺少置信度、依据或样本覆盖。"})
                 rewritten_answer = self._rewrite_forecast_support(rewritten_answer, forecast_result)
