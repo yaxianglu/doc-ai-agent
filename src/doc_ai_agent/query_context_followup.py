@@ -436,7 +436,8 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None, u
         route = dict(previous_route)
         route["city"] = city
         route["county"] = county
-        route["region_level"] = "county" if county else "city"
+        previous_region_level = str(previous_route.get("region_level") or conversation_state.get("last_region_level") or "")
+        route["region_level"] = "county" if county or (city and previous_region_level == "county") else "city"
         forecast = dict(context.get("forecast") or {})
         previous_forecast_window = dict(route.get("forecast_window") or {})
         if previous_query_type == f"{domain}_forecast" or forecast.get("horizon_days"):
