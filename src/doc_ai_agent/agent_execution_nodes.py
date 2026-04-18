@@ -13,6 +13,16 @@ def build_query_result_payload(result, route: dict) -> dict:
     evidence.setdefault("city", route.get("city"))
     evidence.setdefault("county", route.get("county"))
     evidence.setdefault("window", route.get("window") or {})
+    evidence.setdefault(
+        "evidence_target",
+        {
+            "kind": "historical_query",
+            "query_type": evidence.get("query_type") or route.get("query_type") or "",
+            "city": route.get("city"),
+            "county": route.get("county"),
+            "region_level": route.get("region_level") or ("county" if route.get("county") else "city"),
+        },
+    )
     return {
         "mode": "data_query",
         "answer": getattr(result, "answer", ""),

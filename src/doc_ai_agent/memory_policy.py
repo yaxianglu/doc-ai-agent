@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 
-DEFAULT_ALLOWED_SLOTS = ("domain", "region", "time_window", "referent")
+DEFAULT_ALLOWED_SLOTS = ("domain", "region", "time_window", "referent", "query_family", "region_level", "answer_form")
 DEFAULT_FORBIDDEN_SLOTS = ("facts", "rank_results", "forecast_results")
 FACT_REFERENCE_TOKENS = ("这个结论", "这个结果", "这个排名", "这个数", "这个值")
 AMBIGUOUS_REFERENCE_TOKENS = ("还是这个吗", "还是这样吗", "这个吗", "这样吗", "还是这个")
 WEAK_FOLLOW_UP_TOKENS = ("那", "呢", "未来", "过去", "近", "原因", "为什么", "建议", "处置", "怎么办", "怎么做")
+REFINE_TOKENS = ("只看", "按县", "按区", "按市", "再细到", "换成", "改成", "其中")
+
+
+def _has_refine_signal(question: str) -> bool:
+    normalized = str(question or "").strip()
+    if not normalized:
+        return False
+    return any(token in normalized for token in REFINE_TOKENS)
 
 
 def evaluate_memory_policy(question: str, context: dict | None) -> dict:
@@ -32,6 +40,17 @@ def evaluate_memory_policy(question: str, context: dict | None) -> dict:
         inherited_slots.append("region")
     if isinstance(normalized_context.get("window"), dict) and str((normalized_context.get("window") or {}).get("window_type") or "") not in {"", "all", "none"}:
         inherited_slots.append("time_window")
+    conversation_state = dict(normalized_context.get("conversation_state") or {})
+    route = dict(normalized_context.get("route") or {})
+    if str(conversation_state.get("last_query_family") or ""):
+        inherited_slots.append("query_family")
+    if str(route.get("region_level") or conversation_state.get("last_region_level") or "") in {"city", "county"}:
+        inherited_slots.append("region_level")
+    if str(normalized_context.get("answer_form") or conversation_state.get("last_answer_form") or ""):
+        inherited_slots.append("answer_form")
+    if str(normalized_context.get("device_code") or route.get("device_code") or "") or str(route.get("query_type") or "").endswith("_device"):
+        inherited_slots.append("referent")
+    inherited_slots = list(dict.fromkeys(inherited_slots))
 
     if not has_context:
         return {
@@ -69,7 +88,9 @@ def evaluate_memory_policy(question: str, context: dict | None) -> dict:
             "allow_context_rewrite": False,
         }
 
-    if len(normalized_question) <= 12 and any(token in normalized_question for token in WEAK_FOLLOW_UP_TOKENS):
+    if (
+        len(normalized_question) <= 12 and any(token in normalized_question for token in WEAK_FOLLOW_UP_TOKENS)
+    ) or _has_refine_signal(normalized_question):
         safe_slots = [slot for slot in inherited_slots if slot in allowed_slots]
         return {
             "inheritance_decision": "allow",

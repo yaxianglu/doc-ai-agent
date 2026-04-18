@@ -241,6 +241,35 @@ class AnswerGuard:
         return f"{str(answer or '').rstrip()} {suffix}".strip()
 
     @staticmethod
+    def _is_weak_forecast_evidence(forecast_result: dict) -> bool:
+        forecast = dict(forecast_result.get("forecast") or {})
+        try:
+            confidence = float(forecast.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        history_points = int(forecast.get("history_points") or 0)
+        return confidence < 0.35 or history_points < 5
+
+    @staticmethod
+    def _rewrite_weak_forecast_answer(answer: str, forecast_result: dict, route: dict) -> str:
+        forecast = dict(forecast_result.get("forecast") or {})
+        confidence = float(forecast.get("confidence") or 0.0)
+        history_points = int(forecast.get("history_points") or 0)
+        factors = [str(item) for item in (forecast.get("top_factors") or []) if str(item).strip()]
+        coverage = next((item for item in factors if item.startswith("样本覆盖")), "")
+        if not coverage and history_points > 0:
+            coverage = f"样本覆盖 {history_points} 个观测日"
+        reason_text = "、".join(item for item in factors if item and item != coverage) or "历史样本偏少，波动仍需继续观察"
+        region_level = str(route.get("region_level") or "")
+        scope_text = "县级范围" if region_level == "county" else "当前范围"
+        return (
+            f"待核查：当前预测证据偏弱，先按趋势判断处理，不宜直接下结论。"
+            f" 趋势判断：{scope_text}短期内仍需持续跟踪。"
+            f" 置信度{confidence:.2f}，{coverage or '样本覆盖有限'}。"
+            f" 依据：{reason_text}。"
+        )
+
+    @staticmethod
     def _fallback_answer(question: str, expected_domain: str, *, county_scope: bool) -> str:
         if expected_domain == "weather":
             return "我目前主要支持农业虫情、墒情、预警数据分析，暂不直接提供天气查询。你如果要看农情，我可以继续帮你查相关风险。"
@@ -370,7 +399,10 @@ class AnswerGuard:
         if self._is_fact_query(route, understanding, query_result) and has_external_knowledge and knowledge_policy.get("mode") == "disabled":
             hard_violations.append({"code": "fact_query_external_knowledge_mixed", "message": "事实型回答混入了被禁用的外部知识证据。"})
 
-        if county_scope:
+        should_enforce_county_scope = county_scope and not (
+            understanding.get("needs_explanation") or understanding.get("needs_advice")
+        )
+        if should_enforce_county_scope:
             mentions_county = (
                 bool(re.search(r"[^\s，。；：]{1,12}(县|区|区县)", answer))
                 or any(token in answer for token in ["区县", "县级", "县一级", "按县"])
@@ -386,6 +418,11 @@ class AnswerGuard:
 
         forecast_needed = bool(understanding.get("needs_forecast")) or bool((forecast_result.get("forecast") or {}).get("domain"))
         if forecast_needed:
+            weak_evidence_question = any(token in str(question or "") for token in ["证据弱", "证据够", "怎么回答", "如何回答"])
+            overclaim = any(token in str(rewritten_answer or "") for token in ["一定", "必然", "肯定"])
+            if forecast_result.get("forecast") and self._is_weak_forecast_evidence(forecast_result) and (weak_evidence_question or overclaim):
+                soft_violations.append({"code": "forecast_weak_evidence_overclaim", "message": "预测证据较弱时，回答应使用保守表述。"})
+                rewritten_answer = self._rewrite_weak_forecast_answer(rewritten_answer, forecast_result, route)
             missing_support = "置信度" not in rewritten_answer or "依据：" not in rewritten_answer or "样本覆盖" not in rewritten_answer
             if missing_support and forecast_result.get("forecast"):
                 soft_violations.append({"code": "forecast_missing_support", "message": "预测回答缺少置信度、依据或样本覆盖。"})

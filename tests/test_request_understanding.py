@@ -227,6 +227,21 @@ class RequestUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["domain"], "")
         self.assertEqual(result["region_name"], "")
 
+    def test_explicit_device_alert_fields_stay_data_query_under_context(self):
+        result = self.understanding.analyze(
+            "设备SNS00204659最近一次预警时间、等级、处置建议是什么？",
+            context={
+                "domain": "soil",
+                "region_name": "徐州市",
+                "last_question": "过去5个月墒情最严重的地方是哪里，未来两周会怎样，为什么，给建议",
+            },
+        )
+
+        self.assertEqual(result["intent"], "data_query")
+        self.assertEqual(result["task_type"], "data_detail")
+        self.assertFalse(result["used_context"])
+        self.assertFalse(result["needs_advice"])
+
     def test_preserves_region_trend_question_in_historical_query_text(self):
         result = self.understanding.analyze("徐州市最近60天虫情趋势如何？")
 
@@ -775,6 +790,75 @@ class RequestUnderstandingTests(unittest.TestCase):
                 "resolved_question": "请解释并给我建议",
             },
         )
+
+    def test_domain_refine_follow_up_emits_followup_subtype(self):
+        result = self.understanding.analyze(
+            "其中虫情的呢？",
+            context={
+                "domain": "",
+                "region_name": "",
+                "pending_clarification": "agri_domain",
+                "answer_form": "rank",
+                "route": {"query_type": "structured_agri", "region_level": "city"},
+                "conversation_state": {"last_query_family": "ranking", "last_region_level": "city"},
+            },
+        )
+
+        self.assertEqual(result["followup_type"], "domain_follow_up")
+        self.assertEqual(result["followup_subtype"], "domain_refine")
+
+    def test_granularity_refine_follow_up_emits_followup_subtype(self):
+        result = self.understanding.analyze(
+            "按县给我看。",
+            context={
+                "domain": "pest",
+                "region_name": "常州市",
+                "answer_form": "rank",
+                "route": {"query_type": "pest_top", "region_level": "city", "city": "常州市"},
+                "conversation_state": {"last_query_family": "ranking", "last_region_level": "city"},
+            },
+        )
+
+        self.assertEqual(result["followup_subtype"], "granularity_refine")
+        self.assertEqual(result["memory_policy"]["inheritance_decision"], "allow")
+
+    def test_region_refine_follow_up_emits_followup_subtype(self):
+        result = self.understanding.analyze(
+            "只看常州市。",
+            context={
+                "domain": "pest",
+                "region_name": "徐州市",
+                "answer_form": "rank",
+                "route": {"query_type": "pest_top", "region_level": "county"},
+                "conversation_state": {"last_query_family": "ranking", "last_region_level": "county"},
+            },
+        )
+
+        self.assertEqual(result["followup_type"], "region_follow_up")
+        self.assertEqual(result["followup_subtype"], "region_refine")
+        self.assertEqual(result["region_name"], "常州市")
+
+    def test_memory_policy_exposes_extended_inherited_slots(self):
+        result = self.understanding.analyze(
+            "只看常州市。",
+            context={
+                "domain": "pest",
+                "region_name": "常州市",
+                "device_code": "SNS00204659",
+                "answer_form": "rank",
+                "route": {"query_type": "pest_top", "region_level": "county", "city": "常州市"},
+                "conversation_state": {
+                    "last_query_family": "ranking",
+                    "last_region_level": "county",
+                    "last_answer_form": "rank",
+                },
+            },
+        )
+
+        self.assertIn("query_family", result["memory_policy"]["inherited_slots"])
+        self.assertIn("region_level", result["memory_policy"]["inherited_slots"])
+        self.assertIn("answer_form", result["memory_policy"]["inherited_slots"])
+        self.assertIn("referent", result["memory_policy"]["inherited_slots"])
 
 
 if __name__ == "__main__":

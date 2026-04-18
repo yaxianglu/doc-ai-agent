@@ -48,6 +48,12 @@ CHINESE_NUMBER_MAP = {
 }
 
 INVALID_REGION_PHRASES = {
+    "按县",
+    "按区",
+    "按市",
+    "到县",
+    "到区",
+    "到市",
     "我问的是县",
     "我说的是县",
     "问的是县",
@@ -180,6 +186,22 @@ def extract_device_code(question: str) -> Optional[str]:
     if match:
         return match.group(1)
     return None
+
+
+def asks_explicit_alert_record_fields(question: str) -> bool:
+    """判断是否在查询某条预警记录的结构化字段，而不是泛化建议。"""
+    normalized = str(question or "").strip()
+    if not normalized:
+        return False
+    has_record_ref = any(token in normalized for token in ["最近一次", "最近一条", "这条预警", "这条"])
+    has_object_ref = bool(
+        extract_device_code(normalized)
+        or "设备" in normalized
+        or "镇" in normalized
+        or "街道" in normalized
+    )
+    has_field_ref = any(token in normalized for token in ["预警时间", "告警时间", "等级", "级别", "告警值", "处置建议"])
+    return has_field_ref and (has_record_ref or has_object_ref)
 
 
 def extract_top_n(question: str) -> Optional[int]:

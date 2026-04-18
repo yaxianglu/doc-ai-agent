@@ -5,6 +5,7 @@ import unittest
 
 from doc_ai_agent.agent import DocAIAgent
 from doc_ai_agent.advice_engine import AdviceResult
+from doc_ai_agent.capabilities.forecast import ForecastCapability
 from doc_ai_agent.query_engine import QueryResult
 from doc_ai_agent.repository import AlertRepository
 from doc_ai_agent.source_provider import QdrantSourceProvider
@@ -426,6 +427,41 @@ class FakeStructuredRepo:
                 "alert_count": 4,
             },
         ][:limit]
+
+
+class WeakEvidenceForecastService:
+    def forecast_top_regions(self, domain, since, horizon_days, region_level="city", top_n=1, city=None, county=None, anomaly_direction=None):
+        del since, anomaly_direction
+        region_name = county or city or ("如东县" if region_level == "county" else "常州市")
+        return {
+            "answer": f"未来{horizon_days}天{region_name}{domain}风险一定会继续恶化。",
+            "data": [{"region_name": region_name, "risk_level": "高"}][:top_n],
+            "forecast": {
+                "domain": domain,
+                "mode": "ranking",
+                "confidence": 0.18,
+                "history_points": 3,
+                "top_factors": ["样本覆盖 3 个观测日", "最近值仍高于窗口均值"],
+                "risk_level": "高",
+            },
+            "analysis_context": {"domain": domain, "region_name": region_name, "region_level": region_level},
+        }
+
+    def forecast_region(self, route, context=None):
+        del route, context
+        return {
+            "answer": "未来两周常州市虫情一定会继续恶化。",
+            "data": [{"region_name": "常州市", "risk_level": "高"}],
+            "forecast": {
+                "domain": "pest",
+                "mode": "region",
+                "confidence": 0.18,
+                "history_points": 3,
+                "top_factors": ["样本覆盖 3 个观测日", "最近值仍高于窗口均值"],
+                "risk_level": "高",
+            },
+            "analysis_context": {"domain": "pest", "region_name": "常州市", "region_level": "city"},
+        }
 
 
 class CountyRankingRepo(FakeStructuredRepo):
@@ -1975,6 +2011,21 @@ class AgentGraphTests(unittest.TestCase):
         self.assertIn("样本覆盖", result["answer"])
         self.assertIn("常州", result["answer"])
 
+    def test_weak_forecast_evidence_follow_up_uses_conservative_wording(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+        )
+        agent.forecast_capability = ForecastCapability(WeakEvidenceForecastService())
+
+        agent.answer("未来10天哪些县风险最高？", thread_id="thread-weak-forecast-evidence")
+        result = agent.answer("如果证据弱，你应该怎么回答？", thread_id="thread-weak-forecast-evidence")
+
+        self.assertIn("待核查", result["answer"])
+        self.assertIn("趋势判断", result["answer"])
+        self.assertIn("样本覆盖", result["answer"])
+        self.assertNotIn("一定会继续恶化", result["answer"])
+
     def test_unknown_region_explanation_returns_mapping_reasoning(self):
         agent = DocAIAgent(
             FakeStructuredRepo(),
@@ -2226,6 +2277,8 @@ class AgentGraphTests(unittest.TestCase):
         self.assertNotIn("建议：", result["answer"])
         self.assertNotIn("知识依据：", result["answer"])
         self.assertIn("徐州市", result["answer"])
+        self.assertNotIn("作物", result["answer"])
+        self.assertNotIn("场景", result["answer"])
 
     def test_identity_question_returns_agent_intro(self):
         agent = DocAIAgent(
@@ -2250,6 +2303,22 @@ class AgentGraphTests(unittest.TestCase):
         self.assertEqual(result["mode"], "data_query")
         self.assertIn("联合风险地区", result["answer"])
         self.assertEqual(result["evidence"]["analysis_context"]["query_type"], "joint_risk")
+
+    def test_scene_follow_up_uses_active_soil_context_instead_of_generic_mixed_advice(self):
+        agent = DocAIAgent(
+            FakeStructuredRepo(),
+            memory_store_path=os.path.join(self.td.name, "agent-memory.json"),
+            source_provider=RichFakeSourceProvider(),
+        )
+
+        agent.answer("过去3个月徐州墒情具体数据", thread_id="thread-scene-aware-soil")
+        result = agent.answer("大棚地块该怎么处理？", thread_id="thread-scene-aware-soil")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("大棚", result["answer"])
+        self.assertTrue("补灌" in result["answer"] or "排水" in result["answer"])
+        self.assertNotIn("成虫/幼虫", result["answer"])
+        self.assertNotIn("天气过程", result["answer"])
 
     def test_short_city_follow_up_switches_region_in_forecast_context(self):
         agent = DocAIAgent(

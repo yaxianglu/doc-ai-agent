@@ -48,6 +48,7 @@ from .request_understanding_reasoning import (
     infer_task_type,
     needs_historical_data,
 )
+from .query_extractors import asks_explicit_alert_record_fields
 from .query_plan import canonical_understanding_payload
 from .query_dsl import infer_answer_form, normalize_answer_form, query_dsl_from_understanding
 from .input_guard import classify_input_quality
@@ -226,10 +227,14 @@ class RequestUnderstanding:
                 normalize_city_mentions,
             )
         )
+        if task_type == "unknown" and asks_explicit_alert_record_fields(cleaned):
+            task_type = "data_detail"
         intent = self._resolve_intent(
             semantic_intent=semantic_parse.intent,
             structured_intent=str(structured.get("intent") or ""),
         )
+        if asks_explicit_alert_record_fields(cleaned):
+            intent = "data_query"
         needs_forecast_flag = needs_forecast(cleaned, future_window, needs_advice_flag)
         needs_historical = needs_historical_data(cleaned, historical_window, future_window, domain, task_type, region_name)
 
@@ -270,6 +275,12 @@ class RequestUnderstanding:
         )
         if answer_form == "unknown" and semantic_parse.followup_type != "none" and context_answer_form != "unknown":
             answer_form = context_answer_form
+        followup_subtype = self._infer_followup_subtype(
+            cleaned,
+            semantic_parse.followup_type,
+            context or {},
+            region_name=region_name,
+        )
 
         result = {
             "original_question": text,
@@ -290,6 +301,7 @@ class RequestUnderstanding:
             "region_name": region_name,
             "region_level": region_level,
             "followup_type": semantic_parse.followup_type,
+            "followup_subtype": followup_subtype,
             "needs_clarification": semantic_parse.needs_clarification,
             "needs_historical": needs_historical,
             "needs_forecast": needs_forecast_flag,
@@ -612,6 +624,33 @@ class RequestUnderstanding:
         if context_level in {"city", "county"} and region_name:
             return context_level
         return ""
+
+    @classmethod
+    def _infer_followup_subtype(cls, text: str, followup_type: str, context: dict, *, region_name: str) -> str:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return "none"
+        if (contains_pest(normalized) or contains_soil(normalized)) and any(token in normalized for token in ["其中", "换成", "改成", "切到", "切换"]):
+            return "domain_refine"
+        if followup_type == "domain_follow_up":
+            return "domain_refine"
+        if followup_type == "time_follow_up":
+            return "time_refine"
+        if followup_type == "explanation_follow_up":
+            return "explanation_followup"
+        if followup_type == "advice_follow_up":
+            return "advice_followup"
+        if followup_type == "forecast_follow_up":
+            return "forecast_followup"
+        if any(token in normalized for token in ["按县", "按区", "按市", "再细到"]):
+            return "granularity_refine"
+        if followup_type == "region_follow_up" or (region_name and any(token in normalized for token in ["只看", "只要", "先看"])):
+            return "region_refine"
+        if any(token in normalized for token in ["依据", "证据", "置信度", "样本覆盖", "证据弱", "证据够"]):
+            return "evidence_followup"
+        if followup_type == "contextual" and str((context.get("conversation_state") or {}).get("last_query_family") or "") == "trend":
+            return "contextual_trend_followup"
+        return followup_type or "none"
 
     @classmethod
     def _parse_number_token(cls, token: str) -> int | None:

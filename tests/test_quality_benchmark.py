@@ -1,6 +1,8 @@
 import os
 import tempfile
 import unittest
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 
 from doc_ai_agent.agent import DocAIAgent
 from doc_ai_agent.query_planner import QueryPlanner
@@ -37,6 +39,16 @@ DOMAIN_CASES = [
 
 
 class QualityBenchmarkTests(unittest.TestCase):
+    @staticmethod
+    def _load_script_module(module_name: str, relative_path: str):
+        root = Path(__file__).resolve().parents[1]
+        script_path = root / relative_path
+        spec = spec_from_file_location(module_name, script_path)
+        module = module_from_spec(spec)
+        assert spec is not None and spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
+
     def test_understanding_benchmark(self):
         understanding = RequestUnderstanding()
 
@@ -129,6 +141,37 @@ class QualityBenchmarkTests(unittest.TestCase):
                             )
 
         self.assertGreaterEqual(total_turns, 200)
+
+    def test_multiturn_human_score_script_reports_summary_and_failure_clusters(self):
+        module = self._load_script_module("run_multiturn_human_score_eval", "scripts/run_multiturn_human_score_eval.py")
+
+        with tempfile.TemporaryDirectory() as td:
+            scored = module.run_eval(output_root=Path(td))
+
+        summary = scored["summary"]
+        self.assertGreaterEqual(summary["count"], 4)
+        self.assertIn("average_score", summary)
+        self.assertIn("pass_count", summary)
+        self.assertIn("pass_rate", summary)
+        self.assertIn("generic_clarification_count", summary)
+        self.assertIn("explanation_followup_failure_count", summary)
+        self.assertIsInstance(summary["failure_clusters"], dict)
+        self.assertIn("context", scored["gate"]["suite"])
+
+    def test_multiturn_human_score_benchmark_meets_release_gate(self):
+        module = self._load_script_module("run_multiturn_human_score_eval", "scripts/run_multiturn_human_score_eval.py")
+
+        with tempfile.TemporaryDirectory() as td:
+            scored = module.run_eval(output_root=Path(td))
+            rerun_scored = module.run_eval(output_root=Path(td))
+
+        gate = scored["gate"]
+        self.assertTrue(gate["passed"], msg=gate)
+        self.assertGreaterEqual(scored["summary"]["average_score"], 6.5)
+        self.assertGreaterEqual(scored["summary"]["pass_rate"], 0.65)
+        self.assertLess(scored["summary"]["generic_clarification_rate"], 0.10)
+        self.assertTrue(rerun_scored["gate"]["passed"], msg=rerun_scored["gate"])
+        self.assertEqual(rerun_scored["summary"]["generic_clarification_count"], 0)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .capability_result import CapabilityResult
+from .agri_semantics import extract_crop_hint, extract_scene_hint, needs_crop_scene_clarification
 
 
 @dataclass
@@ -64,6 +65,11 @@ class AdviceEngine:
     def _format_advice_answer(cls, advice: str) -> str:
         return cls._prefixed_section("建议", advice)
 
+    @staticmethod
+    def _scene_prefix(scene: str) -> str:
+        normalized = str(scene or "").strip()
+        return f"{normalized}建议：" if normalized else ""
+
     def answer(self, question: str, context: dict | None = None) -> AdviceResult:
         """根据问题类型返回问候、身份说明或建议/解释内容。"""
         context = dict(context or {})
@@ -72,6 +78,8 @@ class AdviceEngine:
         is_greeting_question = self._is_greeting_question(stripped_question)
         is_identity_question = stripped_question in {"你是谁", "你是干什么的", "你能做什么", "你可以做什么"}
         is_explanation_question = any(token in normalized_question for token in ["为什么", "原因", "依据"])
+        crop = extract_crop_hint(normalized_question, str(context.get("crop") or ""))
+        scene = extract_scene_hint(normalized_question, str(context.get("scene") or ""))
         sources = []
         if is_greeting_question:
             return AdviceResult(
@@ -89,6 +97,13 @@ class AdviceEngine:
             return AdviceResult(
                 answer="我是 AI农情工作台 助手，可以基于虫情、墒情历史数据做问答、趋势分析、预测判断，并给出处置建议。",
                 sources=sources or [{"title": "内置身份说明", "url": "", "published_at": "", "snippet": ""}],
+                generation_mode="rule",
+                model="",
+            )
+        if needs_crop_scene_clarification(normalized_question, context=context):
+            return AdviceResult(
+                answer="建议：请先补充作物或场景，我再给更稳妥的处置建议；例如小麦、水稻，或大棚、露地、果园这些场景。",
+                sources=sources or ["作物/场景补充规则库（Phase 2）"],
                 generation_mode="rule",
                 model="",
             )
@@ -230,9 +245,10 @@ class AdviceEngine:
             )
         if domain == "pest":
             level = forecast.get("risk_level") or "中"
+            scene_prefix = f"{scene}先做田间复核；" if scene else ""
             return AdviceResult(
                 answer=self._format_advice_answer(
-                    f"{region_name or '当前地区'}虫情风险{level}。1) 先核查诱捕设备与田间样点；"
+                    f"{region_name or '当前地区'}虫情风险{level}。{scene_prefix}1) 先核查诱捕设备与田间样点；"
                     "2) 对高值地块优先做成虫/幼虫复核；3) 达到阈值后分区施策并复盘监测频次。"
                 ),
                 sources=sources or ["虫情处置规则库（Phase 2）"],
@@ -241,17 +257,20 @@ class AdviceEngine:
             )
         if domain == "soil":
             level = forecast.get("risk_level") or "中"
+            scene_prefix = f"{scene}先分区看低墒/高墒分布；" if scene else ""
             return AdviceResult(
                 answer=self._format_advice_answer(
-                    f"{region_name or '当前地区'}墒情风险{level}。1) 先看低墒/高墒分布；"
-                    "2) 低墒优先补灌，高墒优先排水；3) 结合未来天气滚动复测 3-5 天。"
+                    f"{region_name or '当前地区'}墒情风险{level}。{scene_prefix}"
+                    "1) 先看低墒/高墒分布；2) 低墒优先补灌，高墒优先排水；3) 结合未来天气滚动复测 3-5 天。"
                 ),
                 sources=sources or ["墒情调度规则库（Phase 2）"],
                 generation_mode="rule",
                 model="",
             )
         return AdviceResult(
-            answer=self._format_advice_answer("结合当前告警类型、作物和天气过程做分区处置，并由农技人员复核后执行。"),
+            answer=self._format_advice_answer(
+                f"结合当前告警类型、{crop or '作物'}和{scene or '田间场景'}做分区处置，并由农技人员复核后执行。"
+            ),
             sources=sources or ["通用处置规则（MVP占位）"],
             generation_mode="rule",
             model="",
