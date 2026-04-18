@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from doc_ai_agent.agent import DocAIAgent
+from doc_ai_agent.capabilities.forecast import ForecastCapability
 from doc_ai_agent.request_understanding import RequestUnderstanding
 
 
@@ -11,6 +12,53 @@ FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "multiturn_hu
 
 
 class HumanScoreRegressionRepo:
+    def count_since(self, since):
+        del since
+        return 22
+
+    def top_n(self, field, n, since):
+        return self.top_n_filtered(field, n, since)
+
+    def available_alert_time_range(self):
+        return {
+            "min_time": "2026-01-01 00:00:00",
+            "max_time": "2026-04-10 00:00:00",
+        }
+
+    def top_n_filtered(self, field, n, since, until=None, city=None, level=None, min_alert_value=None):
+        del since, until, city, level, min_alert_value
+        if field == "county":
+            return [
+                {"name": "如东县", "count": 9},
+                {"name": "溧阳市", "count": 7},
+            ][:n]
+        return [
+            {"name": "常州市", "count": 12},
+            {"name": "徐州市", "count": 10},
+        ][:n]
+
+    def sample_alerts(self, since, limit=3):
+        del since
+        return [{"alert_id": "A-1"}][:limit]
+
+    def count_filtered(self, since, until=None, city=None, level=None):
+        del since, until, city, level
+        return 22
+
+    def alerts_trend(self, since, until=None, city=None):
+        del since, until
+        if city == "常州市":
+            return [
+                {"date": "2026-03-20", "alert_count": 3},
+                {"date": "2026-03-27", "alert_count": 5},
+                {"date": "2026-04-03", "alert_count": 8},
+            ]
+        return [
+            {"date": "2026-03-20", "alert_count": 6},
+            {"date": "2026-03-27", "alert_count": 9},
+            {"date": "2026-04-03", "alert_count": 12},
+        ]
+
     def top_pest_regions(self, since, until, region_level="city", top_n=5, city=None, county=None):
         city_rows = [
             {"region_name": "常州市", "severity_score": 120, "record_count": 16, "active_days": 7},
@@ -75,6 +123,41 @@ class HumanScoreRegressionSourceProvider:
                 "domain": "pest",
             }
         ][:limit]
+
+
+class WeakEvidenceForecastService:
+    def forecast_top_regions(self, domain, since, horizon_days, region_level="city", top_n=1, city=None, county=None, anomaly_direction=None):
+        del since, anomaly_direction
+        region_name = county or city or ("如东县" if region_level == "county" else "常州市")
+        return {
+            "answer": f"未来{horizon_days}天{region_name}{domain}风险一定会继续恶化。",
+            "data": [{"region_name": region_name, "risk_level": "高"}][:top_n],
+            "forecast": {
+                "domain": domain,
+                "mode": "ranking",
+                "confidence": 0.18,
+                "history_points": 3,
+                "top_factors": ["样本覆盖 3 个观测日", "最近值仍高于窗口均值"],
+                "risk_level": "高",
+            },
+            "analysis_context": {"domain": domain, "region_name": region_name, "region_level": region_level},
+        }
+
+    def forecast_region(self, route, context=None):
+        del route, context
+        return {
+            "answer": "未来两周常州市虫情一定会继续恶化。",
+            "data": [{"region_name": "常州市", "risk_level": "高"}],
+            "forecast": {
+                "domain": "pest",
+                "mode": "region",
+                "confidence": 0.18,
+                "history_points": 3,
+                "top_factors": ["样本覆盖 3 个观测日", "最近值仍高于窗口均值"],
+                "risk_level": "高",
+            },
+            "analysis_context": {"domain": "pest", "region_name": "常州市", "region_level": "city"},
+        }
 
 
 class MultiTurnHumanScoreRegressionTests(unittest.TestCase):
@@ -159,6 +242,52 @@ class MultiTurnHumanScoreRegressionTests(unittest.TestCase):
         self.assertIn("金坛区", result["answer"])
         self.assertEqual(result["evidence"]["historical_query"]["region_level"], "county")
         self.assertEqual(result["evidence"]["historical_query"]["city"], "常州市")
+
+    def test_joint_risk_region_refine_keeps_joint_risk_family_end_to_end(self):
+        agent = self._agent()
+
+        agent.answer("最近30天联合风险最高的是哪里？", thread_id="human-score-joint-risk")
+        result = agent.answer("只看常州。", thread_id="human-score-joint-risk")
+
+        self.assertIn("常州市", result["answer"])
+        self.assertEqual(result["evidence"]["historical_query"]["query_type"], "joint_risk")
+        self.assertEqual(result["evidence"]["historical_query"]["city"], "常州市")
+
+    def test_group_17_weak_evidence_follow_up_uses_conservative_wording(self):
+        agent = self._agent(memory_name="multiturn-human-weak-forecast.json")
+        agent.forecast_capability = ForecastCapability(WeakEvidenceForecastService())
+
+        agent.answer("未来10天哪些县风险最高？", thread_id="human-score-17")
+        result = agent.answer("如果证据弱，你应该怎么回答？", thread_id="human-score-17")
+
+        self.assertIn("待核查", result["answer"])
+        self.assertIn("趋势判断", result["answer"])
+        self.assertIn("样本覆盖", result["answer"])
+        self.assertNotIn("一定会继续恶化", result["answer"])
+
+    def test_generic_metric_clarification_follow_up_uses_context_domain_instead_of_generic_intent(self):
+        agent = self._agent(memory_name="multiturn-human-slot-clarify.json")
+
+        first = agent.answer("最近30天最多的是哪里？", thread_id="human-score-slot-clarify")
+        second = agent.answer("我说的是预警。", thread_id="human-score-slot-clarify")
+
+        self.assertEqual(first["mode"], "advice")
+        self.assertNotIn("数据统计，还是生成处置建议", first["answer"])
+        self.assertEqual(second["mode"], "data_query")
+        self.assertEqual(second["evidence"]["historical_query"]["query_type"], "alerts_top")
+        self.assertNotIn("数据统计，还是生成处置建议", second["answer"])
+
+    def test_scene_follow_up_keeps_soil_domain_and_avoids_generic_mixed_advice(self):
+        agent = self._agent(memory_name="multiturn-human-scene-aware.json")
+
+        agent.answer("过去30天常州墒情具体数据", thread_id="human-score-scene-aware")
+        result = agent.answer("大棚地块该怎么处理？", thread_id="human-score-scene-aware")
+
+        self.assertEqual(result["mode"], "advice")
+        self.assertIn("大棚", result["answer"])
+        self.assertTrue("补灌" in result["answer"] or "排水" in result["answer"])
+        self.assertNotIn("成虫/幼虫", result["answer"])
+        self.assertNotIn("天气过程", result["answer"])
 
 
 if __name__ == "__main__":

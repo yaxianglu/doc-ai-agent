@@ -123,10 +123,12 @@ def main() -> int:
     parser.add_argument("--from-raw", default="")
     parser.add_argument("--question-bank", default=str(QUESTION_BANK))
     parser.add_argument("--append-bank", action="append", default=[])
+    parser.add_argument("--output-root", default=str(EVAL_ROOT))
     args = parser.parse_args()
 
-    run_dir = EVAL_ROOT / _timestamp_slug()
-    latest_dir = EVAL_ROOT / "latest"
+    output_root = Path(args.output_root)
+    run_dir = output_root / _timestamp_slug()
+    latest_dir = output_root / "latest"
     run_dir.mkdir(parents=True, exist_ok=True)
     latest_dir.mkdir(parents=True, exist_ok=True)
 
