@@ -521,6 +521,15 @@ class QueryPlanner:
         )
 
     @staticmethod
+    def _slot_specific_placeholder_clarification(question: str) -> str:
+        normalized = str(question or "")
+        if any(token in normalized for token in ["某设备", "某个设备"]):
+            return "请补充具体设备编码，我再继续查询。"
+        if any(token in normalized for token in ["某县", "某市", "某地区", "某区域", "这个县", "该县", "这个市", "该市", "这个地区", "该地区", "这个区域", "该区域"]):
+            return "请补充具体对象（地区），比如市名或县名，我再继续查询。"
+        return "请补充具体对象，比如设备编码、县名或市名，我再继续查询。"
+
+    @staticmethod
     def _refine_structured_agri_route(route: dict, understanding: dict | None) -> dict:
         """把 `structured_agri` 细化成更具体 query_type。
 
@@ -826,6 +835,22 @@ class QueryPlanner:
             and not re.search(r"(虫情|虫害|墒情|预警|报警|设备)", question)
             and "风险" not in question
         ):
+            context_domain = str((context or {}).get("domain") or "")
+            if context_domain in {"alerts", "pest", "soil"}:
+                context_query_type = {
+                    "alerts": "alerts_top",
+                    "pest": "pest_top",
+                    "soil": "soil_top",
+                }[context_domain]
+                return self._finalize_plan({
+                    "intent": "data_query",
+                    "confidence": 0.82,
+                    "route": self._build_route(question, context_query_type),
+                    "needs_clarification": False,
+                    "clarification": None,
+                    "reason": "context_metric_domain_reused",
+                    "context_trace": [f"reused metric domain={context_domain} from context"],
+                }, question, context=context, understanding=understanding)
             return self._finalize_plan({
                 "intent": "advice",
                 "confidence": 0.4,
@@ -843,7 +868,7 @@ class QueryPlanner:
                 "confidence": 0.3,
                 "route": self._build_route(question, heuristic_query_type),
                 "needs_clarification": True,
-                "clarification": "请补充具体对象，比如设备编码、县名或市名，我再继续查询。",
+                "clarification": self._slot_specific_placeholder_clarification(question),
                 "reason": "placeholder_entity_clarification",
                 "context_trace": [],
             }, question, context=context, understanding=understanding)

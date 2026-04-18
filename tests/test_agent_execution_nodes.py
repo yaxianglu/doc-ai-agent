@@ -10,6 +10,7 @@ from doc_ai_agent.capabilities.advice import AdviceCapability
 from doc_ai_agent.capabilities.forecast import ForecastCapability
 from doc_ai_agent.capabilities.reasoning import ReasoningCapability
 from doc_ai_agent.query_engine import QueryResult
+from doc_ai_agent.response_assembler import build_forecast_only_response
 
 
 class AgentExecutionNodesTests(unittest.TestCase):
@@ -93,12 +94,56 @@ class AgentExecutionNodesTests(unittest.TestCase):
         self.assertEqual(payload["evidence"]["query_type"], "pest_overview")
         self.assertEqual(payload["evidence"]["city"], "徐州市")
 
+    def test_build_query_result_payload_exposes_evidence_target(self):
+        class Result:
+            answer = "ok"
+            data = [{"region_name": "徐州市"}]
+            evidence = {"sql": "select 1", "query_type": "pest_overview"}
+
+        payload = build_query_result_payload(
+            Result(),
+            {"query_type": "pest_overview", "city": "徐州市", "county": None, "region_level": "city", "window": {"window_type": "months", "window_value": 5}},
+        )
+
+        self.assertEqual(
+            payload["evidence"]["evidence_target"],
+            {
+                "kind": "historical_query",
+                "query_type": "pest_overview",
+                "city": "徐州市",
+                "county": None,
+                "region_level": "city",
+            },
+        )
+
     def test_build_clarification_response_keeps_confidence(self):
         payload = build_clarification_response({"clarification": "请先说明是虫情还是墒情", "confidence": 0.62})
 
         self.assertEqual(payload["response"]["mode"], "advice")
         self.assertEqual(payload["response"]["evidence"]["generation_mode"], "clarification")
         self.assertEqual(payload["response"]["evidence"]["confidence"], 0.62)
+
+    def test_build_forecast_only_response_exposes_evidence_target(self):
+        payload = build_forecast_only_response(
+            {
+                "answer": "未来两周如东县虫情风险偏高。",
+                "data": [{"region_name": "如东县", "risk_level": "高"}],
+                "forecast": {"domain": "pest", "mode": "ranking", "confidence": 0.42},
+                "analysis_context": {"region_name": "如东县", "region_level": "county"},
+            },
+            ["forecast", "answer_synthesis"],
+        )
+
+        self.assertEqual(
+            payload["evidence"]["evidence_target"],
+            {
+                "kind": "forecast",
+                "query_type": "pest_forecast",
+                "region_name": "如东县",
+                "region_level": "county",
+                "domain": "pest",
+            },
+        )
 
     def test_run_knowledge_node_uses_access_facade_search_boundary(self):
         class RawSourceProvider:

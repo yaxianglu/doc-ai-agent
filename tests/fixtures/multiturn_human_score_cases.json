@@ -1,0 +1,99 @@
+{
+  "source": "cw-评分表.xlsx / 多轮 / critical subset",
+  "groups": [
+    {
+      "group_id": "01",
+      "failure_cluster": "domain_then_granularity_then_explanation",
+      "turns": [
+        {
+          "turn": 1,
+          "user_input": "过去5个月最严重的是哪里？",
+          "expected_behavior": "clarify_domain"
+        },
+        {
+          "turn": 2,
+          "user_input": "其中虫情的呢？",
+          "expected_followup_subtype": "domain_refine"
+        },
+        {
+          "turn": 3,
+          "user_input": "按县给我看。",
+          "expected_followup_subtype": "granularity_refine"
+        },
+        {
+          "turn": 4,
+          "user_input": "为什么会这样？",
+          "expected_followup_subtype": "explanation_followup"
+        }
+      ]
+    },
+    {
+      "group_id": "03",
+      "failure_cluster": "granularity_then_region_then_trend",
+      "turns": [
+        {
+          "turn": 1,
+          "user_input": "最近30天风险最高的是哪里？",
+          "expected_behavior": "ranking_answer"
+        },
+        {
+          "turn": 2,
+          "user_input": "按县，不要按市。",
+          "expected_followup_subtype": "granularity_refine"
+        },
+        {
+          "turn": 3,
+          "user_input": "只看常州市。",
+          "expected_followup_subtype": "region_refine"
+        },
+        {
+          "turn": 4,
+          "user_input": "趋势呢？",
+          "expected_followup_subtype": "contextual_trend_followup"
+        }
+      ]
+    },
+    {
+      "group_id": "17",
+      "failure_cluster": "forecast_then_evidence_followup",
+      "turns": [
+        {
+          "turn": 1,
+          "user_input": "未来10天哪些县风险最高？",
+          "expected_behavior": "forecast_answer"
+        },
+        {
+          "turn": 2,
+          "user_input": "你的证据够吗？",
+          "expected_followup_subtype": "evidence_followup"
+        },
+        {
+          "turn": 3,
+          "user_input": "如果证据弱，你应该怎么回答？",
+          "expected_followup_subtype": "evidence_followup"
+        }
+      ]
+    },
+    {
+      "group_id": "19",
+      "failure_cluster": "device_family_then_domain_then_window",
+      "turns": [
+        {
+          "turn": 1,
+          "user_input": "给我列出最近最活跃的10台设备。",
+          "expected_behavior": "device_ranking"
+        },
+        {
+          "turn": 2,
+          "user_input": "其中墒情设备有哪些？",
+          "expected_followup_subtype": "domain_refine"
+        },
+        {
+          "turn": 3,
+          "user_input": "最近7天异常次数分别多少？",
+          "expected_followup_subtype": "time_refine"
+        }
+      ]
+    }
+  ]
+}

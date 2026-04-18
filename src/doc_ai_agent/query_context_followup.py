@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from .query_extractors import asks_explicit_alert_record_fields
 from .agri_semantics import has_trend_intent
 from .followup_semantics import (
     explicit_domain_from_text,
@@ -80,9 +81,14 @@ def _has_explicit_follow_up_cue(question: str) -> bool:
             "那",
             "那么",
             "那就",
+            "只看",
+            "只要",
+            "先看",
             "按县",
             "按区",
             "按市",
+            "按设备",
+            "再细到",
             "换成",
             "改成",
             "切到",
@@ -116,6 +122,8 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None, u
     if not context:
         return None
     if planner._is_greeting_question(question):
+        return None
+    if asks_explicit_alert_record_fields(question):
         return None
     followup_type = str(
         understanding.get("followup_type")
@@ -190,6 +198,7 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None, u
     if (
         not explicit_followup
         and not looks_like_contextual_follow_up(question, is_greeting_question=planner._is_greeting_question)
+        and not has_explicit_follow_up_cue
         and not allow_implicit_ranking_follow_up
         and not allow_forecast_support_follow_up
     ):
@@ -214,6 +223,44 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None, u
             "clarification": None,
             "reason": "context_device_window_follow_up",
             "context_trace": trace + [f"reuse device={device_code} and switch window={relative_window['window_type']}:{relative_window['window_value']}"],
+        }
+
+    if any(token in question for token in ["按县", "按区", "按市", "再细到县", "再细到区", "再细到市"]) and previous_query_family in {"ranking", "overview"} and domain in {"pest", "soil", "mixed"}:
+        route = dict(previous_route)
+        route["query_type"] = planner._query_type_for_region_follow_up(previous_query_type, domain)
+        target_level = "county" if planner._asks_for_county_scope(question) else "city"
+        route["region_level"] = target_level
+        if target_level == "city":
+            route["county"] = None
+        else:
+            route["city"] = route.get("city") or previous_region_name or None
+            route["county"] = None
+        return {
+            "intent": "data_query",
+            "confidence": 0.9,
+            "route": route,
+            "needs_clarification": False,
+            "clarification": None,
+            "reason": "context_granularity_refine_follow_up",
+            "context_trace": trace + [f"switch granularity={target_level} and preserve query family={previous_query_family}"],
+        }
+
+    if any(token in question for token in ["按设备", "再细到设备"]) and previous_query_family in {"ranking", "overview", "activity"}:
+        route = dict(previous_route)
+        route["query_type"] = "active_devices"
+        route["city"] = previous_route.get("city")
+        route["county"] = previous_route.get("county")
+        route["region_level"] = previous_route.get("region_level") or ("county" if route.get("county") else "city")
+        if route.get("top_n") in {None, ""}:
+            route["top_n"] = 10
+        return {
+            "intent": "data_query",
+            "confidence": 0.88,
+            "route": route,
+            "needs_clarification": False,
+            "clarification": None,
+            "reason": "context_device_granularity_follow_up",
+            "context_trace": trace + ["switch granularity=device and preserve scope"],
         }
 
     if ranking_follow_up and domain in {"pest", "soil"} and not future_window:
@@ -432,11 +479,12 @@ def build_context_follow_up_plan(planner, question: str, context: dict | None, u
             "context_trace": trace + [f"switch window={relative_window['window_type']}:{relative_window['window_value']}"],
         }
 
-    if (followup_type == "region_follow_up" or (city or county)) and domain in {"pest", "soil"} and len(question.strip()) <= 12:
+    if (followup_type == "region_follow_up" or (city or county)) and (domain in {"pest", "soil", "mixed"} or previous_query_type == "joint_risk") and len(question.strip()) <= 12:
         route = dict(previous_route)
         route["city"] = city
         route["county"] = county
-        route["region_level"] = "county" if county else "city"
+        previous_region_level = str(previous_route.get("region_level") or conversation_state.get("last_region_level") or "")
+        route["region_level"] = "county" if county or (city and previous_region_level == "county") else "city"
         forecast = dict(context.get("forecast") or {})
         previous_forecast_window = dict(route.get("forecast_window") or {})
         if previous_query_type == f"{domain}_forecast" or forecast.get("horizon_days"):

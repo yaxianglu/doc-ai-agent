@@ -26,6 +26,8 @@ def query_type_for_region_follow_up(previous_query_type: str, domain: str) -> st
     """在“切换地区”时保持分析类型不变，仅替换领域前缀。"""
     if previous_query_type == "active_devices":
         return "active_devices"
+    if previous_query_type == "joint_risk":
+        return "joint_risk"
     if previous_query_type.endswith("_forecast"):
         return f"{domain}_forecast"
     if previous_query_type.endswith("_detail"):
@@ -41,6 +43,8 @@ def query_type_for_window_follow_up(previous_query_type: str, domain: str) -> st
     """在“切换时间窗”时推导新 query_type。"""
     if previous_query_type == "active_devices":
         return "active_devices"
+    if previous_query_type == "joint_risk":
+        return "joint_risk"
     if previous_query_type.endswith("_forecast"):
         return f"{domain}_forecast"
     if previous_query_type.endswith("_detail"):
