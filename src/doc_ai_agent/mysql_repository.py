@@ -186,6 +186,7 @@ CREATE TABLE IF NOT EXISTS auth_user (
   username VARCHAR(64) NOT NULL COMMENT '用户名',
   password_hash VARCHAR(255) NOT NULL COMMENT '密码哈希',
   password_salt VARCHAR(255) NOT NULL COMMENT '密码盐',
+  role VARCHAR(32) NOT NULL DEFAULT 'user' COMMENT '用户角色',
   is_active TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -398,7 +399,15 @@ class MySQLRepository(AnalyticsRepository):
     def create_tables(self) -> None:
         """创建所有业务表，并初始化默认分析规则。"""
         self._run_sql(SCHEMA_SQL)
+        self._ensure_auth_role_column()
         self._seed_rules()
+
+    def _ensure_auth_role_column(self) -> None:
+        """兼容既有 MySQL 表，确保认证用户具备角色字段。"""
+        output = self._run_sql("SHOW COLUMNS FROM auth_user LIKE 'role';", expect_output=True)
+        if output:
+            return
+        self._run_sql("ALTER TABLE auth_user ADD COLUMN role VARCHAR(32) NOT NULL DEFAULT 'user' COMMENT '用户角色' AFTER password_salt;")
 
     def get_user_by_username(self, username: str) -> dict | None:
         """按用户名查询认证用户。"""
@@ -408,6 +417,7 @@ class MySQLRepository(AnalyticsRepository):
           'username', username,
           'password_hash', password_hash,
           'password_salt', password_salt,
+          'role', role,
           'is_active', is_active
         )
         FROM auth_user
@@ -419,11 +429,12 @@ class MySQLRepository(AnalyticsRepository):
     def create_user(self, username: str, password_hash: str, password_salt: str) -> dict:
         """创建认证用户并返回创建结果。"""
         sql = f"""
-        INSERT INTO auth_user (username, password_hash, password_salt, is_active, created_at, updated_at)
+        INSERT INTO auth_user (username, password_hash, password_salt, role, is_active, created_at, updated_at)
         VALUES (
           {self._quote(username)},
           {self._quote(password_hash)},
           {self._quote(password_salt)},
+          'user',
           1,
           NOW(),
           NOW()
@@ -469,6 +480,7 @@ class MySQLRepository(AnalyticsRepository):
           'id', u.id,
           'username', u.username,
           'is_active', u.is_active,
+          'role', u.role,
           'session_id', s.id
         )
         FROM auth_session s

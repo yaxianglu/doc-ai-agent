@@ -94,6 +94,7 @@ class MemoryAuthRepository:
             "username": username,
             "password_hash": password_hash,
             "password_salt": password_salt,
+            "role": "user",
             "is_active": 1,
             "created_at": now,
             "updated_at": now,
@@ -132,7 +133,7 @@ class MemoryAuthRepository:
         if user is None or not bool(user["is_active"]):
             return None
         session["last_used_at"] = utc_now().isoformat()
-        return {"id": user["id"], "username": user["username"], "is_active": bool(user["is_active"])}
+        return {"id": user["id"], "username": user["username"], "role": user.get("role") or "user", "is_active": bool(user["is_active"])}
 
     def delete_session(self, token: str) -> None:
         self._sessions.pop(hash_token(token), None)
@@ -193,4 +194,5 @@ class AuthService:
         return {
             "id": int(user["id"]),
             "username": str(user["username"]),
+            "role": str(user.get("role") or "user"),
         }

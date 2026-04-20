@@ -38,6 +38,7 @@ class MySQLAuthRepositoryTests(unittest.TestCase):
         emitted_sql = "\n".join(sql for sql, _ in repo.calls)
         self.assertIn("CREATE TABLE IF NOT EXISTS auth_user", emitted_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS auth_session", emitted_sql)
+        self.assertIn("role VARCHAR(32) NOT NULL DEFAULT 'user'", emitted_sql)
 
     def test_get_user_by_username_reads_from_auth_user(self):
         repo = InspectableMySQLRepository()
@@ -48,6 +49,7 @@ class MySQLAuthRepositoryTests(unittest.TestCase):
                 "password_hash": "hash",
                 "password_salt": "salt",
                 "is_active": 1,
+                "role": "admin",
             }
         )
 
@@ -55,6 +57,7 @@ class MySQLAuthRepositoryTests(unittest.TestCase):
 
         self.assertIsNotNone(user)
         self.assertEqual(user["username"], "gago-1")
+        self.assertEqual(user["role"], "admin")
         self.assertIn("FROM auth_user", repo.calls[0][0])
 
     def test_get_user_by_token_reads_from_auth_session_and_updates_last_used(self):
@@ -65,6 +68,7 @@ class MySQLAuthRepositoryTests(unittest.TestCase):
                 "username": "gago-1",
                 "is_active": 1,
                 "session_id": 7,
+                "role": "admin",
             }
         )
 
@@ -72,6 +76,7 @@ class MySQLAuthRepositoryTests(unittest.TestCase):
 
         self.assertIsNotNone(user)
         self.assertEqual(user["username"], "gago-1")
+        self.assertEqual(user["role"], "admin")
         self.assertIn("FROM auth_session s", repo.calls[0][0])
         self.assertIn("UPDATE auth_session SET last_used_at", repo.calls[1][0])
 

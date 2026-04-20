@@ -16,7 +16,9 @@ class FakeAdminApp:
 
     def current_user(self, token):
         if token == "valid-token":
-            return {"id": 1, "username": "gago-1"}
+            return {"id": 1, "username": "gago-admin", "role": "admin"}
+        if token == "user-token":
+            return {"id": 2, "username": "gago-1", "role": "user"}
         return None
 
     def list_soil_records(self, filters, page, page_size):
@@ -80,6 +82,19 @@ class ServerSoilAdminTests(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(payload["error"], "authentication required")
 
+    def test_admin_list_requires_admin_role(self):
+        fake_app = FakeAdminApp()
+        with patch("doc_ai_agent.server.AgentApp", return_value=fake_app):
+            server = build_http_server(config())
+        try:
+            status, payload = self._request(server, "GET", "/admin/soil/records", token="user-token")
+        finally:
+            server.server_close()
+
+        self.assertEqual(status, 403)
+        self.assertEqual(payload["error"], "admin role required")
+        self.assertEqual(fake_app.calls, [])
+
     def test_admin_list_passes_filters_and_pagination(self):
         fake_app = FakeAdminApp()
         with patch("doc_ai_agent.server.AgentApp", return_value=fake_app):
@@ -117,7 +132,7 @@ class ServerSoilAdminTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertEqual(payload["deleted_count"], 2)
-        self.assertEqual(fake_app.calls[0], ("delete", ["r1", "r2"], "gago-1"))
+        self.assertEqual(fake_app.calls[0], ("delete", ["r1", "r2"], "gago-admin"))
 
     def test_admin_upload_requires_full_replace_confirmation(self):
         fake_app = FakeAdminApp()

@@ -284,6 +284,15 @@ def build_http_server(config: AppConfig) -> HTTPServer:
                 return None
             return user
 
+        def _require_admin_user(self) -> dict | None:
+            user = self._require_user()
+            if user is None:
+                return None
+            if user.get("role") != "admin":
+                self._json(403, {"error": "admin role required"})
+                return None
+            return user
+
         def _handle_internal_error(self) -> None:
             """把未捕获异常统一收口为 JSON 500，避免客户端收到空响应。"""
             traceback.print_exc()
@@ -309,7 +318,7 @@ def build_http_server(config: AppConfig) -> HTTPServer:
                     self._json(200, {"user": user})
                     return
                 if path == "/admin/soil/records":
-                    user = self._require_user()
+                    user = self._require_admin_user()
                     if user is None:
                         return
                     query = parse_qs(parsed_url.query)
@@ -368,7 +377,7 @@ def build_http_server(config: AppConfig) -> HTTPServer:
                     return
 
                 if self.path == "/admin/soil/records/bulk-delete":
-                    user = self._require_user()
+                    user = self._require_admin_user()
                     if user is None:
                         return
                     record_ids = payload.get("record_ids")
@@ -379,7 +388,7 @@ def build_http_server(config: AppConfig) -> HTTPServer:
                     return
 
                 if self.path == "/admin/soil/upload":
-                    user = self._require_user()
+                    user = self._require_admin_user()
                     if user is None:
                         return
                     mode = str(payload.get("mode") or "incremental")
@@ -410,7 +419,7 @@ def build_http_server(config: AppConfig) -> HTTPServer:
                 parsed_url = self._parsed_url()
                 path = parsed_url.path
                 if path.startswith("/admin/soil/records/"):
-                    user = self._require_user()
+                    user = self._require_admin_user()
                     if user is None:
                         return
                     record_id = unquote(path.rsplit("/", 1)[-1])
@@ -432,7 +441,7 @@ def build_http_server(config: AppConfig) -> HTTPServer:
                 parsed_url = self._parsed_url()
                 path = parsed_url.path
                 if path.startswith("/admin/soil/records/"):
-                    user = self._require_user()
+                    user = self._require_admin_user()
                     if user is None:
                         return
                     record_id = unquote(path.rsplit("/", 1)[-1])
