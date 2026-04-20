@@ -44,6 +44,34 @@ CREATE TABLE IF NOT EXISTS dim_device (
   KEY idx_device_region (city_name, county_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='设备维表';
 
+CREATE TABLE IF NOT EXISTS alerts (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '告警主键',
+  alert_content TEXT NULL COMMENT '告警内容',
+  alert_type VARCHAR(128) NULL COMMENT '告警类型',
+  alert_subtype VARCHAR(128) NULL COMMENT '告警子类型',
+  alert_time DATETIME NULL COMMENT '告警时间',
+  alert_level VARCHAR(64) NULL COMMENT '告警等级',
+  region_code VARCHAR(64) NULL COMMENT '区域编码',
+  region_name VARCHAR(128) NULL COMMENT '区域名称',
+  alert_value VARCHAR(64) NULL COMMENT '告警值',
+  device_code VARCHAR(64) NULL COMMENT '设备编码',
+  device_name VARCHAR(255) NULL COMMENT '设备名称',
+  longitude VARCHAR(64) NULL COMMENT '经度',
+  latitude VARCHAR(64) NULL COMMENT '纬度',
+  city VARCHAR(64) NULL COMMENT '设备所在市',
+  county VARCHAR(64) NULL COMMENT '设备所在区县',
+  sms_content TEXT NULL COMMENT '短信内容',
+  disposal_suggestion LONGTEXT NULL COMMENT '处置建议',
+  source_file VARCHAR(255) NOT NULL COMMENT '来源文件',
+  source_sheet VARCHAR(128) NOT NULL COMMENT '来源工作表',
+  source_row INT NOT NULL COMMENT '来源行号',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '入库时间',
+  UNIQUE KEY uk_alert_source (source_file, source_sheet, source_row),
+  KEY idx_alert_time (alert_time),
+  KEY idx_alert_device_time (device_code, alert_time),
+  KEY idx_alert_region_time (city, county, alert_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='告警事实表';
+
 CREATE TABLE IF NOT EXISTS metric_rule (
   rule_code VARCHAR(64) PRIMARY KEY COMMENT '规则编码',
   rule_name VARCHAR(128) NOT NULL COMMENT '规则名称',
@@ -125,3 +153,40 @@ CREATE TABLE IF NOT EXISTS fact_soil_moisture (
   KEY idx_soil_sn_time (device_sn, sample_time),
   KEY idx_soil_anomaly (soil_anomaly_type, soil_anomaly_score)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='墒情事实表';
+
+CREATE TABLE IF NOT EXISTS auth_user (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '用户主键',
+  username VARCHAR(64) NOT NULL COMMENT '用户名',
+  password_hash VARCHAR(255) NOT NULL COMMENT '密码哈希',
+  password_salt VARCHAR(255) NOT NULL COMMENT '密码盐',
+  is_active TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  UNIQUE KEY uk_auth_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='认证用户表';
+
+CREATE TABLE IF NOT EXISTS auth_session (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '会话主键',
+  user_id BIGINT NOT NULL COMMENT '用户主键',
+  token_hash VARCHAR(255) NOT NULL COMMENT '令牌哈希',
+  created_at DATETIME NOT NULL COMMENT '创建时间',
+  expires_at DATETIME NOT NULL COMMENT '过期时间',
+  last_used_at DATETIME NOT NULL COMMENT '最近使用时间',
+  UNIQUE KEY uk_auth_token_hash (token_hash),
+  KEY idx_auth_session_user (user_id),
+  CONSTRAINT fk_auth_session_user FOREIGN KEY (user_id) REFERENCES auth_user(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='认证会话表';
+
+CREATE TABLE IF NOT EXISTS admin_change_log (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '管理操作日志主键',
+  operator_user_id BIGINT NULL COMMENT '操作者用户ID',
+  operator_username VARCHAR(64) NULL COMMENT '操作者用户名',
+  operation VARCHAR(64) NOT NULL COMMENT '操作类型',
+  target_table VARCHAR(128) NOT NULL COMMENT '目标表',
+  target_id VARCHAR(128) NULL COMMENT '目标记录ID',
+  before_json JSON NULL COMMENT '变更前内容',
+  after_json JSON NULL COMMENT '变更后内容',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
+  KEY idx_admin_change_target (target_table, target_id),
+  KEY idx_admin_change_operator (operator_username, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='管理操作审计表';

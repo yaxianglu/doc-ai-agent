@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from .repository_contracts import AnalyticsRepository
 import subprocess
+from .soil_loader import classify_soil_anomaly, data_quality_flag
 
 
 SCHEMA_SQL = """
@@ -202,6 +203,20 @@ CREATE TABLE IF NOT EXISTS auth_session (
   KEY idx_auth_session_user (user_id),
   CONSTRAINT fk_auth_session_user FOREIGN KEY (user_id) REFERENCES auth_user(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='认证会话表';
+
+CREATE TABLE IF NOT EXISTS admin_change_log (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '管理操作日志主键',
+  operator_user_id BIGINT NULL COMMENT '操作者用户ID',
+  operator_username VARCHAR(64) NULL COMMENT '操作者用户名',
+  operation VARCHAR(64) NOT NULL COMMENT '操作类型',
+  target_table VARCHAR(128) NOT NULL COMMENT '目标表',
+  target_id VARCHAR(128) NULL COMMENT '目标记录ID',
+  before_json JSON NULL COMMENT '变更前内容',
+  after_json JSON NULL COMMENT '变更后内容',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
+  KEY idx_admin_change_target (target_table, target_id),
+  KEY idx_admin_change_operator (operator_username, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='管理操作审计表';
 """
 
 DEFAULT_RULES = [
@@ -356,6 +371,29 @@ class MySQLRepository(AnalyticsRepository):
         )
         self._run_sql(sql)
         return len(values_sql)
+
+    def _flush_insert_ignore(self, table: str, columns: List[str], values_sql: List[str]) -> int:
+        """把单个批次以 `INSERT IGNORE` 写入，用于增量导入。"""
+        sql = f"INSERT IGNORE INTO {table} ({', '.join(columns)}) VALUES\n" + ",\n".join(values_sql) + ";"
+        self._run_sql(sql)
+        return len(values_sql)
+
+    def _insert_ignore_many(self, table: str, columns: List[str], rows: Iterable[dict], batch_size: int = 500) -> int:
+        """按批次执行 `INSERT IGNORE`，不覆盖既有记录。"""
+        batch = []
+        inserted = 0
+        rows = list(rows)
+        if not rows:
+            return 0
+        for row in rows:
+            values_sql = "(" + ", ".join(self._quote(row.get(col)) for col in columns) + ")"
+            batch.append(values_sql)
+            if len(batch) >= batch_size:
+                inserted += self._flush_insert_ignore(table, columns, batch)
+                batch = []
+        if batch:
+            inserted += self._flush_insert_ignore(table, columns, batch)
+        return inserted
 
     def create_tables(self) -> None:
         """创建所有业务表，并初始化默认分析规则。"""
@@ -562,6 +600,22 @@ class MySQLRepository(AnalyticsRepository):
             ["batch_id", "device_sn", "gateway_id", "sensor_id", "unit_id", "city_name", "county_name", "town_name", "device_name", "longitude", "latitude", "sample_time", "create_time", "water20cm", "water40cm", "water60cm", "water80cm", "t20cm", "t40cm", "t60cm", "t80cm", "water20cm_field_state", "water40cm_field_state", "water60cm_field_state", "water80cm_field_state", "t20cm_field_state", "t40cm_field_state", "t60cm_field_state", "t80cm_field_state", "water20cm_valid", "t20cm_valid", "soil_anomaly_type", "soil_anomaly_score", "data_quality_flag", "source_file", "source_sheet", "source_row"],
         )
 
+    def bulk_insert_soil_incremental(self, rows: Iterable[dict]) -> int:
+        """增量写入墒情事实表：只插入不存在的 `record_id`，不覆盖既有记录。"""
+        columns = [
+            "record_id", "batch_id", "device_sn", "gateway_id", "sensor_id", "unit_id", "city_name", "county_name", "town_name", "device_name",
+            "longitude", "latitude", "sample_time", "create_time", "water20cm", "water40cm", "water60cm", "water80cm",
+            "t20cm", "t40cm", "t60cm", "t80cm", "water20cm_field_state", "water40cm_field_state", "water60cm_field_state", "water80cm_field_state",
+            "t20cm_field_state", "t40cm_field_state", "t60cm_field_state", "t80cm_field_state", "water20cm_valid", "t20cm_valid", "soil_anomaly_type", "soil_anomaly_score", "data_quality_flag",
+            "source_file", "source_sheet", "source_row"
+        ]
+        return self._insert_ignore_many("fact_soil_moisture", columns, rows)
+
+    def replace_soil_rows(self, rows: Iterable[dict]) -> int:
+        """全量替换墒情事实表。"""
+        self._run_sql("DELETE FROM fact_soil_moisture;")
+        return self.bulk_upsert_soil(rows)
+
     def enrich_soil_dimensions(self) -> None:
         """使用设备维表补齐墒情记录中缺失的维度信息。"""
         sql = """
@@ -577,6 +631,174 @@ class MySQLRepository(AnalyticsRepository):
         WHERE s.city_name IS NULL OR s.county_name IS NULL OR s.device_name IS NULL;
         """
         self._run_sql(sql)
+
+    @staticmethod
+    def _soil_admin_columns() -> List[str]:
+        """返回管理页可展示的墒情字段。"""
+        return [
+            "record_id", "device_sn", "gateway_id", "sensor_id", "unit_id", "city_name", "county_name", "town_name", "device_name",
+            "longitude", "latitude", "sample_time", "create_time", "water20cm", "water40cm", "water60cm", "water80cm",
+            "t20cm", "t40cm", "t60cm", "t80cm", "water20cm_field_state", "water40cm_field_state", "water60cm_field_state", "water80cm_field_state",
+            "t20cm_field_state", "t40cm_field_state", "t60cm_field_state", "t80cm_field_state", "water20cm_valid", "t20cm_valid",
+            "soil_anomaly_type", "soil_anomaly_score", "data_quality_flag", "source_file", "source_sheet", "source_row", "created_at",
+        ]
+
+    @staticmethod
+    def admin_editable_soil_fields() -> set[str]:
+        """返回允许后台单字段修改的白名单。"""
+        return {
+            "device_sn", "gateway_id", "sensor_id", "unit_id", "city_name", "county_name", "town_name", "device_name",
+            "longitude", "latitude", "sample_time", "create_time", "water20cm", "water40cm", "water60cm", "water80cm",
+            "t20cm", "t40cm", "t60cm", "t80cm", "water20cm_field_state", "water40cm_field_state", "water60cm_field_state", "water80cm_field_state",
+            "t20cm_field_state", "t40cm_field_state", "t60cm_field_state", "t80cm_field_state", "soil_anomaly_type", "data_quality_flag",
+        }
+
+    def _soil_admin_where(self, filters: dict) -> str:
+        """把管理页筛选条件转成 SQL WHERE。"""
+        clauses = []
+        for field in ["city_name", "county_name", "device_sn", "soil_anomaly_type"]:
+            value = filters.get(field)
+            if value not in (None, ""):
+                clauses.append(f"{field} = {self._quote(value)}")
+        sample_time_from = filters.get("sample_time_from")
+        sample_time_to = filters.get("sample_time_to")
+        if sample_time_from:
+            clauses.append(f"sample_time >= {self._quote(sample_time_from)}")
+        if sample_time_to:
+            clauses.append(f"sample_time < {self._quote(sample_time_to)}")
+        return "WHERE " + " AND ".join(clauses) if clauses else ""
+
+    def admin_list_soil_records(self, filters: dict | None = None, page: int = 1, page_size: int = 50) -> dict:
+        """分页查询墒情记录，供管理页使用。"""
+        filters = filters or {}
+        safe_page = max(1, int(page or 1))
+        safe_page_size = min(200, max(1, int(page_size or 50)))
+        offset = (safe_page - 1) * safe_page_size
+        where_sql = self._soil_admin_where(filters)
+        total = self._fetch_int(f"SELECT COUNT(*) FROM fact_soil_moisture {where_sql};")
+        columns = self._soil_admin_columns()
+        object_fields = ",\n              ".join(f"'{column}', {self._json_value_sql(column)}" for column in columns)
+        sql = f"""
+        SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
+        FROM (
+          SELECT JSON_OBJECT(
+              {object_fields}
+          ) AS item
+          FROM fact_soil_moisture
+          {where_sql}
+          ORDER BY sample_time DESC, record_id ASC
+          LIMIT {safe_page_size} OFFSET {offset}
+        ) q;
+        """
+        rows = self._fetch_json(sql)
+        total_pages = (total + safe_page_size - 1) // safe_page_size if total else 0
+        return {"rows": rows, "total": total, "page": safe_page, "page_size": safe_page_size, "total_pages": total_pages}
+
+    @staticmethod
+    def _json_value_sql(column: str) -> str:
+        """把 DATETIME/DECIMAL 字段格式化成管理页稳定 JSON 值。"""
+        datetime_columns = {"sample_time", "create_time", "created_at"}
+        decimal_columns = {
+            "longitude", "latitude", "water20cm", "water40cm", "water60cm", "water80cm",
+            "t20cm", "t40cm", "t60cm", "t80cm", "soil_anomaly_score",
+        }
+        if column in datetime_columns:
+            return f"DATE_FORMAT({column}, '%Y-%m-%d %H:%i:%s')"
+        if column in decimal_columns:
+            return f"CAST({column} AS DECIMAL(12,2))"
+        return column
+
+    def admin_get_soil_records(self, record_ids: List[str], limit: int = 50) -> List[dict]:
+        """按 ID 批量读取墒情记录，用于确认框和审计。"""
+        ids = [str(record_id) for record_id in record_ids if str(record_id).strip()]
+        if not ids:
+            return []
+        safe_limit = min(200, max(1, int(limit)))
+        id_sql = ", ".join(self._quote(record_id) for record_id in ids[:safe_limit])
+        columns = self._soil_admin_columns()
+        object_fields = ",\n              ".join(f"'{column}', {self._json_value_sql(column)}" for column in columns)
+        sql = f"""
+        SELECT COALESCE(JSON_ARRAYAGG(item), JSON_ARRAY())
+        FROM (
+          SELECT JSON_OBJECT(
+              {object_fields}
+          ) AS item
+          FROM fact_soil_moisture
+          WHERE record_id IN ({id_sql})
+          ORDER BY sample_time DESC, record_id ASC
+          LIMIT {safe_limit}
+        ) q;
+        """
+        return self._fetch_json(sql)
+
+    def _audit_admin_change(self, operation: str, target_id: str | None, before_payload, after_payload, user: dict | None) -> None:
+        """写入后台操作审计日志。"""
+        before_json = json.dumps(before_payload, ensure_ascii=False) if before_payload is not None else None
+        after_json = json.dumps(after_payload, ensure_ascii=False) if after_payload is not None else None
+        sql = f"""
+        INSERT INTO admin_change_log (
+          operator_user_id, operator_username, operation, target_table, target_id, before_json, after_json, created_at
+        ) VALUES (
+          {self._quote(user.get('id') if user else None)},
+          {self._quote(user.get('username') if user else None)},
+          {self._quote(operation)},
+          'fact_soil_moisture',
+          {self._quote(target_id)},
+          {self._quote(before_json)},
+          {self._quote(after_json)},
+          NOW()
+        );
+        """
+        self._run_sql(sql)
+
+    def admin_update_soil_field(self, record_id: str, field: str, value, user: dict | None) -> dict:
+        """修改单条墒情记录的单个白名单字段，并记录审计日志。"""
+        if field not in self.admin_editable_soil_fields():
+            raise ValueError("field is not editable")
+        before = self.admin_get_soil_records([record_id], limit=1)
+        if isinstance(before, dict):
+            before = [before]
+        if not before:
+            raise ValueError("record not found")
+        before_row = before[0]
+        updates = {field: value}
+        if field == "water20cm":
+            water20cm = None
+            if value not in (None, ""):
+                water20cm = float(value)
+            anomaly_type, anomaly_score = classify_soil_anomaly(water20cm)
+            t20cm = before_row.get("t20cm")
+            t20cm_value = float(t20cm) if t20cm not in (None, "") else None
+            updates.update({
+                "water20cm_valid": 1 if water20cm is not None and 0 <= water20cm <= 300 else 0,
+                "soil_anomaly_type": anomaly_type,
+                "soil_anomaly_score": anomaly_score,
+                "data_quality_flag": data_quality_flag(water20cm, t20cm_value),
+            })
+        set_sql = ", ".join(f"{column} = {self._quote(next_value)}" for column, next_value in updates.items())
+        sql = f"""
+        UPDATE fact_soil_moisture
+        SET {set_sql}
+        WHERE record_id = {self._quote(record_id)}
+        LIMIT 1;
+        """
+        self._run_sql(sql)
+        result = {"record_id": record_id, "field": field, "old_value": before_row.get(field), "new_value": value, "derived_updates": {k: v for k, v in updates.items() if k != field}}
+        self._audit_admin_change("update_field", record_id, {"field": field, "value": before_row.get(field)}, result, user)
+        return result
+
+    def admin_delete_soil_records(self, record_ids: List[str], user: dict | None) -> dict:
+        """按 ID 删除一批墒情记录，并写入审计日志。"""
+        ids = [str(record_id) for record_id in record_ids if str(record_id).strip()]
+        if not ids:
+            return {"deleted_count": 0, "records": []}
+        records = self.admin_get_soil_records(ids, limit=len(ids))
+        if not records:
+            return {"deleted_count": 0, "records": []}
+        id_sql = ", ".join(self._quote(record["record_id"]) for record in records)
+        self._audit_admin_change("delete", f"count:{len(records)}", records, None, user)
+        self._run_sql(f"DELETE FROM fact_soil_moisture WHERE record_id IN ({id_sql});")
+        return {"deleted_count": len(records), "records": records}
 
     def _fetch_json(self, sql: str):
         """执行查询并解析为 JSON 数组，异常时兜底为空列表。"""

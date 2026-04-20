@@ -5,9 +5,12 @@ from __future__ import annotations
 import glob
 import json
 import os
+import base64
+import tempfile
 import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict, Iterable, Optional
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .agent import DocAIAgent
 from .auth import AuthService, MemoryAuthRepository, fixed_bootstrap_credentials
@@ -179,6 +182,66 @@ class AgentApp:
         """注销当前 token 对应的会话。"""
         self.auth.logout(token)
 
+    def list_soil_records(self, filters: dict, page: int, page_size: int) -> dict:
+        """分页查询墒情管理表。"""
+        if not hasattr(self.repo, "admin_list_soil_records"):
+            raise ValueError("soil admin requires mysql repository")
+        return self.repo.admin_list_soil_records(filters=filters, page=page, page_size=page_size)
+
+    def update_soil_record_field(self, record_id: str, field: str, value, user: dict) -> dict:
+        """修改单条墒情记录的单个字段。"""
+        if not hasattr(self.repo, "admin_update_soil_field"):
+            raise ValueError("soil admin requires mysql repository")
+        return self.repo.admin_update_soil_field(record_id, field, value, user)
+
+    def delete_soil_records(self, record_ids: list[str], user: dict) -> dict:
+        """按 ID 删除墒情记录。"""
+        if not hasattr(self.repo, "admin_delete_soil_records"):
+            raise ValueError("soil admin requires mysql repository")
+        return self.repo.admin_delete_soil_records(record_ids, user)
+
+    def upload_soil_excel(self, filename: str, content_base64: str, mode: str, confirm_full_replace: bool, user: dict) -> dict:
+        """导入墒情 Excel，支持增量和全量覆盖。"""
+        if not isinstance(self.repo, MySQLRepository):
+            raise ValueError("soil upload requires mysql repository")
+        normalized_mode = mode if mode in {"incremental", "replace"} else "incremental"
+        if normalized_mode == "replace" and not confirm_full_replace:
+            raise ValueError("confirm_full_replace is required for replace mode")
+        if not filename.lower().endswith(".xlsx"):
+            raise ValueError("only .xlsx files are supported")
+        try:
+            content = base64.b64decode(content_base64, validate=True)
+        except Exception as exc:
+            raise ValueError("invalid excel payload") from exc
+        if not content:
+            raise ValueError("excel file is empty")
+
+        fd, path = tempfile.mkstemp(prefix="soil-admin-upload-", suffix=".xlsx")
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(content)
+            batch_id = self.repo.begin_batch("soil_admin", filename, note=f"墒情后台{normalized_mode}导入")
+            rows = list(iter_soil_rows(path, batch_id))
+            if normalized_mode == "replace":
+                loaded = self.repo.replace_soil_rows(rows)
+            else:
+                loaded = self.repo.bulk_insert_soil_incremental(rows)
+            self.repo.finish_batch(batch_id, len(rows), loaded, note="墒情后台导入完成")
+            if hasattr(self.repo, "_audit_admin_change"):
+                self.repo._audit_admin_change(
+                    "upload_replace" if normalized_mode == "replace" else "upload_incremental",
+                    filename,
+                    None,
+                    {"filename": filename, "mode": normalized_mode, "raw_rows": len(rows), "loaded_rows": loaded},
+                    user,
+                )
+            return {"filename": filename, "mode": normalized_mode, "raw_rows": len(rows), "loaded_rows": loaded}
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
 
 def build_http_server(config: AppConfig) -> HTTPServer:
     """构建 HTTPServer，并挂载健康检查/登录/聊天接口。"""
@@ -189,6 +252,16 @@ def build_http_server(config: AppConfig) -> HTTPServer:
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length) if length else b"{}"
             return json.loads(body.decode("utf-8") or "{}")
+
+        def _parsed_url(self):
+            return urlparse(self.path)
+
+        @staticmethod
+        def _first_query_value(query: dict, key: str, default: str = "") -> str:
+            values = query.get(key)
+            if not values:
+                return default
+            return values[0]
 
         def _json(self, status: int, payload: dict) -> None:
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -219,18 +292,39 @@ def build_http_server(config: AppConfig) -> HTTPServer:
             except BrokenPipeError:
                 return
 
+        def _handle_bad_request(self, error: Exception) -> None:
+            self._json(400, {"error": str(error)})
+
         def do_GET(self):
             try:
+                parsed_url = self._parsed_url()
+                path = parsed_url.path
                 if self.path == "/health":
                     self._json(200, {"status": "ok"})
                     return
-                if self.path == "/auth/me":
+                if path == "/auth/me":
                     user = self._require_user()
                     if user is None:
                         return
                     self._json(200, {"user": user})
                     return
+                if path == "/admin/soil/records":
+                    user = self._require_user()
+                    if user is None:
+                        return
+                    query = parse_qs(parsed_url.query)
+                    filters = {}
+                    for field in ["city_name", "county_name", "device_sn", "soil_anomaly_type", "sample_time_from", "sample_time_to"]:
+                        value = self._first_query_value(query, field)
+                        if value:
+                            filters[field] = value
+                    page = int(self._first_query_value(query, "page", "1") or "1")
+                    page_size = int(self._first_query_value(query, "page_size", "50") or "50")
+                    self._json(200, app.list_soil_records(filters, page, page_size))
+                    return
                 self._json(404, {"error": "not found"})
+            except ValueError as error:
+                self._handle_bad_request(error)
             except Exception:
                 self._handle_internal_error()
 
@@ -273,7 +367,80 @@ def build_http_server(config: AppConfig) -> HTTPServer:
                     self._json(200, app.chat(question, history=payload.get("history"), thread_id=payload.get("thread_id")))
                     return
 
+                if self.path == "/admin/soil/records/bulk-delete":
+                    user = self._require_user()
+                    if user is None:
+                        return
+                    record_ids = payload.get("record_ids")
+                    if not isinstance(record_ids, list):
+                        self._json(400, {"error": "record_ids is required"})
+                        return
+                    self._json(200, app.delete_soil_records([str(record_id) for record_id in record_ids], user))
+                    return
+
+                if self.path == "/admin/soil/upload":
+                    user = self._require_user()
+                    if user is None:
+                        return
+                    mode = str(payload.get("mode") or "incremental")
+                    confirm_full_replace = bool(payload.get("confirm_full_replace"))
+                    if mode == "replace" and not confirm_full_replace:
+                        self._json(400, {"error": "confirm_full_replace is required for replace mode"})
+                        return
+                    self._json(
+                        200,
+                        app.upload_soil_excel(
+                            str(payload.get("filename") or ""),
+                            str(payload.get("content_base64") or ""),
+                            mode,
+                            confirm_full_replace,
+                            user,
+                        ),
+                    )
+                    return
+
                 self._json(404, {"error": "not found"})
+            except ValueError as error:
+                self._handle_bad_request(error)
+            except Exception:
+                self._handle_internal_error()
+
+        def do_PATCH(self):
+            try:
+                parsed_url = self._parsed_url()
+                path = parsed_url.path
+                if path.startswith("/admin/soil/records/"):
+                    user = self._require_user()
+                    if user is None:
+                        return
+                    record_id = unquote(path.rsplit("/", 1)[-1])
+                    payload = self._read_json()
+                    field = str(payload.get("field") or "")
+                    if not field:
+                        self._json(400, {"error": "field is required"})
+                        return
+                    self._json(200, app.update_soil_record_field(record_id, field, payload.get("value"), user))
+                    return
+                self._json(404, {"error": "not found"})
+            except ValueError as error:
+                self._handle_bad_request(error)
+            except Exception:
+                self._handle_internal_error()
+
+        def do_DELETE(self):
+            try:
+                parsed_url = self._parsed_url()
+                path = parsed_url.path
+                if path.startswith("/admin/soil/records/"):
+                    user = self._require_user()
+                    if user is None:
+                        return
+                    record_id = unquote(path.rsplit("/", 1)[-1])
+                    self._json(200, app.delete_soil_records([record_id], user))
+                    return
+                self._json(404, {"error": "not found"})
+            except ValueError as error:
+                self._handle_bad_request(error)
             except Exception:
                 self._handle_internal_error()
 
